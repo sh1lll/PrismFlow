@@ -2,6 +2,7 @@ vendor-research/
 node_modules/
 target/
 dist/
+src-tauri/gen/schemas/
 *.log
 .DS_Store
 .env
