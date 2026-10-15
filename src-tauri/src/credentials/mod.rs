@@ -1,5 +1,6 @@
 pub mod keychain;
 pub mod memory;
+pub mod signin;
 
 use thiserror::Error;
 

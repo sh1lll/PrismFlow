@@ -168,6 +168,17 @@ impl StateStore {
         atomic_write(&file, &json)
     }
 
+    /// Sign-in providers the user agreed PrismFlow may use (ids only).
+    pub fn load_signin_consent(&self) -> Vec<String> {
+        std::fs::read_to_string(self.dir.join("signin_consent.json")).ok()
+            .and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default()
+    }
+
+    pub fn save_signin_consent(&self, ids: &[String]) -> Result<(), ConfigError> {
+        let file = self.dir.join("signin_consent.json");
+        atomic_write(&file, &serde_json::to_string(ids).unwrap_or_default())
+    }
+
     pub fn load_custom_providers(&self) -> Result<Vec<crate::providers::CustomProvider>, ConfigError> {
         let file = self.dir.join("custom_providers.json");
         match fs::read_to_string(&file) {

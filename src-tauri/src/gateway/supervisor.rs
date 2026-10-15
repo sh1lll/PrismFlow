@@ -161,6 +161,9 @@ pub struct UpstreamSpec {
     pub base_url: String,
     pub models: Vec<String>,
     pub key: String,
+    /// The key is a ChatGPT access token from a Codex sign-in; the engine's
+    /// Codex OAuth plugin injects it (refresh disabled, see signin.rs).
+    pub codex_oauth: bool,
 }
 
 impl std::fmt::Debug for UpstreamSpec {
@@ -170,6 +173,7 @@ impl std::fmt::Debug for UpstreamSpec {
             .field("engine_type", &self.engine_type)
             .field("base_url", &self.base_url)
             .field("models", &self.models)
+            .field("codex_oauth", &self.codex_oauth)
             .finish_non_exhaustive()
     }
 }
@@ -190,8 +194,25 @@ pub fn render_config(specs: &[UpstreamSpec], settings: &super::RuntimeSettings) 
             "models": s.models,
         }))
         .collect();
+    // Env references only: the file never holds a token.
+    let plugins: Vec<_> = specs
+        .iter()
+        .filter(|s| s.codex_oauth)
+        .map(|s| json!({
+            "key": format!("prismflow-codex-oauth-{}", s.provider_id),
+            "match": { "providerName": s.provider_id },
+            "providerHooks": { "codexOauth": {
+                "accessToken": format!("{{{{ env.{} }}}}", key_env(&s.provider_id)),
+                "required": true,
+                "refreshIfMissingAccessToken": false,
+                "forceRefresh": false,
+                "requiredScopes": []
+            } }
+        }))
+        .collect();
     json!({
         "host": "127.0.0.1",
+        "plugins": plugins,
         "providers": providers,
         "defaultTargetProvider": specs.first().map(|s| s.provider_id.clone()),
         "auth": {
@@ -413,8 +434,7 @@ mod tests {
             engine_type: "openai_chat_completions",
             base_url: "https://integrate.api.nvidia.com/v1".into(),
             models: vec!["meta/llama-3.3-70b-instruct".into()],
-            key: "nvapi-supersecretvalue".into(),
-        };
+            key: "nvapi-supersecretvalue".into(), codex_oauth: false };
         let cfg = render_config(std::slice::from_ref(&spec), &crate::gateway::RuntimeSettings::default());
         let text = cfg.to_string();
         assert!(!text.contains("supersecret"));

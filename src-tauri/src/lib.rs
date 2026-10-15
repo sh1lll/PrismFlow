@@ -279,6 +279,11 @@ async fn companion_allow_actions(c: State<'_, Companion>, id: String, allow: boo
 }
 
 #[tauri::command]
+async fn set_signin_consent(svc: State<'_, Arc<Service>>, provider_id: String, consent: bool) -> Cmd<()> {
+    svc.set_signin_consent(&provider_id, consent).await
+}
+
+#[tauri::command]
 fn list_connections(svc: State<'_, Arc<Service>>) -> Cmd<Vec<state::ConnectionRecord>> {
     svc.connections()
 }
@@ -371,6 +376,7 @@ pub fn run() {
             list_connections,
             running_sessions,
             set_routing,
+            set_signin_consent,
             companion_state,
             companion_enable,
             companion_disable,

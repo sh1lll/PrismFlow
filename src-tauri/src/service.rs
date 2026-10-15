@@ -20,6 +20,7 @@ use std::time::Duration;
 #[derive(Debug, Serialize)]
 pub struct ProviderView {
     pub key_optional: bool,
+    pub signin_available: bool,
     #[serde(flatten)]
     pub def: ProviderDefinition,
     pub has_credential: bool,
@@ -102,6 +103,10 @@ pub fn route_for(app_id: &str, p: &ProviderDefinition) -> Option<Route> {
     if p.base_url.is_empty() {
         return None; // custom providers wait for URL validation + consent (SPEC §6.3)
     }
+    // Codex signs in to ChatGPT itself; routing it through PrismFlow adds nothing.
+    if p.credential_source == providers::CredentialSource::CodexLogin && (app_id == codex::APP_ID || app_id == codex::DESKTOP_APP_ID) {
+        return None;
+    }
     match app_id {
         codex::APP_ID if codex_direct(p) && p.requires_key => Some(Route::Direct),
         codex::APP_ID => Some(Route::Gateway),
@@ -158,7 +163,55 @@ pub fn claude_launch_command(claude_bin: &str, settings: &str) -> String {
 
 impl Service {
     fn key(&self, provider_id: &str) -> Option<String> {
-        self.store.get(&account_key(provider_id, "default")).ok()
+        use providers::CredentialSource::*;
+        match providers::get(provider_id).map(|p| p.credential_source).unwrap_or_default() {
+            Keychain => self.store.get(&account_key(provider_id, "default")).ok(),
+            GhCli if self.has_signin_consent(provider_id) => crate::credentials::signin::gh_token(),
+            CodexLogin if self.has_signin_consent(provider_id) => crate::credentials::signin::codex_access_token(&self.codex_home),
+            _ => None,
+        }
+    }
+
+    fn has_signin_consent(&self, provider_id: &str) -> bool {
+        self.state.load_signin_consent().iter().any(|id| id == provider_id)
+    }
+
+    /// Whether the vendor sign-in exists right now (independent of consent).
+    fn signin_available(&self, p: &ProviderDefinition) -> bool {
+        use providers::CredentialSource::*;
+        match p.credential_source {
+            Keychain => false,
+            GhCli => crate::credentials::signin::gh_token().is_some(),
+            CodexLogin => crate::credentials::signin::codex_access_token(&self.codex_home).is_some(),
+        }
+    }
+
+    /// Let PrismFlow use (or stop using) a vendor sign-in. The UI shows the
+    /// terms-of-service risk before calling this with `consent = true`.
+    pub async fn set_signin_consent(&self, provider_id: &str, consent: bool) -> R<()> {
+        let p = provider(provider_id)?;
+        if p.credential_source == providers::CredentialSource::Keychain {
+            return Err(format!("{} uses an API key, not a sign-in.", p.display_name));
+        }
+        let mut ids = self.state.load_signin_consent();
+        ids.retain(|i| i != provider_id);
+        if consent {
+            if !self.signin_available(p) {
+                return Err(match p.credential_source {
+                    providers::CredentialSource::GhCli => "Sign in with the GitHub CLI first: run `gh auth login`.".into(),
+                    _ => "Sign in to ChatGPT in Codex first: run `codex login`.".into(),
+                });
+            }
+            ids.push(provider_id.into());
+        } else if self.connections()?.iter().any(|r| r.provider_id == provider_id) {
+            return Err(format!("Disconnect everything using {} first.", p.display_name));
+        }
+        self.state.save_signin_consent(&ids).map_err(|e| e.to_string())?;
+        self.diag.record(Level::Info, "signin.consent", &format!("{} sign-in {}.", p.display_name, if consent { "allowed" } else { "withdrawn" }));
+        if self.broker.is_running().await {
+            let _ = self.sync_gateway().await;
+        }
+        Ok(())
     }
 
     /// The key to use for `p`: the stored one, or a placeholder for
@@ -176,7 +229,12 @@ impl Service {
             .into_iter()
             .map(|def| ProviderView {
                 def: def.clone(),
-                has_credential: self.key(def.id).is_some(),
+                has_credential: if def.credential_source == providers::CredentialSource::Keychain {
+                    self.key(def.id).is_some()
+                } else {
+                    self.has_signin_consent(def.id) && self.signin_available(def)
+                },
+                signin_available: def.credential_source != providers::CredentialSource::Keychain && self.signin_available(def),
                 key_optional: !def.requires_key,
                 codex_direct: codex_direct(def),
                 routes: app_ids().into_iter().map(|a| (a, route_for(a, def))).collect(),
@@ -186,6 +244,9 @@ impl Service {
 
     pub fn set_credential(&self, provider_id: &str, secret: &str) -> R<()> {
         let p = provider(provider_id)?;
+        if p.credential_source != providers::CredentialSource::Keychain {
+            return Err(format!("{} uses your existing sign-in; no key is entered here.", p.display_name));
+        }
         let secret = secret.trim();
         if secret.is_empty() || secret.chars().any(char::is_whitespace) {
             return Err("Paste the key exactly as issued: one token, no spaces.".into());
@@ -692,6 +753,7 @@ impl Service {
                 base_url: self.upstream_url(p),
                 models,
                 key,
+                codex_oauth: p.credential_source == providers::CredentialSource::CodexLogin,
             });
         }
         self.broker.start(specs, bindings).await.map_err(|e| e.to_string())
