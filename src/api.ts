@@ -97,6 +97,27 @@ export interface VerificationReport {
   status: ConnectionStatus;
 }
 
+export interface BotPlatform { enabled: boolean; allowed_users: string[]; allowed_channels: string[] }
+export interface BotSettings {
+  telegram: BotPlatform;
+  discord: BotPlatform;
+  folder: string;
+  connection_id: string;
+  allow_edits: boolean;
+  messages_per_minute: number;
+  proxy: string;
+  voice: { backend: "off" | "local" | "provider"; model_path: string; provider_id: string; model: string };
+}
+export interface BotPlatformStatus { running: boolean; detail: string; messages: number }
+export interface BotsView {
+  settings: BotSettings;
+  status: { telegram: BotPlatformStatus; discord: BotPlatformStatus };
+  has_telegram_token: boolean;
+  has_discord_token: boolean;
+  whisper_installed: boolean;
+  ffmpeg_installed: boolean;
+}
+
 export interface Connection {
   id: string;
   provider_id: string;
@@ -186,6 +207,10 @@ export const api = {
   guidedSetup: (id: string) => invoke<{ gateway_url: string; auth_scheme: string; token: string; model: string; steps: string[] }>("guided_setup", { id }),
   companionState: () => invoke<CompanionView>("companion_state"),
   keychainWaiting: () => invoke<boolean>("keychain_waiting"),
+  bots: () => invoke<BotsView>("bots_get"),
+  saveBots: (settings: BotSettings) => invoke<void>("bots_save", { settings }),
+  setBotToken: (platform: "telegram" | "discord", token: string) => invoke<void>("bots_set_token", { platform, token }),
+  stopBots: () => invoke<void>("bots_stop"),
   openrouterSignIn: () => invoke<void>("openrouter_sign_in"),
   companionEnable: (address: string, port: number, keepOn: boolean) => invoke<CompanionView>("companion_enable", { address, port, keepOn }),
   companionDisable: () => invoke<CompanionView>("companion_disable"),

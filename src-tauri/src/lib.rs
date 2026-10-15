@@ -1,4 +1,5 @@
 pub mod adapters;
+pub mod bots;
 pub mod cli;
 pub mod companion;
 pub mod config_engine;
@@ -328,6 +329,78 @@ async fn has_web_search_key(svc: State<'_, Arc<Service>>) -> Cmd<bool> {
     blocking(move || svc.has_web_search_key()).await
 }
 
+
+/// Chat bots (Telegram / Discord), see src/bots.
+pub struct BotState {
+    bots: bots::Bots,
+    dir: std::path::PathBuf,
+}
+
+#[derive(serde::Serialize)]
+struct BotsView {
+    settings: bots::BotSettings,
+    status: bots::BotsStatus,
+    has_telegram_token: bool,
+    has_discord_token: bool,
+    whisper_installed: bool,
+    ffmpeg_installed: bool,
+}
+
+async fn bots_apply(svc: &Arc<Service>, sessions: &sessions::Sessions, b: &BotState, settings: &bots::BotSettings) -> Cmd<()> {
+    let voice_key = providers::get(&settings.voice.provider_id).and_then(|p| svc.usable_key(p));
+    let (svc2, sessions2, s2) = (svc.clone(), sessions.clone(), settings.clone());
+    let make = move |platform: &'static str| -> Arc<dyn bots::Runner> {
+        Arc::new(bots::CodexRunner::new(svc2.clone(), sessions2.clone(), &s2, platform))
+    };
+    b.bots.apply(settings, svc.store.as_ref(), make, voice_key).await
+}
+
+#[tauri::command]
+async fn bots_get(svc: State<'_, Arc<Service>>, b: State<'_, BotState>) -> Cmd<BotsView> {
+    let settings = bots::BotSettings::load(&b.dir);
+    let s = svc.inner().clone();
+    let (tg, dc) = blocking(move || (s.store.get(bots::TELEGRAM_TOKEN).is_ok(), s.store.get(bots::DISCORD_TOKEN).is_ok())).await?;
+    Ok(BotsView {
+        settings,
+        status: b.bots.status().await,
+        has_telegram_token: tg,
+        has_discord_token: dc,
+        whisper_installed: bots::voice::find_whisper().is_some(),
+        ffmpeg_installed: adapters::find_exe("ffmpeg").is_some(),
+    })
+}
+
+/// Saves the settings and (re)starts the enabled bots.
+#[tauri::command]
+async fn bots_save(svc: State<'_, Arc<Service>>, sessions: State<'_, sessions::Sessions>, b: State<'_, BotState>, settings: bots::BotSettings) -> Cmd<()> {
+    settings.save(&b.dir)?;
+    let r = bots_apply(&svc, &sessions, &b, &settings).await;
+    let on = settings.telegram.enabled || settings.discord.enabled;
+    svc.diag.record(diagnostics::Level::Info, "bots.apply", if r.is_ok() && on { "Chat bots started." } else if r.is_ok() { "Chat bots are off." } else { "Chat bots could not start." });
+    r
+}
+
+#[tauri::command]
+async fn bots_set_token(svc: State<'_, Arc<Service>>, platform: String, token: String) -> Cmd<()> {
+    let account = match platform.as_str() {
+        "telegram" => bots::TELEGRAM_TOKEN,
+        "discord" => bots::DISCORD_TOKEN,
+        _ => return Err("Unknown chat app.".into()),
+    };
+    let token = token.trim().to_string();
+    if token.is_empty() || token.chars().any(char::is_whitespace) {
+        return Err("Paste the bot token exactly as given, with no spaces.".into());
+    }
+    let s = svc.inner().clone();
+    blocking(move || s.store.set(account, &token).map_err(|e| format!("Couldn't save the token: {e}"))).await?
+}
+
+#[tauri::command]
+async fn bots_stop(b: State<'_, BotState>) -> Cmd<()> {
+    b.bots.stop_all().await;
+    Ok(())
+}
+
 #[tauri::command]
 fn session_list(sessions: State<'_, sessions::Sessions>) -> Vec<sessions::Session> {
     sessions.list()
@@ -341,17 +414,7 @@ fn session_create(sessions: State<'_, sessions::Sessions>, folder: String, sandb
 /// Send a message; each turn may use a different Codex CLI connection.
 #[tauri::command]
 async fn session_send(svc: State<'_, Arc<Service>>, sessions: State<'_, sessions::Sessions>, id: String, connection_id: String, prompt: String) -> Cmd<()> {
-    let rec = svc.connections()?.into_iter().find(|c| c.id == connection_id).ok_or("Unknown connection.")?;
-    if rec.app_id != adapters::codex::APP_ID {
-        return Err("Sessions use Codex. Pick a Codex connection.".into());
-    }
-    if rec.route == state::Route::Gateway && !svc.gateway_status().phase.eq(&gateway::Phase::Ready) {
-        svc.sync_gateway().await?;
-    }
-    let bin = adapters::codex::find_binary().ok_or("Codex CLI is not installed.")?;
-    sessions.start_turn(&id, &bin, &rec.profile, &rec.id, &rec.model, &prompt)?;
-    svc.diag.record(diagnostics::Level::Info, "session.turn", &format!("Session {id}: Codex turn started with {}.", rec.id));
-    Ok(())
+    sessions.send(&svc, &id, &connection_id, &prompt).await
 }
 
 #[tauri::command]
@@ -437,6 +500,15 @@ pub fn run() {
                 if let Err(e) = svc.sync_gateway().await {
                     svc.diag.record(diagnostics::Level::Error, "gateway.startup", &e);
                 }
+                // Chat bots the user turned on come back with the app.
+                let b = handle.state::<BotState>();
+                let bs = bots::BotSettings::load(&b.dir);
+                if bs.telegram.enabled || bs.discord.enabled {
+                    let sessions = handle.state::<sessions::Sessions>();
+                    if let Err(e) = bots_apply(&svc, &sessions, &b, &bs).await {
+                        svc.diag.record(diagnostics::Level::Error, "bots.startup", &e);
+                    }
+                }
                 // Remote access comes back only if the user chose "Keep on".
                 let c = handle.state::<Companion>();
                 let settings = c.registry.settings();
@@ -451,8 +523,13 @@ pub fn run() {
         .manage(service)
         .manage(companion_state_holder)
         .manage(sessions::Sessions::open(&dir))
+        .manage(BotState { bots: bots::Bots::default(), dir: dir.clone() })
         .invoke_handler(tauri::generate_handler![
             keychain_waiting,
+            bots_get,
+            bots_save,
+            bots_set_token,
+            bots_stop,
             openrouter_sign_in,
             list_providers,
             set_credential,

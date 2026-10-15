@@ -216,7 +216,7 @@ impl Service {
 
     /// The key to use for `p`: the stored one, or a placeholder for
     /// providers that need none (local servers). None = missing and required.
-    fn usable_key(&self, p: &ProviderDefinition) -> Option<String> {
+    pub(crate) fn usable_key(&self, p: &ProviderDefinition) -> Option<String> {
         self.key(p.id).or_else(|| (!p.requires_key).then(|| "no-key-required".to_string()))
     }
 

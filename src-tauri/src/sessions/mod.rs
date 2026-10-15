@@ -89,6 +89,7 @@ struct Entry {
     stop: Option<oneshot::Sender<()>>,
 }
 
+#[derive(Clone)]
 pub struct Sessions {
     file: PathBuf,
     entries: Arc<Mutex<HashMap<String, Entry>>>,
@@ -284,6 +285,22 @@ impl Sessions {
             }
         }
         Self::save(&e, &self.file);
+    }
+
+    /// Starts a turn on `connection_id` (a Codex connection), bringing the
+    /// gateway up first when that connection goes through it.
+    pub async fn send(&self, svc: &crate::service::Service, id: &str, connection_id: &str, prompt: &str) -> Result<(), String> {
+        let rec = svc.connections()?.into_iter().find(|c| c.id == connection_id).ok_or("Unknown connection.")?;
+        if rec.app_id != crate::adapters::codex::APP_ID {
+            return Err("Sessions use Codex. Pick a Codex connection.".into());
+        }
+        if rec.route == crate::state::Route::Gateway && svc.gateway_status().phase != crate::gateway::Phase::Ready {
+            svc.sync_gateway().await?;
+        }
+        let bin = crate::adapters::codex::find_binary().ok_or("Codex isn't installed.")?;
+        self.start_turn(id, &bin, &rec.profile, &rec.id, &rec.model, prompt)?;
+        svc.diag.record(crate::diagnostics::Level::Info, "session.turn", &format!("Session {id}: Codex turn started with {}.", rec.id));
+        Ok(())
     }
 
     pub fn stop(&self, id: &str) -> Result<(), String> {
