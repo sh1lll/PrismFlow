@@ -1,7 +1,7 @@
 import RoutingPanel from "./RoutingPanel";
 import { useEffect, useMemo, useState } from "react";
 import {
-  api, APP_NAME, AppId, Connection, ConnectPreview, ModelInfo, Provider, ROUTE_LABEL, STATUS_LABEL, StageResult,
+  api, APP_IDS, APP_NAME, AppId, Connection, ConnectPreview, ModelInfo, Provider, ROUTE_LABEL, STATUS_LABEL, StageResult,
   errText, launchHint, statusTone, when,
 } from "../api";
 
@@ -81,8 +81,7 @@ function NewConnection({ providers, onDone }: { providers: Provider[]; onDone: (
       <div className="section-title">Connect an application to a model</div>
       <label className="small muted">Application</label>
       <select value={appId} onChange={(e) => setAppId(e.target.value as AppId)}>
-        <option value="codex_cli">Codex CLI</option>
-        <option value="claude_code">Claude Code CLI</option>
+        {APP_IDS.map((a) => <option key={a} value={a}>{APP_NAME[a]}</option>)}
       </select>
       <label className="small muted mt-block">Provider</label>
       <select value={providerId} onChange={(e) => setProviderId(e.target.value)}>
@@ -96,7 +95,9 @@ function NewConnection({ providers, onDone }: { providers: Provider[]; onDone: (
         <div className="muted small mt">
           {appId === "claude_code"
             ? "Claude Code speaks the Anthropic Messages API; PrismFlow's local gateway translates it for this provider."
-            : "This provider has no Responses API; PrismFlow's local gateway translates Codex's requests."}
+            : appId === "codex_cli"
+              ? "This provider has no Responses API; PrismFlow's local gateway translates Codex's requests."
+              : `${APP_NAME[appId]} reaches every provider through PrismFlow's local gateway with a revocable local token.`}
         </div>
       )}
       {provider && !provider.has_credential && !provider.key_optional && <div className="warn small mt">Add a {provider.display_name} key under Providers first.</div>}

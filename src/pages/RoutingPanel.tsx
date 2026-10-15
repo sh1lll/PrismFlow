@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { api, Connection, Effort, ModelRef, Provider, Routing, Tier, errText } from "../api";
+import { api, AppId, Connection, Effort, ModelRef, Provider, Routing, Tier, errText } from "../api";
 
 const TIERS: { tier: Tier; label: string }[] = [
   { tier: "fable", label: "Fable" },
@@ -38,7 +38,7 @@ export default function RoutingPanel({ c, providers, onSaved }: { c: Connection;
   const [msg, setMsg] = useState<{ tone: string; text: string } | null>(null);
   const [busy, setBusy] = useState(false);
   const claude = c.app_id === "claude_code";
-  const usable = providers.filter((p) => (p.has_credential || p.key_optional) && p.routes[c.app_id as "codex_cli" | "claude_code"]);
+  const usable = providers.filter((p) => (p.has_credential || p.key_optional) && p.routes[c.app_id as AppId]);
 
   async function save() {
     setMsg(null);

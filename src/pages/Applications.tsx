@@ -18,6 +18,10 @@ const INTEGRATION: Record<string, JSX.Element> = {
       Claude Code speaks only the Anthropic Messages API, so every provider goes through PrismFlow's local gateway; Claude Code holds only a revocable local token.
     </>
   ),
+  aider: <>Launched by PrismFlow with <code>OPENAI_API_BASE</code> pointed at the local gateway and a token fetched at launch. Your own Aider settings are untouched.</>,
+  cline: <>Launched with an isolated <code>--data-dir</code> inside PrismFlow's folder; the key comes from the environment at launch, so none is stored. Your <code>~/.cline</code> is untouched.</>,
+  pi: <>Launched with an isolated <code>PI_CODING_AGENT_DIR</code>; Pi runs PrismFlow's token helper itself on each request. Your <code>~/.pi</code> is untouched.</>,
+  hermes: <>Launched with an isolated <code>HERMES_HOME</code>; the token is passed by environment variable. Your <code>~/.hermes</code> is untouched. The first launch installs Hermes' Python dependencies into the isolated home.</>,
 };
 
 export default function Applications() {

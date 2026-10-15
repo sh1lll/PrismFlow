@@ -30,10 +30,14 @@ export interface UrlCheck {
   warnings: string[];
 }
 
-export type AppId = "codex_cli" | "claude_code";
+export type AppId = "codex_cli" | "claude_code" | "aider" | "cline" | "pi" | "hermes";
+export const APP_IDS: AppId[] = ["codex_cli", "claude_code", "aider", "cline", "pi", "hermes"];
+export const TERMINAL_AGENTS: AppId[] = ["aider", "cline", "pi", "hermes"];
 export type Route = "direct" | "gateway";
 
-export const APP_NAME: Record<string, string> = { codex_cli: "Codex CLI", claude_code: "Claude Code CLI" };
+export const APP_NAME: Record<string, string> = {
+  codex_cli: "Codex CLI", claude_code: "Claude Code CLI", aider: "Aider", cline: "Cline CLI", pi: "Pi", hermes: "Hermes Agent",
+};
 
 export const ROUTE_LABEL: Record<Route, string> = {
   direct: "Direct",
@@ -167,6 +171,7 @@ export const api = {
 
 /** The command a user runs to start the app with a connection. */
 export function launchHint(c: Connection): string {
+  if (TERMINAL_AGENTS.includes(c.app_id as AppId)) return c.managed_file;
   return c.app_id === "claude_code" ? `claude --settings ${c.managed_file}` : `codex -p ${c.profile}`;
 }
 
