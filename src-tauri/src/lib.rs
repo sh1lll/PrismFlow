@@ -6,6 +6,7 @@ pub mod diagnostics;
 pub mod discovery;
 pub mod providers;
 pub mod state;
+pub mod verify;
 
 #[tauri::command]
 fn ping() -> String {
