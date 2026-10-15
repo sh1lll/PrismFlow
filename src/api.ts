@@ -158,6 +158,11 @@ export interface FoundKey { provider_id: string; provider_name: string; variable
 export interface ProfileEntry { app_id: string; provider_id: string; model: string }
 export interface Profiles { active: string | null; list: Record<string, ProfileEntry[]> }
 
+export interface McpServer { name: string; command: string; args: string[]; env: Record<string, string>; url: string }
+export interface Skill { name: string; apps: string[]; description: string }
+export interface ToolsView { servers: McpServer[]; applied: Record<string, string[]>; targets: [string, string, boolean][]; rules: string; skills: Skill[] }
+export interface RestoreReport { restored: string[]; problems: string[] }
+
 export interface UsageTotals { requests: number; errors: number; input_tokens: number; output_tokens: number; cost: number; unpriced: number }
 export interface UsageRequest {
   ts: number; connection: string; provider: string; model: string; path: string; status: number; ms: number;
@@ -225,6 +230,12 @@ export const api = {
   guidedSetup: (id: string) => invoke<{ gateway_url: string; auth_scheme: string; token: string; model: string; steps: string[] }>("guided_setup", { id }),
   companionState: () => invoke<CompanionView>("companion_state"),
   keychainWaiting: () => invoke<boolean>("keychain_waiting"),
+  tools: () => invoke<ToolsView>("tools_get"),
+  mcpApply: (servers: McpServer[], apps: string[]) => invoke<string[]>("mcp_apply", { servers, apps }),
+  rulesApply: (rules: string, project: string | null) => invoke<string[]>("rules_apply", { rules, project }),
+  skillShare: (name: string) => invoke<string[]>("skill_share", { name }),
+  backupExport: () => invoke<string>("backup_export"),
+  backupRestore: (path: string) => invoke<RestoreReport>("backup_restore", { path }),
   addKey: (providerId: string, secret: string) => invoke<number>("keys_add", { providerId, secret }),
   removeExtraKeys: (providerId: string) => invoke<void>("keys_remove_extra", { providerId }),
   scanKeys: () => invoke<FoundKey[]>("keys_scan"),

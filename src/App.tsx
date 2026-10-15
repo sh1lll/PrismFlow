@@ -11,10 +11,11 @@ import Bots from "./pages/Bots";
 import Usage from "./pages/Usage";
 import TryChat from "./pages/TryChat";
 import Setup from "./pages/Setup";
+import Tools from "./pages/Tools";
 import { api } from "./api";
 
-export type Page = "Overview" | "Providers" | "Apps" | "Set up" | "Connections" | "Try a model" | "Usage" | "Code sessions" | "Chat bots" | "Activity" | "Remote access" | "Settings";
-const PAGES: Page[] = ["Overview", "Providers", "Apps", "Connections", "Try a model", "Usage", "Code sessions", "Chat bots", "Activity", "Remote access", "Settings"];
+export type Page = "Overview" | "Providers" | "Apps" | "Set up" | "Connections" | "Try a model" | "Tools" | "Usage" | "Code sessions" | "Chat bots" | "Activity" | "Remote access" | "Settings";
+const PAGES: Page[] = ["Overview", "Providers", "Apps", "Connections", "Try a model", "Tools", "Usage", "Code sessions", "Chat bots", "Activity", "Remote access", "Settings"];
 
 export default function App() {
   const [page, setPage] = useState<Page>("Overview");
@@ -66,6 +67,7 @@ export default function App() {
         {page === "Code sessions" && <Sessions />}
         {page === "Usage" && <Usage />}
         {page === "Try a model" && <TryChat />}
+        {page === "Tools" && <Tools />}
         {page === "Set up" && <Setup onDone={() => setPage("Overview")} />}
         {page === "Chat bots" && <Bots />}
         {page === "Activity" && <Diagnostics />}

@@ -1404,6 +1404,31 @@ mod tests {
     const CLAUDE: &str = claude_code::APP_ID;
 
     #[tokio::test]
+    async fn backup_restores_on_a_fresh_install_without_keys() {
+        let d1 = tempfile::tempdir().unwrap();
+        let a = service(d1.path());
+        a.set_credential("openrouter", "sk-or-v1-secretsecret").unwrap();
+        a.connect(CODEX, "openrouter", "a/b").await.unwrap();
+        let mut st = a.settings();
+        st.budgets.insert("openrouter".into(), 25);
+        a.set_settings(st).await.unwrap();
+        a.save_profile("Work").unwrap();
+        let text = serde_json::to_string(&a.backup().unwrap()).unwrap();
+        assert!(!text.contains("secretsecret"), "no keys in a backup");
+
+        let d2 = tempfile::tempdir().unwrap();
+        let b = service(d2.path());
+        let rep = b.restore(serde_json::from_str(&text).unwrap()).await.unwrap();
+        assert_eq!(b.settings().budgets.get("openrouter"), Some(&25));
+        assert!(b.profiles().list.contains_key("Work"));
+        // No key on the new machine yet: the connection is reported, not lost.
+        assert!(rep.problems.iter().any(|p| p.contains("openrouter")), "{rep:?}");
+        b.set_credential("openrouter", "sk-or-v1-newmachinekey").unwrap();
+        b.switch_profile("Work").await.unwrap();
+        assert_eq!(b.connections().unwrap()[0].model, "a/b");
+    }
+
+    #[tokio::test]
     async fn keys_import_extra_keys_and_profiles() {
         let dir = tempfile::tempdir().unwrap();
         let s = service(dir.path());

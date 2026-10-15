@@ -27,6 +27,7 @@ export default function Settings() {
     <div>
       <h1>Settings</h1>
       <StartUp />
+      <BackupCard />
       <div className="card">
         <div className="section-title">Limits</div>
         {!s ? <div className="muted">Loading…</div> : FIELDS.map((f) => (
@@ -94,6 +95,28 @@ function RemoveAll() {
         </div>
       )}
       {error && <div className="err small mt">{error}</div>}
+    </div>
+  );
+}
+
+function BackupCard() {
+  const [path, setPath] = useState("");
+  const [msg, setMsg] = useState<{ tone: string; text: string } | null>(null);
+  const [busy, setBusy] = useState(false);
+  return (
+    <div className="card">
+      <div className="section-title">Backup</div>
+      <div className="small muted">Save your setup to a file, or bring it back on another computer. Keys aren't included; add or import them after restoring.</div>
+      <div className="row mt"><button className="ghost" onClick={() => api.backupExport().then((p) => setMsg({ tone: "ok", text: `Saved to ${p}` })).catch((e) => setMsg({ tone: "err", text: errText(e) }))}>Save a backup</button></div>
+      <div className="row mt">
+        <input placeholder="Path to a PrismFlow backup file" value={path} onChange={(e) => setPath(e.target.value)} />
+        <button className="ghost" disabled={!path.trim() || busy} onClick={() => {
+          setBusy(true);
+          api.backupRestore(path).then((r) => setMsg({ tone: r.problems.length ? "warn" : "ok", text: `Restored: ${r.restored.join(", ")}${r.problems.length ? `\n\nNeeds attention:\n${r.problems.join("\n")}` : ""}` }))
+            .catch((e) => setMsg({ tone: "err", text: errText(e) })).finally(() => setBusy(false));
+        }}>{busy ? "Restoring…" : "Restore"}</button>
+      </div>
+      {msg && <div className={`small mt pre-wrap selectable ${msg.tone}`}>{msg.text}</div>}
     </div>
   );
 }

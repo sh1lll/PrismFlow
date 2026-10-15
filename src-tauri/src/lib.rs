@@ -1,5 +1,6 @@
 pub mod accounts;
 pub mod adapters;
+pub mod backup;
 pub mod bots;
 pub mod cli;
 pub mod companion;
@@ -8,6 +9,7 @@ pub mod credentials;
 pub mod diagnostics;
 pub mod discovery;
 pub mod gateway;
+pub mod mcp;
 pub mod notify;
 pub mod tray;
 pub mod usage;
@@ -106,6 +108,88 @@ fn profile_delete(svc: State<'_, Arc<Service>>, name: String) -> Cmd<accounts::P
 #[tauri::command]
 async fn profile_switch(svc: State<'_, Arc<Service>>, name: String) -> Cmd<accounts::Profiles> {
     svc.switch_profile(&name).await
+}
+
+#[derive(serde::Serialize)]
+struct ToolsView {
+    servers: Vec<mcp::Server>,
+    applied: std::collections::BTreeMap<String, Vec<String>>,
+    targets: Vec<(String, String, bool)>,
+    rules: String,
+    skills: Vec<mcp::Skill>,
+}
+
+#[tauri::command]
+async fn tools_get(svc: State<'_, Arc<Service>>) -> Cmd<ToolsView> {
+    let dir = svc.state.dir().to_path_buf();
+    blocking(move || {
+        let st = mcp::load(&dir);
+        let rules = mcp::rules_files().iter().find_map(|(_, f)| std::fs::read_to_string(f).ok().map(|t| mcp::read_rules(&t)).filter(|r| !r.is_empty())).unwrap_or_default();
+        ToolsView {
+            servers: st.servers,
+            applied: st.applied,
+            targets: mcp::TARGETS.iter().map(|(id, name)| (id.to_string(), name.to_string(), mcp::present(id))).collect(),
+            rules,
+            skills: mcp::list_skills(),
+        }
+    }).await
+}
+
+/// Saves the MCP list and writes it into the chosen apps (removing it from the others it was in).
+#[tauri::command]
+async fn mcp_apply(svc: State<'_, Arc<Service>>, servers: Vec<mcp::Server>, apps: Vec<String>) -> Cmd<Vec<String>> {
+    for s in &servers {
+        mcp::validate(s)?;
+    }
+    let dir = svc.state.dir().to_path_buf();
+    blocking(move || {
+        let mut st = mcp::load(&dir);
+        st.servers = servers;
+        let mut problems = Vec::new();
+        for (id, _) in mcp::TARGETS {
+            let prev = st.applied.get(*id).cloned().unwrap_or_default();
+            let want: Vec<mcp::Server> = if apps.iter().any(|a| a == id) { st.servers.clone() } else { Vec::new() };
+            if want.is_empty() && prev.is_empty() {
+                continue;
+            }
+            match mcp::apply(id, &want, &prev) {
+                Ok(names) => { st.applied.insert(id.to_string(), names); }
+                Err(e) => problems.push(e),
+            }
+        }
+        mcp::save(&dir, &st)?;
+        if problems.is_empty() { Ok(Vec::new()) } else { Ok(problems) }
+    }).await?
+}
+
+#[tauri::command]
+async fn rules_apply(rules: String, project: Option<String>) -> Cmd<Vec<String>> {
+    blocking(move || match project.filter(|p| !p.trim().is_empty()) {
+        Some(p) => mcp::apply_project_rules(std::path::Path::new(p.trim()), &rules).map(|()| vec!["This project".to_string()]),
+        None => mcp::apply_global_rules(&rules),
+    }).await?
+}
+
+#[tauri::command]
+async fn skill_share(name: String) -> Cmd<Vec<String>> {
+    blocking(move || mcp::share_skill(&name)).await?
+}
+
+/// Saves a backup to Downloads and returns where.
+#[tauri::command]
+async fn backup_export(svc: State<'_, Arc<Service>>) -> Cmd<String> {
+    let b = svc.backup()?;
+    let dir = dirs::download_dir().or_else(dirs::home_dir).ok_or("No Downloads folder.")?;
+    let path = dir.join(format!("PrismFlow backup {}.json", usage::day(diagnostics::now_secs())));
+    std::fs::write(&path, serde_json::to_string_pretty(&b).map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
+    Ok(path.display().to_string())
+}
+
+#[tauri::command]
+async fn backup_restore(svc: State<'_, Arc<Service>>, path: String) -> Cmd<backup::RestoreReport> {
+    let text = std::fs::read_to_string(path.trim()).map_err(|_| "Couldn't open that file.".to_string())?;
+    let b: backup::Backup = serde_json::from_str(&text).map_err(|_| "That isn't a PrismFlow backup file.".to_string())?;
+    svc.restore(b).await
 }
 
 #[tauri::command]
@@ -686,6 +770,12 @@ pub fn run() {
         .manage(BotState { bots: bots::Bots::default(), dir: dir.clone() })
         .invoke_handler(tauri::generate_handler![
             keychain_waiting,
+            tools_get,
+            mcp_apply,
+            rules_apply,
+            skill_share,
+            backup_export,
+            backup_restore,
             keys_add,
             keys_remove_extra,
             keys_scan,
