@@ -48,6 +48,36 @@ fn status_for_probe(e: &ProbeError) -> ConnectionStatus {
 }
 
 /// Classify a failed agent run from its (already redacted) output.
+fn number_after(text: &str, key: &str) -> Option<u64> {
+    let i = text.find(key)? + key.len();
+    let digits: String = text[i..].chars().skip_while(|c| !c.is_ascii_digit()).take_while(|c| c.is_ascii_digit()).collect();
+    digits.parse().ok()
+}
+
+/// A specific, actionable explanation for well-known failures, appended to
+/// the stage detail (SPEC §9: clear errors with remediation).
+pub fn remediation(output: &str, provider: &ProviderDefinition) -> Option<String> {
+    let o = output.to_lowercase();
+    if o.contains("exceed_context_size") || o.contains("exceeds the available context") || o.contains("context length")
+        || o.contains("maximum context") || o.contains("context_length_exceeded")
+    {
+        let need = number_after(&o, "n_prompt_tokens").or_else(|| number_after(&o, "request ("));
+        let have = number_after(&o, "n_ctx").or_else(|| number_after(&o, "context size ("));
+        let sizes = match (need, have) {
+            (Some(n), Some(h)) => format!(" The agent's prompt needs about {n} tokens; the model is running with {h}."),
+            _ => String::new(),
+        };
+        let fix = match provider.id {
+            "ollama" => "Restart Ollama with a larger window, e.g. `OLLAMA_CONTEXT_LENGTH=32768 ollama serve`, or set it in the Ollama app's settings.",
+            "llamacpp" => "Restart llama-server with a larger `--ctx-size` (e.g. 32768).",
+            "lmstudio" => "In LM Studio, reload the model with a larger context length (e.g. 32768).",
+            _ => "Choose a model with a larger context window.",
+        };
+        return Some(format!("The model's context window is too small for this coding agent.{sizes} {fix}"));
+    }
+    None
+}
+
 pub fn classify_agent_failure(output: &str) -> ConnectionStatus {
     let o = output.to_lowercase();
     if o.contains("error loading config") || o.contains("invalid settings") {
@@ -307,7 +337,7 @@ async fn run_stages(
     }
 
     if is_claude {
-        return claude_agent_stages(env, record, run, &secrets).await;
+        return claude_agent_stages(env, provider, record, run, &secrets).await;
     }
 
     // Stage 5 — end-to-end request through Codex itself.
@@ -321,7 +351,8 @@ async fn run_stages(
             format!("Codex answered through the {} profile.", record.profile)),
         Ok((_, out)) => {
             let shown = redact_known(&tail(&out, 6), &secrets);
-            run.push(5, "End-to-end", StageOutcome::Fail, format!("Codex did not return the expected reply:\n{shown}"));
+            let hint = remediation(&out, provider).map(|h| format!("{h}\n\n")).unwrap_or_default();
+            run.push(5, "End-to-end", StageOutcome::Fail, format!("{hint}Codex did not return the expected reply:\n{shown}"));
             return classify_agent_failure(&shown);
         }
         Err(e) => {
@@ -356,7 +387,7 @@ async fn run_stages(
     }
 }
 
-async fn claude_agent_stages(env: &VerifyEnv<'_>, record: &ConnectionRecord, run: &mut Run, secrets: &[&str]) -> ConnectionStatus {
+async fn claude_agent_stages(env: &VerifyEnv<'_>, provider: &ProviderDefinition, record: &ConnectionRecord, run: &mut Run, secrets: &[&str]) -> ConnectionStatus {
     let Some(bin) = env.claude_bin.as_deref() else {
         run.push(5, "End-to-end", StageOutcome::Fail, "Claude Code is not installed.");
         return ConnectionStatus::RequiresAttention;
@@ -374,7 +405,8 @@ async fn claude_agent_stages(env: &VerifyEnv<'_>, record: &ConnectionRecord, run
                 format!("Claude Code answered through PrismFlow's gateway with {}.", record.model)),
             _ => {
                 let shown = redact_known(&tail(&out, 6), secrets);
-                run.push(5, "End-to-end", StageOutcome::Fail, format!("Claude Code did not return the expected reply:\n{shown}"));
+                let hint = remediation(&out, provider).map(|h| format!("{h}\n\n")).unwrap_or_default();
+                run.push(5, "End-to-end", StageOutcome::Fail, format!("{hint}Claude Code did not return the expected reply:\n{shown}"));
                 return classify_agent_failure(&shown);
             }
         },
@@ -720,5 +752,13 @@ esac"#;
         assert_eq!(classify_agent_failure("No endpoints found for x/y"), ConnectionStatus::ModelUnavailable);
         assert_eq!(classify_agent_failure("Error loading config.toml: bad"), ConnectionStatus::ConfigurationInvalid);
         assert_eq!(classify_agent_failure("high demand"), ConnectionStatus::RequiresAttention);
+    }
+
+    #[test]
+    fn context_overflow_gets_a_specific_fix() {
+        let raw = r#"{\"message\":\"request (11325 tokens) exceeds the available context size (4096 tokens)\",\"type\":\"exceed_context_size_error\",\"n_prompt_tokens\":11325,\"n_ctx\":4096}"#;
+        let h = remediation(raw, crate::providers::get("ollama").unwrap()).unwrap();
+        assert!(h.contains("11325") && h.contains("4096") && h.contains("OLLAMA_CONTEXT_LENGTH"), "{h}");
+        assert!(remediation("all good", crate::providers::get("ollama").unwrap()).is_none());
     }
 }

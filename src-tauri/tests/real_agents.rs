@@ -131,6 +131,11 @@ fn main() {
         let code = prismflow_lib::cli::handle_args(&args[1..], store.as_ref(), &mut std::io::stdout()).unwrap_or(64);
         std::process::exit(code);
     }
+    if let Ok(model) = std::env::var("PRISMFLOW_LIVE_OLLAMA") {
+        tokio::runtime::Runtime::new().unwrap().block_on(live_local_ollama(&model));
+        println!("real_agents: LIVE OLLAMA PASS");
+        return;
+    }
     if std::env::var("PRISMFLOW_REAL_SMOKE").as_deref() != Ok("1") {
         println!("real_agents: skipped (set PRISMFLOW_REAL_SMOKE=1 to run the real-binary smoke)");
         return;
@@ -214,5 +219,63 @@ async fn real_claude_code_and_codex_through_the_gateway() {
         assert!(!keychain_has(&tokens::account(id)), "token for {id} must be revoked");
     }
     assert!(!svc.broker.is_running().await, "gateway must stop with the last connection");
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+/// Live run against the user's own Ollama: real agents, real model, no mocks.
+/// `PRISMFLOW_LIVE_OLLAMA=<model> cargo test --test real_agents`
+async fn live_local_ollama(model: &str) {
+    let claude_id = "claude_code:ollama";
+    let codex_id = "codex_cli:ollama";
+    let accounts = vec![tokens::account(claude_id), tokens::account(codex_id)];
+    for a in &accounts {
+        assert!(!keychain_has(a), "refusing to run: real Keychain item {a} exists");
+    }
+    let _cleanup = KeychainCleanup(accounts.clone());
+    let dir = tempfile::tempdir().unwrap();
+    let helper = dir.path().join("prismflow-helper");
+    let me = std::env::current_exe().unwrap();
+    std::fs::write(&helper, format!("#!/bin/sh\nexec '{}' helper \"$@\"\n", me.display())).unwrap();
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&helper, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    let state_dir = dir.path().join("state");
+    let codex_home = dir.path().join("codex");
+    let claude_dir = dir.path().join("claude");
+    std::fs::create_dir_all(&codex_home).unwrap();
+    std::fs::create_dir_all(&claude_dir).unwrap();
+    std::env::set_var("CODEX_HOME", &codex_home);
+    let diag = Arc::new(DiagnosticsLog::new(state_dir.join("diagnostics.jsonl")));
+    let port = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap().local_addr().unwrap().port();
+    let svc = Service {
+        store: prismflow_lib::credentials::default_store(),
+        state: StateStore::open(&state_dir).unwrap(),
+        broker: Broker::new(port, state_dir.clone(), Some(diag.clone())),
+        diag,
+        client: prismflow_lib::discovery::client(),
+        codex_home,
+        claude_dir,
+        helper,
+        agent_timeout: Duration::from_secs(300),
+        upstream_overrides: std::env::var("PRISMFLOW_LIVE_OLLAMA_URL")
+            .map(|u| [("ollama".to_string(), u)].into())
+            .unwrap_or_default(),
+    };
+    let mut failures = Vec::new();
+    for (app, id) in [(claude_code::APP_ID, claude_id), (codex::APP_ID, codex_id)] {
+        svc.connect(app, "ollama", model).await.expect("connect");
+        let report = svc.verify(id).await.expect("verify");
+        eprintln!("\n== {id} ({model}): {:?}", report.status);
+        for s in &report.stages {
+            eprintln!("  {} {:<13} {:?}: {}", s.stage, s.name, s.outcome, s.detail.lines().next().unwrap_or(""));
+        }
+        if !matches!(report.status, ConnectionStatus::ConnectedAndVerified | ConnectionStatus::PartiallyCompatible) {
+            failures.push(format!("{id}: {:?}\n{:#?}", report.status, report.stages));
+        }
+    }
+    for id in [claude_id, codex_id] {
+        svc.disconnect(id).await.expect("disconnect");
+    }
     assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
