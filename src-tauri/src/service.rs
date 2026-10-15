@@ -84,7 +84,7 @@ type R<T> = Result<T, String>;
 
 /// Every application PrismFlow can connect.
 fn app_ids() -> Vec<&'static str> {
-    let mut v = vec![codex::APP_ID, claude_code::APP_ID];
+    let mut v = vec![codex::APP_ID, codex::DESKTOP_APP_ID, claude_code::APP_ID];
     v.extend(agents::AGENTS.iter().map(|a| a.id));
     v
 }
@@ -105,6 +105,8 @@ pub fn route_for(app_id: &str, p: &ProviderDefinition) -> Option<Route> {
     match app_id {
         codex::APP_ID if codex_direct(p) && p.requires_key => Some(Route::Direct),
         codex::APP_ID => Some(Route::Gateway),
+        codex::DESKTOP_APP_ID if codex_direct(p) && p.requires_key => Some(Route::Direct),
+        codex::DESKTOP_APP_ID => Some(Route::Gateway),
         claude_code::APP_ID => Some(Route::Gateway),
         a if agents::spec(a).is_some() => Some(Route::Gateway),
         _ => None,
@@ -119,7 +121,11 @@ fn app_name(app_id: &str) -> &'static str {
     if let Some(a) = agents::spec(app_id) {
         return a.display_name;
     }
-    if app_id == claude_code::APP_ID { "Claude Code" } else { "Codex" }
+    match app_id {
+        claude_code::APP_ID => "Claude Code",
+        codex::DESKTOP_APP_ID => "Codex Desktop",
+        _ => "Codex",
+    }
 }
 
 fn validate_model_id(model: &str) -> R<&str> {
@@ -361,7 +367,7 @@ impl Service {
     }
 
     fn plan(&self, app_id: &str, provider_id: &str, model: &str) -> R<(&'static ProviderDefinition, Route, config_engine::EditPlan)> {
-        let catalog = (app_id == codex::APP_ID).then(|| self.codex_catalog_path(provider_id));
+        let catalog = (app_id == codex::APP_ID || app_id == codex::DESKTOP_APP_ID).then(|| self.codex_catalog_path(provider_id));
         self.plan_with(app_id, provider_id, model, catalog.as_deref())
     }
 
@@ -375,7 +381,7 @@ impl Service {
         let p = provider(provider_id)?;
         let model = validate_model_id(model)?;
         let route = route_for(app_id, p).ok_or_else(|| match app_id {
-            a if a == codex::APP_ID || a == claude_code::APP_ID || agents::spec(a).is_some() => format!(
+            a if a == codex::APP_ID || a == codex::DESKTOP_APP_ID || a == claude_code::APP_ID || agents::spec(a).is_some() => format!(
                 "{} needs a base URL; custom providers are not supported in this build.", p.display_name
             ),
             other => format!("Unknown application '{other}'."),
@@ -392,6 +398,14 @@ impl Service {
             return Ok((p, route, config_engine::EditPlan { file: script, before, after: body, summary }));
         }
         let plan = match (app_id, route) {
+            (codex::DESKTOP_APP_ID, _) => {
+                let (base_url, args) = if route == Route::Direct {
+                    (p.base_url.to_string(), vec!["credential".into(), "print".into(), "--provider".into(), p.id.into()])
+                } else {
+                    (format!("{url}/v1"), vec!["token".into(), "print".into(), "--connection".into(), id.clone()])
+                };
+                codex::plan_connect_base(&self.codex_home, p, model, &base_url, &self.helper, args, catalog).map_err(|e| e.to_string())?
+            }
             (codex::APP_ID, Route::Direct) => codex::plan_connect(&self.codex_home, p, model, &self.helper, catalog).map_err(|e| e.to_string())?,
             (codex::APP_ID, Route::Gateway) => codex::plan_connect_gateway(&self.codex_home, p, model, &self.helper, &id, &url, catalog)
                 .map_err(|e| e.to_string())?,
@@ -412,6 +426,8 @@ impl Service {
     fn profile_for(&self, app_id: &str, provider_id: &str) -> String {
         if agents::spec(app_id).is_some() {
             connection_id(app_id, provider_id).replace(':', "-")
+        } else if app_id == codex::DESKTOP_APP_ID {
+            String::new() // the desktop app uses the base config, no profile
         } else if app_id == claude_code::APP_ID {
             claude_code::profile_name(provider_id)
         } else {
@@ -420,6 +436,9 @@ impl Service {
     }
 
     fn launch_line(&self, app_id: &str, profile: &str, file: &std::path::Path) -> String {
+        if app_id == codex::DESKTOP_APP_ID {
+            return format!("open -b {}", codex::DESKTOP_BUNDLE_ID);
+        }
         if agents::spec(app_id).is_some() {
             return quote(&file.display().to_string());
         }
@@ -438,7 +457,16 @@ impl Service {
         let mut warnings = vec![format!(
             "Requests from this {} profile are billed to your {} account.", app_name(app_id), p.display_name
         )];
-        if let Some(a) = agents::spec(app_id) {
+        if app_id == codex::DESKTOP_APP_ID {
+            let priors = codex::read_base_priors(&self.codex_home).unwrap_or_default();
+            match priors.get("model_provider").cloned().flatten() {
+                Some(cur) if !cur.starts_with("prismflow_") => warnings.push(format!(
+                    "The Codex app currently uses provider \"{cur}\" (set by you or another tool). PrismFlow switches it and puts \"{cur}\" back when you disconnect."
+                )),
+                _ => {}
+            }
+            warnings.push("This edits your ~/.codex/config.toml (the desktop app has no profiles): three top-level keys and one provider table. A backup is kept and the previous values are restored on disconnect. Restart the Codex app afterwards.".into());
+        } else if let Some(a) = agents::spec(app_id) {
             warnings.push(format!("Your own {} configuration is not modified; PrismFlow launches it with isolated settings from its own folder.", a.display_name));
         } else if app_id == claude_code::APP_ID {
             warnings.push("Your own ~/.claude/settings.json is not modified; this connection applies only when Claude Code runs with the PrismFlow settings file.".into());
@@ -478,8 +506,22 @@ impl Service {
     }
 
     pub async fn connect(&self, app_id: &str, provider_id: &str, model: &str) -> R<ConnectionRecord> {
+        if app_id == codex::DESKTOP_APP_ID {
+            if let Some(other) = self.connections()?.into_iter().find(|r| r.app_id == codex::DESKTOP_APP_ID && r.provider_id != provider_id) {
+                return Err(format!("Codex Desktop is connected to {} already. Disconnect it first; the app has one configuration.", other.provider_id));
+            }
+        }
+        // Desktop: keep the original priors across model switches.
+        let desktop_priors = if app_id == codex::DESKTOP_APP_ID {
+            match self.state.get(&connection_id(app_id, provider_id)).ok().flatten() {
+                Some(existing) => existing.priors,
+                None => codex::read_base_priors(&self.codex_home).map_err(|e| e.to_string())?,
+            }
+        } else {
+            Default::default()
+        };
         let (p, route, mut plan) = self.plan(app_id, provider_id, model)?;
-        if app_id == codex::APP_ID && self.usable_key(p).is_some() {
+        if (app_id == codex::APP_ID || app_id == codex::DESKTOP_APP_ID) && self.usable_key(p).is_some() {
             if let Err(e) = self.write_codex_catalog(p, validate_model_id(model)?).await {
                 // Codex still works without a catalog (it falls back to defaults).
                 self.diag.record(Level::Warn, "connect.catalog", &format!(
@@ -530,6 +572,7 @@ impl Service {
             last_report: None,
             // Switching model keeps the connection's routing choices.
             routing: self.state.get(&id).ok().flatten().map(|r| r.routing).unwrap_or_default(),
+            priors: desktop_priors,
         };
         self.state.upsert(record.clone()).map_err(|e| e.to_string())?;
         self.diag.record(Level::Info, "connect.applied", &format!(
@@ -682,7 +725,24 @@ impl Service {
 
     pub async fn disconnect(&self, id: &str) -> R<Option<String>> {
         let record = self.state.get(id).map_err(|e| e.to_string())?.ok_or("Unknown connection.")?;
-        let removed = if agents::spec(&record.app_id).is_some() {
+        let removed = if record.app_id == codex::DESKTOP_APP_ID {
+            codex::plan_disconnect_base(&self.codex_home, &record.provider_id, &record.priors)
+                .map_err(|e| e.to_string())
+                .and_then(|plans| {
+                    let mut backup = None;
+                    for plan in plans {
+                        let applied = config_engine::apply(&plan).map_err(|e| e.to_string())?;
+                        if let Some(b) = applied.backup_path {
+                            let dest = self.state.backups_dir().join(b.file_name().unwrap_or_default());
+                            if std::fs::rename(&b, &dest).is_err() {
+                                let _ = std::fs::remove_file(&b);
+                            }
+                            backup = Some(dest);
+                        }
+                    }
+                    Ok(backup)
+                })
+        } else if agents::spec(&record.app_id).is_some() {
             agents::remove(&agents::agent_dir(self.state.dir(), &record.id))
         } else if record.app_id == claude_code::APP_ID {
             claude_code::disconnect(&record.managed_file, &self.state.backups_dir()).map_err(|e| e.to_string())
@@ -694,7 +754,7 @@ impl Service {
             self.diag.record(Level::Error, "disconnect.failed", &msg);
             msg
         })?;
-        if record.app_id == codex::APP_ID {
+        if record.app_id == codex::APP_ID || record.app_id == codex::DESKTOP_APP_ID {
             let _ = std::fs::remove_file(self.codex_catalog_path(&record.provider_id));
         }
         if record.route == Route::Gateway {
@@ -854,6 +914,11 @@ impl Service {
 
     pub fn launch(&self, id: &str) -> R<()> {
         let record = self.state.get(id).map_err(|e| e.to_string())?.ok_or("Unknown connection.")?;
+        if record.app_id == codex::DESKTOP_APP_ID {
+            std::process::Command::new("open").args(["-b", codex::DESKTOP_BUNDLE_ID]).status().map_err(|e| e.to_string())?;
+            self.diag.record(Level::Info, "launch", "Opened the Codex app.");
+            return Ok(());
+        }
         if let Some(a) = agents::spec(&record.app_id) {
             agents::find_binary(a).ok_or_else(|| format!("{} is not installed.", a.display_name))?;
         } else if record.app_id == claude_code::APP_ID {
@@ -1097,6 +1162,35 @@ mod tests {
         assert!(!s.state.dir().exists());
         assert!(!s.codex_home.join("prismflow-stray.config.toml").exists());
         assert_eq!(walk(&s.codex_home), before_codex, "user files, including the unmarked look-alike, survive");
+    }
+
+    #[tokio::test]
+    async fn codex_desktop_switches_and_restores_the_base_config() {
+        let dir = tempfile::tempdir().unwrap();
+        let s = service(dir.path());
+        let base = s.codex_home.join("config.toml");
+        let original = "# mine\nmodel = \"nvidia_nim/z-ai/glm\"\nmodel_provider = \"other\"\n\n[model_providers.other]\nbase_url = \"http://127.0.0.1:9090/v1\"\n";
+        std::fs::write(&base, original).unwrap();
+        s.set_credential("openrouter", "sk-or-v1-abcdefabcdef").unwrap();
+        let preview = s.preview(codex::DESKTOP_APP_ID, "openrouter", "a/b").unwrap();
+        assert!(preview.warnings.iter().any(|w| w.contains("\"other\"")), "{:?}", preview.warnings);
+        let rec = s.connect(codex::DESKTOP_APP_ID, "openrouter", "a/b").await.unwrap();
+        assert_eq!(rec.priors["model_provider"].as_deref(), Some("other"));
+        assert!(std::fs::read_to_string(&base).unwrap().contains("model_provider = \"prismflow_openrouter\""));
+        s.set_credential("groq", "gsk_abcdefabcdefabcdef").unwrap();
+        assert!(s.connect(codex::DESKTOP_APP_ID, "groq", "x").await.unwrap_err().contains("Disconnect it first"));
+        // A model switch keeps the original priors.
+        let rec = s.connect(codex::DESKTOP_APP_ID, "openrouter", "c/d").await.unwrap();
+        assert_eq!(rec.priors["model_provider"].as_deref(), Some("other"));
+        s.disconnect(&rec.id).await.unwrap();
+        let restored = std::fs::read_to_string(&base).unwrap();
+        let (r, o): (toml_edit::DocumentMut, toml_edit::DocumentMut) = (restored.parse().unwrap(), original.parse().unwrap());
+        assert_eq!(r["model_provider"].as_str(), o["model_provider"].as_str());
+        assert_eq!(r["model"].as_str(), o["model"].as_str());
+        assert!(r.get("model_catalog_json").is_none());
+        assert!(r["model_providers"].get("prismflow_openrouter").is_none());
+        assert!(restored.starts_with("# mine"));
+        assert!(walk(&s.codex_home).iter().all(|f| !f.display().to_string().contains("prismflow-backup")), "backups live in the state dir");
     }
 
     #[test]

@@ -79,6 +79,10 @@ pub struct ConnectionRecord {
     /// Gateway connections only: tiers, reasoning policy, fallbacks.
     #[serde(default)]
     pub routing: crate::routing::Routing,
+    /// Codex Desktop: values of the base config keys before PrismFlow
+    /// changed them (None = absent), restored on disconnect.
+    #[serde(default)]
+    pub priors: std::collections::BTreeMap<String, Option<String>>,
 }
 
 /// Resolve the state directory: `PRISMFLOW_STATE_DIR` (tests, portable
@@ -201,7 +205,7 @@ mod tests {
             created_at: 1,
             status: ConnectionStatus::Unverified,
             last_report: None,
-            routing: Default::default(),
+            routing: Default::default(), priors: Default::default(),
         }
     }
 

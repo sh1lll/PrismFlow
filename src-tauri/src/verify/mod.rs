@@ -118,7 +118,10 @@ async fn run_codex(
     timeout: Duration,
 ) -> Result<(bool, String), String> {
     let mut cmd = tokio::process::Command::new(bin);
-    cmd.arg("exec").arg("-p").arg(profile);
+    cmd.arg("exec");
+    if !profile.is_empty() {
+        cmd.arg("-p").arg(profile);
+    }
     cmd.args(["--skip-git-repo-check", "--ephemeral", "-s", "read-only", "-C"]);
     cmd.arg(workdir);
     if json {
@@ -249,6 +252,8 @@ async fn run_stages(
     let is_claude = record.app_id == claude_code::APP_ID;
     let stage1 = if let Some(a) = agent {
         check_agent_config(a, &record.managed_file)
+    } else if record.app_id == codex::DESKTOP_APP_ID {
+        check_desktop_config(&record.managed_file, &record.provider_id, env.codex_bin.as_deref())
     } else if is_claude {
         check_claude_config(&record.managed_file, env.claude_bin.as_deref())
     } else {
@@ -354,7 +359,11 @@ async fn run_stages(
     let prompt = format!("Reply with exactly {E2E_TOKEN} and nothing else.");
     match run_codex(bin, &record.profile, &env.workdir, false, &prompt, env.agent_timeout).await {
         Ok((true, out)) if out.contains(E2E_TOKEN) => run.push(5, "End-to-end", StageOutcome::Pass,
-            format!("Codex answered through the {} profile.", record.profile)),
+            if record.profile.is_empty() {
+                "Codex answered using your base config, as the Codex app will (restart the app to pick it up).".to_string()
+            } else {
+                format!("Codex answered through the {} profile.", record.profile)
+            }),
         Ok((_, out)) => {
             let shown = redact_known(&tail(&out, 6), &secrets);
             let hint = remediation(&out, provider).map(|h| format!("{h}\n\n")).unwrap_or_default();
@@ -478,6 +487,24 @@ fn check_claude_config(file: &Path, claude_bin: Option<&Path>) -> Result<String,
         return Err("Claude Code is not installed.".into());
     }
     Ok("Settings file is valid, PrismFlow-managed, and its token helper exists.".into())
+}
+
+fn check_desktop_config(file: &Path, provider_id: &str, codex_bin: Option<&Path>) -> Result<String, String> {
+    let text = std::fs::read_to_string(file).map_err(|_| format!("{} is missing.", file.display()))?;
+    let doc: toml_edit::DocumentMut = text.parse().map_err(|e| format!("{} is not valid TOML: {e}", file.display()))?;
+    let table = codex::provider_table(provider_id);
+    if doc.get("model_provider").and_then(|v| v.as_str()) != Some(table.as_str()) {
+        return Err(format!("Your Codex config no longer selects {table} (another tool or an edit changed model_provider). Reconnect to restore it."));
+    }
+    let helper = doc.get("model_providers").and_then(|t| t.get(&table)).and_then(|t| t.get("auth"))
+        .and_then(|a| a.get("command")).and_then(|c| c.as_str()).ok_or("The PrismFlow provider table has no credential helper.")?;
+    if !Path::new(helper).is_file() {
+        return Err(format!("The credential helper {helper} no longer exists. Reconnect to repair."));
+    }
+    if codex_bin.is_none() {
+        return Err("The Codex CLI is needed to verify the desktop app's configuration (they share it).".into());
+    }
+    Ok("Your Codex config selects PrismFlow's provider, and its credential helper exists.".into())
 }
 
 fn check_agent_config(a: &crate::adapters::agents::AgentSpec, script: &Path) -> Result<String, String> {
@@ -654,7 +681,7 @@ esac"#;
             created_at: 0,
             status: ConnectionStatus::Unverified,
             last_report: None,
-            routing: Default::default(),
+            routing: Default::default(), priors: Default::default(),
         };
         Fixture { _home: home, server, record, store }
     }
@@ -784,7 +811,7 @@ esac"#;
             id: "claude_code:nvidia_nim".into(), provider_id: "nvidia_nim".into(), app_id: claude_code::APP_ID.into(),
             model: "meta/llama-3.3-70b-instruct".into(), profile: claude_code::profile_name("nvidia_nim"),
             route: crate::state::Route::Gateway, managed_file: plan.file, created_at: 0,
-            status: ConnectionStatus::Unverified, last_report: None, routing: Default::default(),
+            status: ConnectionStatus::Unverified, last_report: None, routing: Default::default(), priors: Default::default(),
         };
         let work = tempfile::tempdir().unwrap();
         let env = VerifyEnv {
