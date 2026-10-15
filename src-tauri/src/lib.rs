@@ -1,5 +1,6 @@
 pub mod adapters;
 pub mod cli;
+pub mod companion;
 pub mod config_engine;
 pub mod credentials;
 pub mod diagnostics;

@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark light">
+<title>PrismFlow Companion</title>
+<link rel="manifest" href="/manifest.webmanifest">
+<style>
+  :root { --bg:#101014; --panel:#17171d; --line:#26262e; --text:#e8e8ee; --muted:#9a9aa6; --accent:#6c8cff; --ok:#4cc38a; --warn:#e5b567; --err:#e5484d; }
+  @media (prefers-color-scheme: light) { :root { --bg:#f6f6f8; --panel:#fff; --line:#e2e2e8; --text:#16161a; --muted:#666672; } }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font:15px/1.45 -apple-system, system-ui, sans-serif; padding:16px; }
+  h1 { font-size:18px; margin:4px 0 14px; }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:12px 14px; margin-bottom:10px; }
+  .muted { color:var(--muted); font-size:13px; } .ok{color:var(--ok)} .warn{color:var(--warn)} .err{color:var(--err)}
+  input, button { font:inherit; border-radius:8px; padding:9px 11px; width:100%; }
+  input { background:transparent; color:var(--text); border:1px solid var(--line); margin:6px 0; }
+  button { background:var(--accent); color:#fff; border:0; cursor:pointer; margin-top:6px; }
+  button.ghost { background:none; color:var(--text); border:1px solid var(--line); }
+  .row { display:flex; gap:8px; } .row > * { flex:1; }
+  .badge { font-size:12px; border:1px solid currentColor; border-radius:999px; padding:1px 8px; white-space:nowrap; }
+  code { font-size:12px; word-break:break-all; }
+</style>
+</head>
+<body>
+<h1>PrismFlow</h1>
+<div id="app"></div>
+<script>
+"use strict";
+const KEY = "prismflow.device";
+const app = document.getElementById("app");
+const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const load = () => { try { return JSON.parse(localStorage.getItem(KEY) || "null"); } catch { return null; } };
+const save = (d) => { try { localStorage.setItem(KEY, JSON.stringify(d)); } catch {} };
+const forget = () => { try { localStorage.removeItem(KEY); } catch {} };
+
+async function call(path, opts = {}) {
+  const dev = load();
+  const r = await fetch(path, { ...opts, headers: { "content-type": "application/json", ...(dev ? { authorization: "Bearer " + dev.token } : {}) } });
+  const body = await r.json().catch(() => ({}));
+  if (r.status === 401 && path.startsWith("/api")) { forget(); render(); throw new Error("This device was removed on the desktop. Pair again."); }
+  if (!r.ok) throw new Error(body.error || "HTTP " + r.status);
+  return body;
+}
+
+function pairView(msg) {
+  const params = new URLSearchParams(location.search);
+  app.innerHTML = `
+    <div class="card">
+      <b>Pair this device</b>
+      <div class="muted">On the desktop: PrismFlow → Remote access → Pair a device. Compare the certificate fingerprint shown there with this page's certificate before continuing.</div>
+      <input id="code" placeholder="Pairing code" value="${esc(params.get("c") || "")}" autocomplete="off">
+      <input id="name" placeholder="Name for this device" value="${esc(navigator.platform || "Phone")}">
+      <button id="go">Pair</button>
+      ${msg ? `<div class="err muted">${esc(msg)}</div>` : ""}
+    </div>`;
+  document.getElementById("go").onclick = async () => {
+    try {
+      const r = await call("/pair", { method: "POST", body: JSON.stringify({ code: document.getElementById("code").value, device_name: document.getElementById("name").value }) });
+      save({ token: r.token, name: r.device.name });
+      history.replaceState(null, "", "/");
+      render();
+    } catch (e) { pairView(e.message); }
+  };
+}
+
+const tone = (s) => s === "ConnectedAndVerified" ? "ok" : (s === "PartiallyCompatible" || s === "Unverified") ? "warn" : "err";
+
+async function statusView(note) {
+  let st;
+  try { st = await call("/api/status"); } catch (e) { if (load()) app.innerHTML = `<div class="card err">${esc(e.message)}</div>`; return; }
+  const act = st.device.allow_actions;
+  app.innerHTML = `
+    <div class="card"><div class="row"><span>Gateway: <b>${esc(st.gateway.phase)}</b></span>
+      ${act ? `<button class="ghost" id="restart">Restart</button>` : ""}</div>
+      <div class="muted">${act ? "This device may run actions." : "Read-only device. Allow actions for it on the desktop."}</div></div>
+    ${note ? `<div class="card muted">${esc(note)}</div>` : ""}
+    ${st.connections.map((c) => `
+      <div class="card">
+        <div class="row"><b>${esc(c.model)}</b><span class="badge ${tone(c.status)}">${esc(c.status_label || c.status)}</span></div>
+        <div class="muted">${esc(c.app_name)} · ${esc(c.provider_id)}</div>
+        ${act ? `<div class="row"><button class="ghost" data-verify="${esc(c.id)}">Verify</button>
+                 <button class="ghost" data-model="${esc(c.id)}">Switch model</button></div>` : ""}
+      </div>`).join("") || `<div class="card muted">No connections yet.</div>`}
+    <button class="ghost" id="refresh">Refresh</button>
+    <button class="ghost" id="unpair">Forget this device</button>`;
+  document.getElementById("refresh").onclick = () => statusView();
+  document.getElementById("unpair").onclick = () => { if (confirm("Forget the pairing on this device? Also remove it on the desktop.")) { forget(); render(); } };
+  const restart = document.getElementById("restart");
+  if (restart) restart.onclick = async () => { try { await call("/api/gateway/restart", { method: "POST" }); statusView("Gateway restarted."); } catch (e) { statusView(e.message); } };
+  document.querySelectorAll("[data-verify]").forEach((b) => b.onclick = async () => {
+    b.textContent = "Verifying…"; b.disabled = true;
+    try { const r = await call(`/api/connections/${encodeURIComponent(b.dataset.verify)}/verify`, { method: "POST" }); statusView("Verification: " + r.status); }
+    catch (e) { statusView(e.message); }
+  });
+  document.querySelectorAll("[data-model]").forEach((b) => b.onclick = async () => {
+    const m = prompt("Model ID (one the desktop already discovered for this provider)");
+    if (!m) return;
+    try { await call(`/api/connections/${encodeURIComponent(b.dataset.model)}/model`, { method: "POST", body: JSON.stringify({ model: m }) }); statusView("Switched to " + m + ". Verify it before relying on it."); }
+    catch (e) { statusView(e.message); }
+  });
+}
+
+function render() { load() ? statusView() : pairView(); }
+render();
+</script>
+</body>
+</html>
