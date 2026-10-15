@@ -111,6 +111,7 @@ async fn proxy(State(inner): State<Arc<Inner>>, req: Request) -> Response {
     }
     if !ALLOWED.iter().any(|(m, p)| method.as_str() == *m && path == *p) {
         inner.count(|c| c.rejected += 1);
+        inner.record(Level::Info, "broker.not_exposed", &format!("Refused {method} {path} (not on the allow-list)."));
         return reject(StatusCode::NOT_FOUND, "not_found_error", "this endpoint is not exposed");
     }
     let binding: Option<Binding> = presented_token(req.headers()).into_iter().find_map(|t| inner.lookup(t));

@@ -31,3 +31,9 @@ futures-util = { version = "0.3", default-features = false }
 [dev-dependencies]
 wiremock = "0.6"
 tempfile = "3"
+
+# Real-binary smoke; its own executable doubles as the Keychain helper
+# (see the file header). Runs only with PRISMFLOW_REAL_SMOKE=1.
+[[test]]
+name = "real_agents"
+harness = false
