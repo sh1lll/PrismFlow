@@ -799,3 +799,31 @@ async fn claude_desktop_sees_claude_model_names() {
     assert_eq!(r["type"], "message", "{r}");
     broker.stop().await;
 }
+
+#[tokio::test]
+async fn requests_are_logged_with_tokens_and_limits_stop_spending() {
+    let h = harness().await;
+    let v: serde_json::Value = h.post("/v1/messages", messages_body(false, false)).header("x-api-key", &h.token).send().await.unwrap().json().await.unwrap();
+    assert_eq!(v["type"], "message");
+    // Recorded on a background thread once the body is done.
+    let usage = h.broker.usage();
+    let mut logged = Vec::new();
+    for _ in 0..50 {
+        logged = usage.recent(10);
+        if !logged.is_empty() { break; }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+    let r = &logged[0];
+    assert_eq!((r.status, r.provider.as_str(), r.connection.as_str()), (200, "nvidia_nim", "claude_code:nvidia_nim"));
+    // (This fixture's stream carries no usage numbers; token reading is unit-tested.)
+    assert!(r.error.is_none() && r.ms < 60_000, "{r:?}");
+
+    // A $1 limit with $5 already spent this month: refused, and said why.
+    usage.record(crate::usage::Request { ts: crate::diagnostics::now_secs(), connection: "x".into(), provider: "nvidia_nim".into(),
+        status: 200, cost: Some(5.0), ..Default::default() });
+    h.broker.set_settings(RuntimeSettings { budgets: [("nvidia_nim".to_string(), 1)].into(), ..Default::default() });
+    let r = h.post("/v1/messages", messages_body(false, false)).header("x-api-key", &h.token).send().await.unwrap();
+    assert_eq!(r.status(), 402);
+    assert!(r.text().await.unwrap().contains("monthly limit"));
+    h.broker.stop().await;
+}

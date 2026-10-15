@@ -9,6 +9,7 @@ pub mod discovery;
 pub mod gateway;
 pub mod notify;
 pub mod tray;
+pub mod usage;
 pub mod ollama;
 pub mod providers;
 pub mod routing;
@@ -33,6 +34,24 @@ async fn blocking<T: Send + 'static>(f: impl FnOnce() -> T + Send + 'static) -> 
 
 /// True while a Keychain request has waited more than a moment, which on
 /// macOS means its "allow access" window is open.
+/// Usage page: daily totals since `since` (YYYY-MM-DD) and recent requests.
+#[tauri::command]
+async fn usage_view(svc: State<'_, Arc<Service>>, since: String, limit: usize) -> Cmd<serde_json::Value> {
+    let store = svc.broker.usage();
+    let now = diagnostics::now_secs();
+    let s = svc.inner().clone();
+    blocking(move || {
+        let days = store.days_since(&since);
+        let providers: std::collections::BTreeSet<String> = days.values().flat_map(|m| m.keys())
+            .filter_map(|k| k.strip_prefix("prov:").map(String::from)).collect();
+        let budgets = s.settings().budgets;
+        let month: serde_json::Map<String, serde_json::Value> = providers.iter().chain(budgets.keys()).map(|p| {
+            (p.clone(), serde_json::json!({ "spent": store.month_spend(p, now), "limit": budgets.get(p) }))
+        }).collect();
+        serde_json::json!({ "days": days, "month": month, "requests": store.recent(limit.min(500)), "today": usage::day(now) })
+    }).await
+}
+
 #[tauri::command]
 fn autostart_get(app: tauri::AppHandle) -> bool {
     use tauri_plugin_autostart::ManagerExt;
@@ -611,6 +630,7 @@ pub fn run() {
         .manage(BotState { bots: bots::Bots::default(), dir: dir.clone() })
         .invoke_handler(tauri::generate_handler![
             keychain_waiting,
+            usage_view,
             autostart_get,
             autostart_set,
             bots_get,

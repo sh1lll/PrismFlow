@@ -90,3 +90,9 @@ select { background: #0d0d12; border: 1px solid var(--line); color: var(--text);
 @media (max-width: 900px) { .sessions { grid-template-columns: 1fr; } }
 .chips { display: flex; flex-wrap: wrap; gap: 6px; }
 .chip { border: 1px solid var(--line); border-radius: 999px; padding: 3px 10px; font-size: 13px; }
+.bars { display: flex; align-items: flex-end; gap: 3px; height: 64px; }
+.bar { flex: 1; background: var(--accent, #7c6cf0); border-radius: 3px 3px 0 0; min-width: 4px; opacity: 0.85; }
+table.log { width: 100%; border-collapse: collapse; }
+table.log td { padding: 5px 6px; border-bottom: 1px solid rgba(127,127,127,0.15); vertical-align: top; }
+table.log tr.err td { color: var(--err, #e5484d); }
+input.narrow { width: 90px; }

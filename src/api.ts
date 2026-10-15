@@ -150,6 +150,19 @@ export interface RuntimeSettings {
   upstream_retries: number;
   shortcuts: boolean;
   web_tools: WebToolsSettings;
+  budgets: Record<string, number>;
+}
+
+export interface UsageTotals { requests: number; errors: number; input_tokens: number; output_tokens: number; cost: number; unpriced: number }
+export interface UsageRequest {
+  ts: number; connection: string; provider: string; model: string; path: string; status: number; ms: number;
+  input_tokens: number; output_tokens: number; cost: number | null; error: string | null;
+}
+export interface UsageView {
+  days: Record<string, Record<string, UsageTotals>>;
+  month: Record<string, { spent: number; limit: number | null }>;
+  requests: UsageRequest[];
+  today: string;
 }
 
 export interface UninstallItem { what: string; outcome: "planned" | "done" | "failed"; detail: string }
@@ -207,6 +220,7 @@ export const api = {
   guidedSetup: (id: string) => invoke<{ gateway_url: string; auth_scheme: string; token: string; model: string; steps: string[] }>("guided_setup", { id }),
   companionState: () => invoke<CompanionView>("companion_state"),
   keychainWaiting: () => invoke<boolean>("keychain_waiting"),
+  usage: (since: string, limit: number) => invoke<UsageView>("usage_view", { since, limit }),
   autostartGet: () => invoke<boolean>("autostart_get"),
   autostartSet: (on: boolean) => invoke<void>("autostart_set", { on }),
   bots: () => invoke<BotsView>("bots_get"),

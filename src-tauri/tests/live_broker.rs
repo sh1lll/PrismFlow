@@ -30,5 +30,7 @@ async fn serve_broker_for_a_live_agent() {
     }
     let s = broker.status();
     std::fs::write(dir.join("status"), format!("requests={} shortcuts={} errors={}", s.requests, s.shortcuts, s.upstream_errors)).unwrap();
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    std::fs::write(dir.join("usage.json"), serde_json::to_string_pretty(&broker.usage().recent(20)).unwrap()).unwrap();
     broker.stop().await;
 }

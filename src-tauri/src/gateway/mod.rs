@@ -45,11 +45,13 @@ pub struct RuntimeSettings {
     pub web_tools: crate::webtools::WebToolsSettings,
     /// Answer Claude Code's background requests (titles, suggestions) locally.
     pub shortcuts: bool,
+    /// Monthly spending limits in whole US dollars per provider id (estimated cost).
+    pub budgets: std::collections::BTreeMap<String, u32>,
 }
 
 impl Default for RuntimeSettings {
     fn default() -> Self {
-        Self { rate_limit_per_minute: 0, max_concurrency_per_provider: 0, upstream_retries: 1, web_tools: Default::default(), shortcuts: true }
+        Self { rate_limit_per_minute: 0, max_concurrency_per_provider: 0, upstream_retries: 1, web_tools: Default::default(), shortcuts: true, budgets: Default::default() }
     }
 }
 
@@ -142,6 +144,8 @@ pub(crate) struct Inner {
     diag: Option<Arc<DiagnosticsLog>>,
     client: reqwest::Client,
     work_dir: PathBuf,
+    /// Request log, token usage and spend (see `crate::usage`).
+    pub(crate) usage: Arc<crate::usage::Store>,
 }
 
 impl Inner {
@@ -231,11 +235,16 @@ impl Broker {
                 counters: Mutex::new(Counters::default()),
                 diag,
                 client,
+                usage: Arc::new(crate::usage::Store::open(&work_dir)),
                 work_dir,
             }),
             running: tokio::sync::Mutex::new(None),
             requested_port: port,
         }
+    }
+
+    pub fn usage(&self) -> Arc<crate::usage::Store> {
+        self.inner.usage.clone()
     }
 
     pub fn port(&self) -> u16 {

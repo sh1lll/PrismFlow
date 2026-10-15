@@ -113,6 +113,32 @@ fn claude_desktop_models(_binding: &Binding) -> Response {
     Json(json!({ "object": "list", "data": data, "has_more": false, "first_id": first, "last_id": last })).into_response()
 }
 
+/// Writes the request to the usage log when the response is done (or dropped).
+struct RecordOnEnd {
+    usage: Arc<crate::usage::Store>,
+    tap: crate::usage::Tap,
+    req: crate::usage::Request,
+    started: Instant,
+}
+
+impl Drop for RecordOnEnd {
+    fn drop(&mut self) {
+        self.tap.finish();
+        let mut r = std::mem::take(&mut self.req);
+        r.ms = self.started.elapsed().as_millis() as u64;
+        r.input_tokens = self.tap.input;
+        r.output_tokens = self.tap.output;
+        if r.status >= 400 {
+            r.error = Some(crate::usage::plain_error(r.status, self.tap.head()));
+        } else {
+            r.cost = crate::usage::cost(&r.provider, &r.model, r.input_tokens, r.output_tokens);
+        }
+        let usage = self.usage.clone();
+        // File writes off the async runtime.
+        std::thread::spawn(move || usage.record(r));
+    }
+}
+
 pub(crate) fn host_allowed(host: &str, port: u16) -> bool {
     host == format!("127.0.0.1:{port}") || host == format!("localhost:{port}")
 }
@@ -215,6 +241,17 @@ async fn proxy(State(inner): State<Arc<Inner>>, req: Request) -> Response {
     };
 
     let url = format!("http://127.0.0.1:{}{path}{query}", upstream.port);
+
+    // Spending limit: a provider over its monthly limit gets no more requests.
+    let budgets = inner.settings.read().unwrap_or_else(|e| e.into_inner()).budgets.clone();
+    if let Some(limit) = budgets.get(&chain[0].provider_id).filter(|l| **l > 0).map(|l| *l as f64) {
+        let spent = inner.usage.month_spend(&chain[0].provider_id, crate::diagnostics::now_secs());
+        if spent >= limit {
+            let msg = format!("{} reached its monthly limit of ${limit:.2} (spent about ${spent:.2}). Raise it on PrismFlow's Usage page.", chain[0].provider_id);
+            inner.record(Level::Warn, "usage.budget", &msg);
+            return reject(StatusCode::PAYMENT_REQUIRED, "billing_error", &msg);
+        }
+    }
 
     // Claude Code's background requests (titles, suggestions): answered here.
     let shortcuts_on = inner.settings.read().unwrap_or_else(|e| e.into_inner()).shortcuts;
@@ -321,7 +358,33 @@ async fn proxy(State(inner): State<Arc<Inner>>, req: Request) -> Response {
             out = out.header(name, value);
         }
     }
-    out.body(Body::from_stream(resp.bytes_stream())).unwrap_or_else(|_| {
+    // Record the request once its response has fully passed through.
+    let rec = RecordOnEnd {
+        usage: inner.usage.clone(),
+        tap: crate::usage::Tap::default(),
+        req: crate::usage::Request {
+            ts: crate::diagnostics::now_secs(),
+            connection: binding.connection_id.clone(),
+            provider: served_by.provider_id.clone(),
+            model: if served_by.model.is_empty() { requested.clone().unwrap_or_default() } else { served_by.model.clone() },
+            path: path.clone(),
+            status: status.as_u16(),
+            ..Default::default()
+        },
+        started,
+    };
+    let stream = futures_util::stream::unfold((resp.bytes_stream(), rec), |(mut s, mut rec)| async move {
+        use futures_util::StreamExt;
+        match s.next().await {
+            Some(Ok(b)) => {
+                rec.tap.feed(&b);
+                Some((Ok::<_, reqwest::Error>(b), (s, rec)))
+            }
+            Some(Err(e)) => Some((Err(e), (s, rec))),
+            None => None,
+        }
+    });
+    out.body(Body::from_stream(stream)).unwrap_or_else(|_| {
         reject(StatusCode::BAD_GATEWAY, "api_error", "malformed response from the gateway engine")
     })
 }
