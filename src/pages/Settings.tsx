@@ -38,6 +38,7 @@ export default function Settings() {
         <div className="row mt"><button className="primary" disabled={!s} onClick={save}>Save</button></div>
         {msg && <div className={`small mt ${msg.tone}`}>{msg.text}</div>}
       </div>
+      <Updates />
       <RemoveAll />
       <div className="card muted small">
         The gateway listens only on 127.0.0.1. Its port is fixed so agent configs stay valid; override it with the PRISMFLOW_BROKER_PORT environment variable.
@@ -85,6 +86,30 @@ function RemoveAll() {
         </div>
       )}
       {error && <div className="err small mt">{error}</div>}
+    </div>
+  );
+}
+
+function Updates() {
+  const [msg, setMsg] = useState<{ tone: string; text: string } | null>(null);
+  const [available, setAvailable] = useState<string | null>(null);
+  async function check() {
+    setMsg(null);
+    try {
+      const u = await api.checkUpdate();
+      setAvailable(u.available);
+      setMsg(u.available ? { tone: "ok", text: `PrismFlow ${u.available} is available (you have ${u.current}).${u.notes ? " " + u.notes : ""}` } : { tone: "ok", text: `PrismFlow ${u.current} is up to date.` });
+    } catch (e) { setMsg({ tone: "muted", text: errText(e) }); }
+  }
+  return (
+    <div className="card">
+      <div className="section-title">Updates</div>
+      <div className="small muted">Updates are downloaded only after you confirm, and installed only if their signature matches the key built into PrismFlow.</div>
+      <div className="row mt">
+        <button className="ghost" onClick={check}>Check for updates</button>
+        {available && <button className="primary" onClick={() => api.installUpdate().catch((e) => setMsg({ tone: "err", text: errText(e) }))}>Install {available} and restart</button>}
+      </div>
+      {msg && <div className={`small mt ${msg.tone}`}>{msg.text}</div>}
     </div>
   );
 }
