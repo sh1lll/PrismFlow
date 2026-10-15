@@ -161,7 +161,7 @@ async fn install_update(app: tauri::AppHandle) -> Cmd<()> {
 #[cfg(not(feature = "updater"))]
 #[tauri::command]
 async fn check_update() -> Cmd<UpdateInfo> {
-    Err("This build of PrismFlow has no updater (development build). Release builds check signed updates.".into())
+    Err("This test version of PrismFlow can't update itself.".into())
 }
 
 #[cfg(not(feature = "updater"))]
@@ -310,7 +310,7 @@ fn session_create(sessions: State<'_, sessions::Sessions>, folder: String, sandb
 async fn session_send(svc: State<'_, Arc<Service>>, sessions: State<'_, sessions::Sessions>, id: String, connection_id: String, prompt: String) -> Cmd<()> {
     let rec = svc.connections()?.into_iter().find(|c| c.id == connection_id).ok_or("Unknown connection.")?;
     if rec.app_id != adapters::codex::APP_ID {
-        return Err("Code sessions run Codex CLI; pick a Codex CLI connection.".into());
+        return Err("Sessions use Codex. Pick a Codex connection.".into());
     }
     if rec.route == state::Route::Gateway && !svc.gateway_status().phase.eq(&gateway::Phase::Ready) {
         svc.sync_gateway().await?;

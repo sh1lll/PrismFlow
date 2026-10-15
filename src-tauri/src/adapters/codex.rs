@@ -70,7 +70,7 @@ pub fn detect() -> AppDetection {
             path: None,
             version: None,
             version_verified: false,
-            notes: vec!["Codex CLI was not found on PATH or in common install locations.".into()],
+            notes: vec!["Codex isn't installed.".into()],
         };
     };
     let output = Command::new(&bin).arg("--version").env("PATH", child_path(&bin)).output();
@@ -82,9 +82,9 @@ pub fn detect() -> AppDetection {
     let version_verified = parsed.is_some_and(|v| v >= VERIFIED_MIN && v <= VERIFIED_MAX);
     let mut notes = Vec::new();
     match (&raw, version_verified) {
-        (None, _) => notes.push("Found a codex binary, but `codex --version` failed.".into()),
+        (None, _) => notes.push("Codex is installed but didn't start.".into()),
         (Some(v), false) => notes.push(format!(
-            "{v} has not been verified with PrismFlow (verified: 0.162.x). Connections will run staged verification before being trusted."
+            "{v} hasn't been tested with PrismFlow yet. Press Test after connecting."
         )),
         _ => {}
     }
@@ -446,7 +446,7 @@ pub fn detect_desktop() -> AppDetection {
         version: None,
         version_verified: false,
         notes: vec![
-            "Uses your ~/.codex/config.toml (the desktop app has no profiles). PrismFlow changes three top-level keys and adds one provider table, and restores the previous values on disconnect.".into(),
+            "PrismFlow changes a few Codex settings and puts them back when you disconnect.".into(),
             "Restart the Codex app after connecting or disconnecting.".into(),
         ],
     };
@@ -456,9 +456,9 @@ pub fn detect_desktop() -> AppDetection {
             .output()
             .ok()
             .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string());
-        d.notes.push("Verified through the Codex CLI, which shares the app's config loader; the app itself is not driven by PrismFlow.".into());
+        d.notes.push("Tested using Codex's command-line tool, which reads the same settings.".into());
     } else {
-        d.notes = vec!["The Codex desktop app was not found in /Applications.".into()];
+        d.notes = vec!["The Codex app isn't installed.".into()];
     }
     d
 }

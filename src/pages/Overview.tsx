@@ -63,7 +63,7 @@ export default function Overview({ go }: { go: (p: Page) => void }) {
         <div className="card">
           <div className="section-title">Recent problems</div>
           {errors.map((e, i) => <div key={i} className="line small"><span className="muted">{when(e.ts)}</span> {e.message}</div>)}
-          <a onClick={() => go("Diagnostics")}>See all</a>
+          <a onClick={() => go("Activity")}>See all</a>
         </div>
       )}
     </div>

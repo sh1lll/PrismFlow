@@ -86,7 +86,7 @@ pub fn detect() -> AppDetection {
             path: None,
             version: None,
             version_verified: false,
-            notes: vec!["Claude Code was not found on PATH or in common install locations.".into()],
+            notes: vec!["Claude Code isn't installed.".into()],
         };
     };
     let raw = Command::new(&bin)
@@ -98,11 +98,11 @@ pub fn detect() -> AppDetection {
         .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string());
     let parsed = raw.as_deref().and_then(super::codex::parse_version);
     let version_verified = parsed.is_some_and(|v| v >= VERIFIED_MIN && v <= VERIFIED_MAX);
-    let mut notes = vec!["Connects through PrismFlow's local gateway, which must be running while you use it.".to_string()];
+    let mut notes = vec!["Keep PrismFlow open while you use it.".to_string()];
     match (&raw, version_verified) {
-        (None, _) => notes.push("Found a claude binary, but `claude --version` failed.".into()),
+        (None, _) => notes.push("Claude Code is installed but didn't start.".into()),
         (Some(v), false) => notes.push(format!(
-            "{v} has not been verified with PrismFlow (verified: 2.1.x). Connections will run staged verification before being trusted."
+            "{v} hasn't been tested with PrismFlow yet. Press Test after connecting."
         )),
         _ => {}
     }

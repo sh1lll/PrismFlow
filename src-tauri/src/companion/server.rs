@@ -250,7 +250,7 @@ pub async fn start(
     backend: Arc<dyn Backend>,
 ) -> Result<Running, String> {
     if address.is_unspecified() {
-        return Err("Choose one network address; listening on all interfaces is not allowed.".into());
+        return Err("Pick one network address.".into());
     }
     let id = tls::load_or_create(state_dir, &[address.to_string()])?;
     let cfg = tls::server_config(&id)?;

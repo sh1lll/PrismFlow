@@ -277,21 +277,21 @@ pub struct UrlCheck {
 /// Validate a custom provider base URL (SPEC §6.3). DNS is resolved so a
 /// public-looking name that points into the LAN is caught.
 pub fn check_custom_url(raw: &str) -> Result<UrlCheck, String> {
-    let url = reqwest::Url::parse(raw.trim()).map_err(|_| "Enter a full URL, e.g. https://api.example.com/v1".to_string())?;
+    let url = reqwest::Url::parse(raw.trim()).map_err(|_| "Enter the full address, like https://ai.example.com/v1".to_string())?;
     match url.scheme() {
         "https" | "http" => {}
         s => return Err(format!("Only http and https are supported (got {s}:).")),
     }
     if !url.username().is_empty() || url.password().is_some() {
-        return Err("Remove the user name or password from the URL; keys are stored separately in the secure store.".into());
+        return Err("Remove the name or password from the address. Add the key separately.".into());
     }
     if url.query().is_some() || url.fragment().is_some() {
-        return Err("Remove the ?query or #fragment; enter only the API base URL.".into());
+        return Err("Remove everything after ? or # from the address.".into());
     }
     let host = url.host_str().ok_or("The URL has no host.")?.trim_matches(['[', ']']).to_lowercase();
     let loopback = is_loopback_host(&host);
     if url.scheme() == "http" && !loopback {
-        return Err("Plain http is only allowed for servers on this machine (localhost). Use https for remote providers.".into());
+        return Err("Use an address starting with https:// (http:// only works for servers on this computer).".into());
     }
     let port = url.port_or_known_default().unwrap_or(443);
     let addrs: Vec<IpAddr> = if loopback {
@@ -299,19 +299,19 @@ pub fn check_custom_url(raw: &str) -> Result<UrlCheck, String> {
     } else {
         (host.as_str(), port)
             .to_socket_addrs()
-            .map_err(|_| format!("{host} could not be resolved. Check the address and your network."))?
+            .map_err(|_| format!("Couldn't find {host}. Check the address and your internet connection."))?
             .map(|a| a.ip())
             .collect()
     };
     if addrs.iter().any(|ip| ip.is_loopback()) && !loopback {
-        return Err(format!("{host} resolves to this machine; enter it as localhost instead."));
+        return Err(format!("{host} points to this computer. Use localhost instead."));
     }
     let resolves_private = addrs.iter().any(|ip| is_private_ip(*ip));
     let mut warnings = vec![format!(
-        "PrismFlow will send your prompts, code and this provider's key to {host}. Only continue if you trust its operator."
+        "Your prompts and code will be sent to {host}. Only continue if you trust it."
     )];
     if resolves_private {
-        warnings.push(format!("{host} is on a private network address. Make sure this is the server you intend."));
+        warnings.push(format!("{host} is on a home or work network. Make sure it's the right server."));
     }
     let mut normalized = url.to_string();
     while normalized.ends_with('/') {

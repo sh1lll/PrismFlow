@@ -249,7 +249,7 @@ impl Service {
         }
         let secret = secret.trim();
         if secret.is_empty() || secret.chars().any(char::is_whitespace) {
-            return Err("Paste the key exactly as issued: one token, no spaces.".into());
+            return Err("Paste the key exactly as given, with no spaces.".into());
         }
         self.store
             .set(&account_key(p.id, "default"), secret)
@@ -492,7 +492,7 @@ impl Service {
             let files = self.agent_files(spec, p, model)?;
             let (script, body) = files[0].clone();
             let before = std::fs::read_to_string(&script).unwrap_or_default();
-            let mut summary = vec![format!("Create {} (launches {} through PrismFlow's gateway)", script.display(), spec.display_name)];
+            let mut summary = vec![format!("Create {} (opens {} with PrismFlow)", script.display(), spec.display_name)];
             summary.extend(files[1..].iter().map(|(f, _)| format!("Create isolated config {}", f.display())));
             summary.push(format!("Your own {} configuration is not read or changed", spec.display_name));
             return Ok((p, route, config_engine::EditPlan { file: script, before, after: body, summary }));
@@ -557,47 +557,37 @@ impl Service {
     pub fn preview(&self, app_id: &str, provider_id: &str, model: &str) -> R<ConnectPreview> {
         let (p, route, plan) = self.plan(app_id, provider_id, model)?;
         let profile = self.profile_for(app_id, p.id);
-        let mut warnings = vec![format!(
-            "Requests from this {} profile are billed to your {} account.", app_name(app_id), p.display_name
-        )];
-        if app_id == claude_desktop::APP_ID {
-            warnings.push("PrismFlow does not change Claude Desktop's files. After connecting, it shows the gateway address and a token for you to enter in Claude Desktop's own Configure Third-Party Inference screen.".into());
-            warnings.push("While Claude Desktop uses third-party inference, it is not signed in to your Claude account; switch back in the same screen.".into());
-        } else if app_id == codex::DESKTOP_APP_ID {
-            let priors = codex::read_base_priors(&self.codex_home).unwrap_or_default();
-            match priors.get("model_provider").cloned().flatten() {
-                Some(cur) if !cur.starts_with("prismflow_") => warnings.push(format!(
-                    "The Codex app currently uses provider \"{cur}\" (set by you or another tool). PrismFlow switches it and puts \"{cur}\" back when you disconnect."
-                )),
-                _ => {}
-            }
-            warnings.push("This edits your ~/.codex/config.toml (the desktop app has no profiles): three top-level keys and one provider table. A backup is kept and the previous values are restored on disconnect. Restart the Codex app afterwards.".into());
-        } else if let Some(a) = agents::spec(app_id) {
-            warnings.push(format!("Your own {} configuration is not modified; PrismFlow launches it with isolated settings from its own folder.", a.display_name));
-        } else if app_id == claude_code::APP_ID {
-            warnings.push("Your own ~/.claude/settings.json is not modified; this connection applies only when Claude Code runs with the PrismFlow settings file.".into());
-        } else {
-            warnings.push("Your own ~/.codex/config.toml is not modified; this connection only applies when Codex runs with the PrismFlow profile.".into());
+        // Short, plain notes (owner feedback: no jargon). Most important first.
+        let mut warnings: Vec<String> = Vec::new();
+        if self.usable_key(p).is_none() {
+            warnings.push(format!("Add a {} key on the Providers page first.", p.display_name));
         }
-        match route {
-            Route::Gateway => {
-                warnings.push(format!(
-                    "Requests go through PrismFlow's local gateway ({}), which translates between protocols. Keep PrismFlow running while you use this connection.",
-                    self.broker.url_for_config()
-                ));
-                warnings.push(format!(
-                    "{} receives only a revocable local token; your {} key never leaves PrismFlow.", app_name(app_id), p.display_name
-                ));
-                if let Err(e) = GatewayRuntime::discover() {
-                    warnings.insert(0, format!("The gateway cannot start yet: {e}"));
+        if route == Route::Gateway {
+            if let Err(e) = GatewayRuntime::discover() {
+                warnings.push(format!("PrismFlow's background service can't start yet: {e}"));
+            }
+        }
+        if p.local {
+            warnings.push(format!("Runs on this computer with {}. Free.", p.display_name));
+        } else if p.requires_key {
+            warnings.push(format!("Usage is charged to your {} account.", p.display_name));
+        }
+        let app = app_name(app_id);
+        if app_id == claude_desktop::APP_ID {
+            warnings.push("After connecting, PrismFlow shows what to enter in Claude Desktop.".into());
+            warnings.push("While it's set up this way, Claude Desktop won't use your Claude account. You can switch back any time.".into());
+        } else if app_id == codex::DESKTOP_APP_ID {
+            if let Some(cur) = codex::read_base_priors(&self.codex_home).unwrap_or_default().get("model_provider").cloned().flatten() {
+                if !cur.starts_with("prismflow_") {
+                    warnings.push(format!("The Codex app currently uses \"{cur}\". PrismFlow puts it back when you disconnect."));
                 }
             }
-            Route::Direct => warnings.push(
-                "Codex asks PrismFlow's helper for the key at runtime. Any program running as your user can run that helper too.".into(),
-            ),
+            warnings.push("Restart the Codex app after connecting.".into());
+        } else {
+            warnings.push(format!("Your own {app} settings won't change."));
         }
-        if self.usable_key(p).is_none() {
-            warnings.insert(0, format!("No {} key is stored yet; add one before connecting.", p.display_name));
+        if route == Route::Gateway {
+            warnings.push("Keep PrismFlow open while you use it.".into());
         }
         Ok(ConnectPreview {
             app_id: app_id.into(),
@@ -644,7 +634,7 @@ impl Service {
         }
         let id = connection_id(app_id, p.id);
         if route == Route::Gateway {
-            tokens::ensure(self.store.as_ref(), &id).map_err(|e| format!("Could not create a local token: {e}"))?;
+            tokens::ensure(self.store.as_ref(), &id).map_err(|e| format!("Couldn't save a key for this app: {e}"))?;
         }
         if let Some(spec) = agents::spec(app_id) {
             agents::write(&self.agent_files(spec, p, validate_model_id(model)?)?).map_err(|e| format!("Nothing usable was written: {e}"))?;
@@ -696,7 +686,7 @@ impl Service {
     pub async fn set_routing(&self, id: &str, routing: crate::routing::Routing) -> R<ConnectionRecord> {
         let mut record = self.state.get(id).map_err(|e| e.to_string())?.ok_or("Unknown connection.")?;
         if record.route != Route::Gateway {
-            return Err("Routing options need the gateway route. Direct Codex connections talk to the provider themselves.".into());
+            return Err("These options only work when the app goes through PrismFlow.".into());
         }
         if record.app_id != claude_code::APP_ID && !routing.tiers.is_empty() {
             return Err("Per-tier models apply to Claude Code only; Codex uses one model per profile.".into());
@@ -751,7 +741,7 @@ impl Service {
         let mut models: BTreeMap<String, Vec<String>> = BTreeMap::new();
         let mut bindings = Vec::new();
         for r in &records {
-            let token = tokens::ensure(self.store.as_ref(), &r.id).map_err(|e| format!("Secure store error: {e}"))?;
+            let token = tokens::ensure(self.store.as_ref(), &r.id).map_err(|e| format!("Couldn't read the saved key: {e}"))?;
             bindings.push((token, Binding {
                 connection_id: r.id.clone(),
                 provider_id: r.provider_id.clone(),
@@ -771,7 +761,7 @@ impl Service {
             let p = provider(&provider_id)?;
             let Some(key) = self.usable_key(p) else {
                 self.diag.record(Level::Warn, "gateway.no_key", &format!(
-                    "{} has gateway connections but no stored key; its requests will fail until a key is added.", p.display_name
+                    "{} has no key yet, so apps using it won't work until you add one.", p.display_name
                 ));
                 continue;
             };
@@ -867,7 +857,7 @@ impl Service {
             let _ = std::fs::remove_file(self.codex_catalog_path(&record.provider_id));
         }
         if record.route == Route::Gateway {
-            tokens::revoke(self.store.as_ref(), id).map_err(|e| format!("Could not revoke the local token: {e}"))?;
+            tokens::revoke(self.store.as_ref(), id).map_err(|e| format!("Couldn't remove this app's key: {e}"))?;
         }
         self.state.remove(id).map_err(|e| e.to_string())?;
         self.diag.record(Level::Info, "disconnect.done", &format!(
@@ -981,11 +971,11 @@ impl Service {
         // 4. Gateway and state directory (backups, catalogs, logs, settings).
         let dir = self.state.dir().to_path_buf();
         if dry_run {
-            push("Stop the gateway".into(), Planned, String::new());
+            push("Stop the background service".into(), Planned, String::new());
             push(format!("Delete {}", dir.display()), Planned, "State, backups, diagnostics, settings, custom providers".into());
         } else {
             self.broker.stop().await;
-            push("Stop the gateway".into(), Done, String::new());
+            push("Stop the background service".into(), Done, String::new());
             match std::fs::remove_dir_all(&dir) {
                 Ok(()) => push(format!("Delete {}", dir.display()), Done, String::new()),
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
@@ -1009,7 +999,7 @@ impl Service {
         if !self.broker.is_running().await {
             self.sync_gateway().await?;
         }
-        let token = tokens::ensure(self.store.as_ref(), id).map_err(|e| format!("Secure store error: {e}"))?;
+        let token = tokens::ensure(self.store.as_ref(), id).map_err(|e| format!("Couldn't read the saved key: {e}"))?;
         self.diag.record(Level::Info, "guided.revealed", &format!("Showed the local token for {id} for entry in Claude Desktop."));
         Ok(claude_desktop::guided_setup(&self.broker.url_for_config(), token, &record.model))
     }
@@ -1262,7 +1252,7 @@ mod tests {
         s.set_credential("nvidia_nim", "nvapi-abcdefabcdef1234").unwrap();
         let preview = s.preview(CODEX, "nvidia_nim", "meta/llama-3.3-70b-instruct").unwrap();
         assert_eq!(preview.route, Route::Gateway);
-        assert!(preview.warnings.iter().any(|w| w.contains("gateway")));
+        assert!(preview.warnings.iter().any(|w| w.contains("Keep PrismFlow open")));
         let rec = s.connect(CODEX, "nvidia_nim", "meta/llama-3.3-70b-instruct").await.unwrap();
         assert_eq!(rec.route, Route::Gateway);
         let profile = std::fs::read_to_string(&rec.managed_file).unwrap();

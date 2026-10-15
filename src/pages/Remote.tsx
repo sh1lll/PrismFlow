@@ -29,11 +29,7 @@ export default function Remote({ onChange }: { onChange: () => void }) {
   return (
     <div>
       <h1>Remote access</h1>
-      <p className="muted">
-        Lets a phone or another computer see PrismFlow's status and, if you allow it per device, verify connections, switch models
-        and restart the gateway. Devices never see keys or tokens, and inference never goes through this channel. It works on your
-        local network, or across networks through a network you control such as Tailscale or a VPN. PrismFlow runs no relay.
-      </p>
+      <p className="muted">See and control PrismFlow from your phone. Your phone never sees your keys. Off by default.</p>
 
       <div className={`card ${v.enabled ? "remote-on" : ""}`}>
         <div className="row spread">
@@ -42,15 +38,15 @@ export default function Remote({ onChange }: { onChange: () => void }) {
         </div>
         {!v.enabled && (
           <>
-            <label className="small muted mt-block">This computer's address on that network</label>
+            <label className="small muted mt-block">This computer's network address</label>
             <input value={address} onChange={(e) => setAddress(e.target.value)} placeholder="192.168.1.20 or 100.x.y.z (Tailscale)" />
             <label className="small muted mt-block">Port</label>
             <input type="number" value={port} onChange={(e) => setPort(Number(e.target.value) || 47822)} />
-            <label className="small mt-block"><input type="checkbox" className="check" checked={keepOn} onChange={(e) => setKeepOn(e.target.checked)} /> Turn on again when PrismFlow starts</label>
+            <label className="small mt-block"><input type="checkbox" className="check" checked={keepOn} onChange={(e) => setKeepOn(e.target.checked)} /> Turn on automatically when PrismFlow starts</label>
             <div className="row mt"><button className="primary" onClick={() => act(api.companionEnable(address, port, keepOn), "Remote access is on.")}>Turn on</button></div>
           </>
         )}
-        {v.enabled && v.fingerprint && <div className="small mt">Certificate fingerprint: <code className="selectable">{groups(v.fingerprint)}</code></div>}
+        {v.enabled && v.fingerprint && <div className="small mt">Security code: <code className="selectable">{groups(v.fingerprint)}</code></div>}
       </div>
 
       {v.enabled && (
@@ -62,10 +58,10 @@ export default function Remote({ onChange }: { onChange: () => void }) {
             <div className="pair">
               <div className="qr" dangerouslySetInnerHTML={{ __html: pairing.qr_svg }} />
               <div className="small">
-                <div>Scan with the phone's camera, or open <code className="selectable">{pairing.url}</code> and enter</div>
+                <div>Scan with your phone's camera, or open <code className="selectable">{pairing.url}</code> and enter</div>
                 <div className="code selectable">{pairing.code}</div>
                 <div className="muted">Single use, valid for {Math.round(pairing.expires_in_secs / 60)} minutes.</div>
-                <div className="warn mt">Your phone will warn that the certificate isn't trusted (it is PrismFlow's own). Before accepting, check that its SHA-256 fingerprint matches:</div>
+                <div className="warn mt">Your phone will say the connection isn't trusted. That's expected. To be safe, check that this code matches what your phone shows:</div>
                 <code className="selectable">{groups(pairing.fingerprint)}</code>
                 <div className="row mt"><button className="ghost" onClick={() => { setPairing(null); act(api.companionState()); }}>Done</button></div>
               </div>

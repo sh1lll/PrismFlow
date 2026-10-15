@@ -30,9 +30,25 @@ function Stages({ stages }: { stages: StageResult[] }) {
       {stages.map((s, i) => (
         <div key={i} className="stage">
           <span className={`badge ${OUTCOME[s.outcome].tone}`}>{OUTCOME[s.outcome].label}</span> <b>{STEP[s.name] ?? s.name}</b>
-          <div className="small pre-wrap muted">{s.detail}</div>
+          <StageDetail text={s.detail} />
         </div>
       ))}
+    </div>
+  );
+}
+
+/** First paragraph in plain words; any technical output behind "More". */
+function StageDetail({ text }: { text: string }) {
+  const [head, ...rest] = text.split("\n\n");
+  return (
+    <div className="small muted">
+      <span className="pre-wrap">{head}</span>
+      {rest.length > 0 && (
+        <details>
+          <summary className="small">More</summary>
+          <pre>{rest.join("\n\n")}</pre>
+        </details>
+      )}
     </div>
   );
 }

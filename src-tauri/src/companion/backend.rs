@@ -59,7 +59,7 @@ impl Backend for ServiceBackend {
             let rec = self.0.connections()?.into_iter().find(|c| c.id == id).ok_or("Unknown connection.")?;
             let listed = self.0.discover_models(&rec.provider_id).await?;
             if !listed.iter().any(|m| m.id == model) {
-                return Err(format!("{model} is not in {}'s model list. Remote devices can only pick listed models.", rec.provider_id));
+                return Err(format!("{model} isn't available for {}. Pick one from the list.", rec.provider_id));
             }
             let r = self.0.connect(&rec.app_id, &rec.provider_id, &model).await?;
             Ok(json!({ "id": r.id, "model": r.model, "status": label(r.status) }))

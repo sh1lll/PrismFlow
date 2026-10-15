@@ -45,8 +45,8 @@ pub fn detect() -> AppDetection {
         version,
         version_verified: false,
         notes: vec![
-            "Guided setup: PrismFlow shows the gateway address and a token to enter in Claude Desktop's own Developer Mode → Configure Third-Party Inference screen. It does not edit Claude Desktop's files.".into(),
-            "Switching Claude Desktop to third-party inference signs it out of your Claude account mode until you switch back in the same screen.".into(),
+            "PrismFlow shows you what to enter in Claude Desktop.".into(),
+            "While set up this way, Claude Desktop doesn't use your Claude account.".into(),
         ],
     }
 }
@@ -69,13 +69,13 @@ pub fn guided_setup(gateway_url: &str, token: String, model: &str) -> GuidedSetu
         token,
         model: model.into(),
         steps: vec![
-            "Open Claude Desktop and enable Developer Mode (Help → Troubleshooting → Enable Developer Mode).".into(),
-            "Open Developer → Configure Third-Party Inference and choose Gateway.".into(),
-            format!("Set the gateway base URL to {gateway_url}."),
-            "Paste the token below as the API key (Bearer).".into(),
-            format!("Use model {model} (PrismFlow routes whatever model Claude Desktop asks for to this connection's model)."),
-            "Click Test connection, then Save, and restart Claude Desktop when asked.".into(),
-            "To undo: choose your Claude account again in the same screen, then Disconnect here to revoke the token.".into(),
+            "In Claude Desktop, turn on Developer Mode: Help → Troubleshooting → Enable Developer Mode.".into(),
+            "Open Developer → Configure Third-Party Inference, and choose Gateway.".into(),
+            format!("Paste the address below."),
+            "Paste the key below.".into(),
+            format!("Enter the model name: {model}"),
+            "Press Test connection, then Save. Restart Claude Desktop if it asks.".into(),
+            "To undo: pick your Claude account again in the same screen, then press Disconnect here.".into(),
         ],
     }
 }

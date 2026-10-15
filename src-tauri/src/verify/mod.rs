@@ -64,16 +64,16 @@ pub fn remediation(output: &str, provider: &ProviderDefinition) -> Option<String
         let need = number_after(&o, "n_prompt_tokens").or_else(|| number_after(&o, "request ("));
         let have = number_after(&o, "n_ctx").or_else(|| number_after(&o, "context size ("));
         let sizes = match (need, have) {
-            (Some(n), Some(h)) => format!(" The agent's prompt needs about {n} tokens; the model is running with {h}."),
+            (Some(n), Some(h)) => format!(" It needs room for about {n} tokens but has {h}."),
             _ => String::new(),
         };
         let fix = match provider.id {
-            "ollama" => "Restart Ollama with a larger window, e.g. `OLLAMA_CONTEXT_LENGTH=32768 ollama serve`, or set it in the Ollama app's settings.",
-            "llamacpp" => "Restart llama-server with a larger `--ctx-size` (e.g. 32768).",
-            "lmstudio" => "In LM Studio, reload the model with a larger context length (e.g. 32768).",
-            _ => "Choose a model with a larger context window.",
+            "ollama" => "Fix: in the Ollama app's settings, raise the context length to 32k (or run `OLLAMA_CONTEXT_LENGTH=32768 ollama serve`).",
+            "llamacpp" => "Fix: restart llama-server with `--ctx-size 32768`.",
+            "lmstudio" => "Fix: in LM Studio, reload the model with a context length of 32768.",
+            _ => "Fix: pick a model with a bigger context (memory).",
         };
-        return Some(format!("The model's context window is too small for this coding agent.{sizes} {fix}"));
+        return Some(format!("This model can't hold enough text for a coding app.{sizes} {fix}"));
     }
     None
 }
@@ -267,9 +267,14 @@ async fn run_stages(
         check_config(&record.managed_file, env.codex_bin.as_deref())
     };
     match stage1 {
-        Ok(detail) => run.push(1, "Configuration", StageOutcome::Pass, detail),
+        Ok(_) => run.push(1, "Configuration", StageOutcome::Pass, "Setup looks right."),
         Err(detail) => {
-            run.push(1, "Configuration", StageOutcome::Fail, detail);
+            let plain = if detail.contains("isn't installed") || detail.starts_with("Your own") {
+                detail
+            } else {
+                format!("PrismFlow's settings for this app are missing or were changed. Connect it again.\n\n{detail}")
+            };
+            run.push(1, "Configuration", StageOutcome::Fail, plain);
             return ConnectionStatus::ConfigurationInvalid;
         }
     }
@@ -280,7 +285,7 @@ async fn run_stages(
         Some(k) => k,
         None => {
             run.push(2, "Credential", StageOutcome::Fail, format!(
-                "No {} key is stored. Add it under Providers.", provider.display_name
+                "No {} key yet. Add one on the Providers page.", provider.display_name
             ));
             return ConnectionStatus::NeedsCredentials;
         }
@@ -288,51 +293,48 @@ async fn run_stages(
     let secrets = [key.as_str()];
     match provider.auth_check_path {
         _ if key.is_empty() => run.push(2, "Credential", StageOutcome::Skipped,
-            format!("{} needs no key.", provider.display_name)),
+            format!("{} doesn't need a key.", provider.display_name)),
         Some(path) => match discovery::check_credential_as(&env.client, &env.base_url, path, &key, provider.auth_style).await {
-            Ok(()) => run.push(2, "Credential", StageOutcome::Pass, "The provider accepted the stored key."),
+            Ok(()) => run.push(2, "Credential", StageOutcome::Pass, "Key accepted."),
             Err(e) => {
                 let status = status_for_probe(&e);
                 run.push(2, "Credential", StageOutcome::Fail, redact_known(&format!(
-                    "{e}. {}", if status == ConnectionStatus::AuthenticationFailed {
-                        "Replace the key under Providers."
+                    "{}\n\n{e}", if status == ConnectionStatus::AuthenticationFailed {
+                        "The key was rejected. Change it on the Providers page."
                     } else {
-                        "Check your network connection and the provider's status page."
+                        "Couldn't reach the provider. Check your internet connection."
                     }
                 ), &secrets));
                 return status;
             }
         },
         None => run.push(2, "Credential", StageOutcome::Skipped,
-            "No documented side-effect-free key check for this provider; the end-to-end stage proves the key instead."),
+            "Checked during the reply step."),
     }
 
     // Stages 3 + 4 — endpoint and model.
     match provider.model_list_path {
         Some(path) => match discovery::list_models_as(&env.client, &env.base_url, path, (!key.is_empty()).then_some(key.as_str()), provider.auth_style).await {
             Ok(models) => {
-                let transport = if env.base_url.starts_with("https://") { " over TLS" } else { "" };
-                run.push(3, "Endpoint", StageOutcome::Pass, format!(
-                    "Reached {}{transport} and it answered in the expected format.", env.base_url
-                ));
+                run.push(3, "Endpoint", StageOutcome::Pass, "The provider answered.");
                 if models.iter().any(|m| m.id == record.model) {
                     run.push(4, "Model", StageOutcome::Pass, format!(
-                        "{} is listed. Listing does not prove access; the next stage does.", record.model
+                        "{} is available.", record.model
                     ));
                 } else {
                     run.push(4, "Model", StageOutcome::Warn, format!(
-                        "{} is not in the provider's model list. It may be misspelled or unavailable to this key.", record.model
+                        "{} isn't in this provider's list. Check the spelling.", record.model
                     ));
                 }
             }
             Err(e) => {
-                run.push(3, "Endpoint", StageOutcome::Fail, redact_known(&e.to_string(), &secrets));
+                run.push(3, "Endpoint", StageOutcome::Fail, redact_known(&format!("Couldn't reach the provider. Check your internet connection, or that it's running.\n\n{e}"), &secrets));
                 return status_for_probe(&e);
             }
         },
         None => {
-            run.push(3, "Endpoint", StageOutcome::Skipped, "This provider has no model-list endpoint.");
-            run.push(4, "Model", StageOutcome::Skipped, "Cannot check the model without a model list.");
+            run.push(3, "Endpoint", StageOutcome::Skipped, "This provider doesn't share a model list.");
+            run.push(4, "Model", StageOutcome::Skipped, "Checked during the reply step.");
         }
     }
 
@@ -340,12 +342,13 @@ async fn run_stages(
     if let Some(g) = &env.gateway {
         if g.phase == Phase::Ready {
             run.push(3, "Gateway", StageOutcome::Pass, format!(
-                "PrismFlow's gateway is ready at {} ({}, loopback only).", g.url, g.engine
+                "Running."
             ));
+            let _ = (&g.url, &g.engine);
         } else {
             run.push(3, "Gateway", StageOutcome::Fail, format!(
-                "PrismFlow's gateway is {:?}. {}", g.phase,
-                g.detail.clone().unwrap_or_else(|| "Restart it from the Overview page.".into())
+                "PrismFlow's background service isn't running. Restart it on the Overview page.{}",
+                g.detail.clone().map(|d| format!("\n\n{d}")).unwrap_or_default()
             ));
             return ConnectionStatus::RequiresAttention;
         }
@@ -363,21 +366,21 @@ async fn run_stages(
 
     // Stage 5 — end-to-end request through Codex itself.
     let Some(bin) = env.codex_bin.as_deref() else {
-        run.push(5, "End-to-end", StageOutcome::Fail, "Codex CLI is not installed.");
+        run.push(5, "End-to-end", StageOutcome::Fail, "Codex isn't installed.");
         return ConnectionStatus::RequiresAttention;
     };
     let prompt = format!("Reply with exactly {E2E_TOKEN} and nothing else.");
     match run_codex(bin, &record.profile, &env.workdir, false, &prompt, env.agent_timeout).await {
         Ok((true, out)) if out.contains(E2E_TOKEN) => run.push(5, "End-to-end", StageOutcome::Pass,
             if record.profile.is_empty() {
-                "Codex answered using your base config, as the Codex app will (restart the app to pick it up).".to_string()
+                "Codex answered. Restart the Codex app to use it.".to_string()
             } else {
-                format!("Codex answered through the {} profile.", record.profile)
+                "Codex answered.".to_string()
             }),
         Ok((_, out)) => {
             let shown = redact_known(&tail(&out, 6), &secrets);
             let hint = remediation(&out, provider).map(|h| format!("{h}\n\n")).unwrap_or_default();
-            run.push(5, "End-to-end", StageOutcome::Fail, format!("{hint}Codex did not return the expected reply:\n{shown}"));
+            run.push(5, "End-to-end", StageOutcome::Fail, format!("{}\n\n{shown}", if hint.is_empty() { "Codex didn't answer as expected.".to_string() } else { hint.trim().to_string() }));
             return classify_agent_failure(&shown);
         }
         Err(e) => {
@@ -391,17 +394,17 @@ async fn run_stages(
     match run_codex(bin, &record.profile, &env.workdir, true, &prompt, env.agent_timeout).await {
         Ok((_, out)) => match saw_tool_execution(&out) {
             Some(true) => {
-                run.push(6, "Tool calling", StageOutcome::Pass, "Codex ran a shell tool call with this model.");
+                run.push(6, "Tool calling", StageOutcome::Pass, "The model can use tools.");
                 ConnectionStatus::ConnectedAndVerified
             }
             Some(false) => {
                 run.push(6, "Tool calling", StageOutcome::Fail,
-                    "The model answered but did not complete a tool call. Chat works; agent tasks may not. Prefer a tool-capable model.");
+                    "The model can chat but couldn't use tools, so coding tasks may not work. Try a different model.");
                 ConnectionStatus::PartiallyCompatible
             }
             None => {
                 run.push(6, "Tool calling", StageOutcome::Skipped,
-                    "Could not read Codex's event stream, so tool calling is unverified.");
+                    "Couldn't check whether the model can use tools.");
                 ConnectionStatus::PartiallyCompatible
             }
         },
@@ -414,7 +417,7 @@ async fn run_stages(
 
 async fn claude_agent_stages(env: &VerifyEnv<'_>, provider: &ProviderDefinition, record: &ConnectionRecord, run: &mut Run, secrets: &[&str]) -> ConnectionStatus {
     let Some(bin) = env.claude_bin.as_deref() else {
-        run.push(5, "End-to-end", StageOutcome::Fail, "Claude Code is not installed.");
+        run.push(5, "End-to-end", StageOutcome::Fail, "Claude Code isn't installed.");
         return ConnectionStatus::RequiresAttention;
     };
     if let Err(e) = std::fs::create_dir_all(&env.workdir) {
@@ -427,11 +430,11 @@ async fn claude_agent_stages(env: &VerifyEnv<'_>, provider: &ProviderDefinition,
     match run_claude(bin, &record.managed_file, &env.workdir, &prompt, env.agent_timeout).await {
         Ok((_, out)) => match claude_result(&out) {
             Some((false, text)) if text.contains(E2E_TOKEN) => run.push(5, "End-to-end", StageOutcome::Pass,
-                format!("Claude Code answered through PrismFlow's gateway with {}.", record.model)),
+                "Claude Code answered.".to_string()),
             _ => {
                 let shown = redact_known(&tail(&out, 6), secrets);
                 let hint = remediation(&out, provider).map(|h| format!("{h}\n\n")).unwrap_or_default();
-                run.push(5, "End-to-end", StageOutcome::Fail, format!("{hint}Claude Code did not return the expected reply:\n{shown}"));
+                run.push(5, "End-to-end", StageOutcome::Fail, format!("{}\n\n{shown}", if hint.is_empty() { "Claude Code didn't answer as expected.".to_string() } else { hint.trim().to_string() }));
                 return classify_agent_failure(&shown);
             }
         },
@@ -454,17 +457,17 @@ async fn claude_agent_stages(env: &VerifyEnv<'_>, provider: &ProviderDefinition,
     match run_claude(bin, &record.managed_file, &env.workdir, &prompt, env.agent_timeout).await {
         Ok((_, out)) => match claude_saw_tool_round_trip(&out) {
             Some(true) => {
-                run.push(6, "Tool calling", StageOutcome::Pass, "Claude Code completed a Read tool call with this model.");
+                run.push(6, "Tool calling", StageOutcome::Pass, "The model can use tools.");
                 ConnectionStatus::ConnectedAndVerified
             }
             Some(false) => {
                 run.push(6, "Tool calling", StageOutcome::Fail,
-                    "The model answered but did not complete a tool call. Chat works; agent tasks may not. Prefer a tool-capable model.");
+                    "The model can chat but couldn't use tools, so coding tasks may not work. Try a different model.");
                 ConnectionStatus::PartiallyCompatible
             }
             None => {
                 run.push(6, "Tool calling", StageOutcome::Skipped,
-                    "Could not read Claude Code's event stream, so tool calling is unverified.");
+                    "Couldn't check whether the model can use tools.");
                 ConnectionStatus::PartiallyCompatible
             }
         },
@@ -494,7 +497,7 @@ fn check_claude_config(file: &Path, claude_bin: Option<&Path>) -> Result<String,
         return Err("The settings file does not point at PrismFlow's local gateway.".into());
     }
     if claude_bin.is_none() {
-        return Err("Claude Code is not installed.".into());
+        return Err("Claude Code isn't installed.".into());
     }
     Ok("Settings file is valid, PrismFlow-managed, and its token helper exists.".into())
 }
@@ -510,11 +513,11 @@ async fn claude_desktop_stages(
     secrets: &[&str],
 ) -> ConnectionStatus {
     let Some(gw) = env.gateway.as_ref().filter(|g| !g.url.is_empty()) else {
-        run.push(5, "End-to-end", StageOutcome::Fail, "The gateway is not running.");
+        run.push(5, "End-to-end", StageOutcome::Fail, "PrismFlow's background service isn't running.");
         return ConnectionStatus::RequiresAttention;
     };
     let Ok(token) = env.store.get(&crate::gateway::tokens::account(&record.id)) else {
-        run.push(5, "End-to-end", StageOutcome::Fail, "This connection has no local token. Reconnect it.");
+        run.push(5, "End-to-end", StageOutcome::Fail, "This connection is missing its key. Connect it again.");
         return ConnectionStatus::NeedsCredentials;
     };
     let body = serde_json::json!({
@@ -532,21 +535,21 @@ async fn claude_desktop_stages(
             let text = r.text().await.unwrap_or_default();
             if status.is_success() && text.contains(E2E_TOKEN) {
                 run.push(5, "End-to-end", StageOutcome::Pass, format!(
-                    "The gateway answered Claude Desktop's request format with {} using this connection's token.", record.model));
+                    "The model answered{}.", ""));
             } else {
                 let shown = redact_known(&tail(&text, 6), &all_secrets);
                 let hint = remediation(&text, provider).map(|h| format!("{h}\n\n")).unwrap_or_default();
-                run.push(5, "End-to-end", StageOutcome::Fail, format!("{hint}HTTP {status}: {shown}"));
+                run.push(5, "End-to-end", StageOutcome::Fail, format!("{}\n\nHTTP {status}: {shown}", if hint.is_empty() { "The model didn't answer as expected.".to_string() } else { hint.trim().to_string() }));
                 return classify_agent_failure(&shown);
             }
         }
         Err(e) => {
-            run.push(5, "End-to-end", StageOutcome::Fail, format!("The gateway could not be reached: {}", e.without_url()));
+            run.push(5, "End-to-end", StageOutcome::Fail, format!("PrismFlow's background service didn't respond.\n\n{}", e.without_url()));
             return ConnectionStatus::ProviderUnavailable;
         }
     }
     run.push(6, "In Claude Desktop", StageOutcome::Skipped,
-        "PrismFlow cannot drive Claude Desktop. Use its Test connection button in Configure Third-Party Inference to finish verifying.");
+        "Finish by pressing Test connection in Claude Desktop.");
     ConnectionStatus::Unverified
 }
 
@@ -563,7 +566,7 @@ fn check_desktop_config(file: &Path, provider_id: &str, codex_bin: Option<&Path>
         return Err(format!("The credential helper {helper} no longer exists. Reconnect to repair."));
     }
     if codex_bin.is_none() {
-        return Err("The Codex CLI is needed to verify the desktop app's configuration (they share it).".into());
+        return Err("Codex isn't installed. PrismFlow needs the Codex command-line tool to test the Codex app.".into());
     }
     Ok("Your Codex config selects PrismFlow's provider, and its credential helper exists.".into())
 }
@@ -608,11 +611,11 @@ async fn terminal_agent_stages(
     let prompt = format!("Reply with exactly {E2E_TOKEN} and nothing else.");
     match run_script(&record.managed_file, &oneshot_args(a, &prompt), &work, env.agent_timeout).await {
         Ok((_, out)) if out.contains(E2E_TOKEN) => run.push(5, "End-to-end", StageOutcome::Pass,
-            format!("{} answered through PrismFlow's gateway with {}.", a.display_name, record.model)),
+            format!("{} answered.", a.display_name)),
         Ok((_, out)) => {
             let shown = redact_known(&tail(&out, 6), secrets);
             let hint = remediation(&out, provider).map(|h| format!("{h}\n\n")).unwrap_or_default();
-            run.push(5, "End-to-end", StageOutcome::Fail, format!("{hint}{} did not return the expected reply:\n{shown}", a.display_name));
+            run.push(5, "End-to-end", StageOutcome::Fail, format!("{}\n\n{shown}", if hint.is_empty() { format!("{} didn't answer as expected.", a.display_name) } else { hint.trim().to_string() }));
             return classify_agent_failure(&shown);
         }
         Err(e) => {
@@ -622,7 +625,7 @@ async fn terminal_agent_stages(
     }
     if !a.tools {
         run.push(6, "Tool calling", StageOutcome::Skipped,
-            format!("{} edits files through its own edit format, not tool calls; the end-to-end stage covers it.", a.display_name));
+            format!("Not needed for {}.", a.display_name));
         return ConnectionStatus::ConnectedAndVerified;
     }
     let nonce = format!("PF{}", uuid::Uuid::new_v4().simple());
@@ -635,12 +638,12 @@ async fn terminal_agent_stages(
     let _ = std::fs::remove_file(work.join("prismflow_probe.txt"));
     match result {
         Ok((_, out)) if out.contains(&nonce) => {
-            run.push(6, "Tool calling", StageOutcome::Pass, format!("{} read a file through a tool call with this model.", a.display_name));
+            run.push(6, "Tool calling", StageOutcome::Pass, "The model can use tools.".to_string());
             ConnectionStatus::ConnectedAndVerified
         }
         Ok(_) => {
             run.push(6, "Tool calling", StageOutcome::Fail,
-                "The model answered but did not complete a file-read tool call. Chat works; agent tasks may not. Prefer a tool-capable model.");
+                "The model can chat but couldn't use tools, so coding tasks may not work. Try a different model.");
             ConnectionStatus::PartiallyCompatible
         }
         Err(e) => {
@@ -675,12 +678,12 @@ fn check_config(file: &Path, codex_bin: Option<&Path>) -> Result<String, String>
     if let Some(base) = file.parent().map(|d| d.join("config.toml")) {
         if let Ok(user) = std::fs::read_to_string(&base) {
             if user.parse::<toml_edit::DocumentMut>().is_err() {
-                return Err(format!("Your own {} has a TOML error; Codex will refuse to start.", base.display()));
+                return Err(format!("Your own Codex settings file has a mistake in it, so Codex won't start. Fix or remove it: {}", base.display()));
             }
         }
     }
     if codex_bin.is_none() {
-        return Err("Codex CLI is not installed.".into());
+        return Err("Codex isn't installed.".into());
     }
     Ok("Profile file is valid, PrismFlow-managed, and its credential helper exists.".into())
 }

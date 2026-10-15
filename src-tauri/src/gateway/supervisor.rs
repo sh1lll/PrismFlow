@@ -101,7 +101,7 @@ impl GatewayRuntime {
         let package_dir = package_dir();
         let pkg_json = engine_dir(&package_dir).join("package.json");
         if !pkg_json.is_file() && option_env!("PRISMFLOW_RELEASE").is_some() {
-            return Err("This PrismFlow build is missing its gateway engine. Reinstall PrismFlow.".into());
+            return Err("Part of PrismFlow is missing. Reinstall PrismFlow.".into());
         }
         let pkg: serde_json::Value = std::fs::read_to_string(&pkg_json)
             .ok()

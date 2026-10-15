@@ -9,8 +9,8 @@ import Remote from "./pages/Remote";
 import Sessions from "./pages/Sessions";
 import { api } from "./api";
 
-export type Page = "Overview" | "Providers" | "Applications" | "Connections" | "Code sessions" | "Diagnostics" | "Remote access" | "Settings";
-const PAGES: Page[] = ["Overview", "Providers", "Applications", "Connections", "Code sessions", "Diagnostics", "Remote access", "Settings"];
+export type Page = "Overview" | "Providers" | "Apps" | "Connections" | "Code sessions" | "Activity" | "Remote access" | "Settings";
+const PAGES: Page[] = ["Overview", "Providers", "Apps", "Connections", "Code sessions", "Activity", "Remote access", "Settings"];
 
 export default function App() {
   const [page, setPage] = useState<Page>("Overview");
@@ -36,10 +36,10 @@ export default function App() {
         )}
         {page === "Overview" && <Overview go={setPage} />}
         {page === "Providers" && <Providers />}
-        {page === "Applications" && <Applications />}
+        {page === "Apps" && <Applications />}
         {page === "Connections" && <Connections />}
         {page === "Code sessions" && <Sessions />}
-        {page === "Diagnostics" && <Diagnostics />}
+        {page === "Activity" && <Diagnostics />}
         {page === "Remote access" && <Remote onChange={refreshRemote} />}
         {page === "Settings" && <Settings />}
       </main>

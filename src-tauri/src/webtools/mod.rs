@@ -56,11 +56,11 @@ pub async fn search(s: &WebToolsSettings, brave_key: Option<&str>, query: &str) 
         return Err("The search query must be 1–400 characters.".into());
     }
     match s.backend {
-        SearchBackend::None => Err("No search backend is configured (Settings → Web tools).".into()),
+        SearchBackend::None => Err("Web search isn't set up. Turn it on in Settings.".into()),
         SearchBackend::Searxng => {
             let base = s.searxng_url.trim_end_matches('/');
             if !(base.starts_with("https://") || base.starts_with("http://127.0.0.1") || base.starts_with("http://localhost")) {
-                return Err("The SearXNG URL must be https (or a local http server).".into());
+                return Err("The search address must start with https://.".into());
             }
             let v: serde_json::Value = client().get(format!("{base}/search")).query(&[("q", q), ("format", "json")])
                 .send().await.map_err(|e| format!("search failed: {}", e.without_url()))?

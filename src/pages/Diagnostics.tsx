@@ -19,13 +19,13 @@ export default function Diagnostics() {
   return (
     <div>
       <div className="row spread">
-        <h1>Diagnostics</h1>
+        <h1>Activity</h1>
         <div className="row">
           <button className="ghost" onClick={load}>Refresh</button>
           <button className="ghost" onClick={exportAll}>Export</button>
         </div>
       </div>
-      <p className="muted">Local only. Messages are sanitized before storage; keys and bearer tokens are masked.</p>
+      <p className="muted">What PrismFlow has been doing. Keys are always hidden.</p>
       {msg && <div className={`card ${msg.tone}`}>{msg.text}</div>}
       {!events ? (
         <div className="card muted">Loading…</div>

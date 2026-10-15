@@ -88,8 +88,8 @@ export default function Sessions() {
         <h1>Code sessions</h1>
         <button className="ghost" onClick={() => setCreating(!creating)}>{creating ? "Cancel" : "New session"}</button>
       </div>
-      <p className="muted small">Codex works in a folder you choose. Each message can use a different Codex connection, so you can switch providers and models mid-session. Turns keep running while you look elsewhere.</p>
-      {codexConns.length === 0 && <div className="card warn small">Connect Codex CLI to a model under Connections first.</div>}
+      <p className="muted small">Chat with Codex about a folder on your computer. You can switch models between messages.</p>
+      {codexConns.length === 0 && <div className="card warn small">Connect Codex CLI first (Connections page).</div>}
       {error && <div className="card err small pre-wrap">{error}</div>}
 
       {creating && (
@@ -103,7 +103,7 @@ export default function Sessions() {
             <option value="read_only">Read the folder only</option>
             <option value="workspace_write">Read and edit files in the folder</option>
           </select>
-          {sandbox === "workspace_write" && <div className="warn small">Codex will be able to change files in this folder. Use version control so you can review and undo.</div>}
+          {sandbox === "workspace_write" && <div className="warn small">Codex can change files here. Keep a backup or use Git so you can undo.</div>}
           <div className="row mt"><button className="primary" disabled={!folder.trim()} onClick={create}>Create</button></div>
         </div>
       )}

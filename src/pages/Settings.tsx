@@ -3,9 +3,9 @@ import { api, RuntimeSettings, UninstallReport, errText } from "../api";
 
 type NumericKey = "rate_limit_per_minute" | "max_concurrency_per_provider" | "upstream_retries";
 const FIELDS: { key: NumericKey; label: string; help: string; max: number }[] = [
-  { key: "rate_limit_per_minute", label: "Requests per minute, per connection", help: "0 = no limit. Over the limit, the agent gets HTTP 429 from PrismFlow.", max: 10000 },
-  { key: "max_concurrency_per_provider", label: "Concurrent requests, per provider", help: "0 = no limit. Extra requests wait up to 30 s.", max: 256 },
-  { key: "upstream_retries", label: "Transport retries per attempt", help: "Retries for connection-level failures before a fallback is tried.", max: 5 },
+  { key: "rate_limit_per_minute", label: "Most requests per minute (per app)", help: "0 means no limit.", max: 10000 },
+  { key: "max_concurrency_per_provider", label: "Most requests at once (per provider)", help: "0 means no limit. Extra requests wait their turn.", max: 256 },
+  { key: "upstream_retries", label: "Retries when a connection drops", help: "How many times to try again before giving up.", max: 5 },
 ];
 
 export default function Settings() {
@@ -17,7 +17,7 @@ export default function Settings() {
     if (!s) return;
     try {
       setS(await api.setSettings(s));
-      setMsg({ tone: "ok", text: "Saved. Engine-side limits restart the gateway briefly if it is running." });
+      setMsg({ tone: "ok", text: "Saved." });
     } catch (e) {
       setMsg({ tone: "err", text: errText(e) });
     }
@@ -27,7 +27,7 @@ export default function Settings() {
     <div>
       <h1>Settings</h1>
       <div className="card">
-        <div className="section-title">Gateway limits</div>
+        <div className="section-title">Limits</div>
         {!s ? <div className="muted">Loading…</div> : FIELDS.map((f) => (
           <div key={f.key} className="mt">
             <label className="small">{f.label}</label>
@@ -59,11 +59,8 @@ function RemoveAll() {
   const items = (result ?? plan)?.items ?? [];
   return (
     <div className="card danger-zone">
-      <div className="section-title">Remove PrismFlow from this computer</div>
-      <div className="small muted">
-        Disconnects every app (restoring its own settings), deletes PrismFlow's keys and tokens from the secure store,
-        stops the gateway and deletes PrismFlow's data folder. Then drag PrismFlow to the Trash.
-      </div>
+      <div className="section-title">Remove PrismFlow</div>
+      <div className="small muted">Undoes everything PrismFlow set up and deletes its saved keys and data. Your own app settings stay.</div>
       <div className="row mt">
         <button className="ghost" onClick={() => api.exportDiagnostics().then(setExported).catch((e) => setError(errText(e)))}>Export diagnostics first</button>
         <button className="ghost" onClick={() => api.uninstall(true).then((p) => { setPlan(p); setResult(null); }).catch((e) => setError(errText(e)))}>Show what will be removed</button>
@@ -84,7 +81,7 @@ function RemoveAll() {
       )}
       {result && (
         <div className={`small mt ${result.complete ? "ok" : "err"}`}>
-          {result.complete ? "Done. Quit PrismFlow and move it to the Trash." : "Stopped at the failed step above; nothing after it was removed. Fix it and run again."}
+          {result.complete ? "Done. Quit PrismFlow and move it to the Trash." : "Stopped at the step marked failed. Nothing after it was removed."}
         </div>
       )}
       {error && <div className="err small mt">{error}</div>}
@@ -106,7 +103,7 @@ function Updates() {
   return (
     <div className="card">
       <div className="section-title">Updates</div>
-      <div className="small muted">Updates are downloaded only after you confirm, and installed only if their signature matches the key built into PrismFlow.</div>
+      <div className="small muted">Updates install only after you confirm, and only if they really come from PrismFlow.</div>
       <div className="row mt">
         <button className="ghost" onClick={check}>Check for updates</button>
         {available && <button className="primary" onClick={() => api.installUpdate().catch((e) => setMsg({ tone: "err", text: errText(e) }))}>Install {available} and restart</button>}
@@ -125,27 +122,24 @@ function WebTools({ s, setS, save }: { s: RuntimeSettings; setS: (s: RuntimeSett
   useEffect(() => { api.hasWebSearchKey().then(setHasKey).catch(() => setHasKey(false)); }, []);
   return (
     <div className="card">
-      <div className="section-title">Web tools for Claude Code</div>
-      <div className="small muted">
-        Claude Code's WebSearch normally runs on Anthropic's servers, so it fails with other providers. When this is on, PrismFlow runs
-        searches and page fetches on this computer for gateway connections. Off by default.
-      </div>
-      <label className="small mt-block"><input type="checkbox" className="check" checked={w.enabled} onChange={(e) => set({ enabled: e.target.checked })} /> Run web search and fetch locally</label>
+      <div className="section-title">Web search for Claude Code</div>
+      <div className="small muted">Lets Claude Code search the web when it uses a non-Anthropic model. Off by default.</div>
+      <label className="small mt-block"><input type="checkbox" className="check" checked={w.enabled} onChange={(e) => set({ enabled: e.target.checked })} /> Let apps search the web</label>
       <label className="small muted mt-block">Search backend</label>
       <select value={w.backend} onChange={(e) => set({ backend: e.target.value as RuntimeSettings["web_tools"]["backend"] })}>
-        <option value="none">None (fetch only)</option>
-        <option value="searxng">SearXNG (your own instance)</option>
+        <option value="none">None (only open pages)</option>
+        <option value="searxng">SearXNG (your own search server)</option>
         <option value="brave">Brave Search API</option>
       </select>
-      {w.backend === "searxng" && <input className="mt" placeholder="https://search.example.org" value={w.searxng_url} onChange={(e) => set({ searxng_url: e.target.value })} />}
+      {w.backend === "searxng" && <input className="mt" placeholder="Your SearXNG address" value={w.searxng_url} onChange={(e) => set({ searxng_url: e.target.value })} />}
       {w.backend === "brave" && (
         <div className="row mt">
-          <input type="password" placeholder={hasKey ? "Key stored — paste to replace" : "Brave Search API key"} value={key} onChange={(e) => setKey(e.target.value)} />
-          <button className="ghost" onClick={() => api.setWebSearchKey(key).then(() => { setKey(""); setHasKey(true); setMsg("Key saved to the secure store."); }).catch((e) => setMsg(errText(e)))}>Save key</button>
+          <input type="password" placeholder={hasKey ? "Key saved — paste to change" : "Brave Search key"} value={key} onChange={(e) => setKey(e.target.value)} />
+          <button className="ghost" onClick={() => api.setWebSearchKey(key).then(() => { setKey(""); setHasKey(true); setMsg("Key saved."); }).catch((e) => setMsg(errText(e)))}>Save key</button>
         </div>
       )}
-      <label className="small mt-block"><input type="checkbox" className="check" checked={w.allow_private} onChange={(e) => set({ allow_private: e.target.checked })} /> Allow fetching addresses on private networks</label>
-      {w.allow_private && <div className="warn small">A model could then read services on your local network (routers, internal sites). Leave this off unless you need it.</div>}
+      <label className="small mt-block"><input type="checkbox" className="check" checked={w.allow_private} onChange={(e) => set({ allow_private: e.target.checked })} /> Also allow addresses on my home or work network</label>
+      {w.allow_private && <div className="warn small">The AI could then read things like your router page. Leave this off unless you need it.</div>}
       <div className="row mt"><button className="primary" onClick={save}>Save web tools</button></div>
       {msg && <div className="small mt">{msg}</div>}
     </div>

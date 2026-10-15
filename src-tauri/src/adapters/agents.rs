@@ -61,7 +61,7 @@ pub fn detect(spec: &AgentSpec) -> AppDetection {
         return AppDetection {
             app_id: spec.id.into(), display_name: spec.display_name.into(), installed: false, path: None,
             version: None, version_verified: false,
-            notes: vec![format!("{} through PrismFlow is not available on Windows yet.", spec.display_name)],
+            notes: vec![format!("{} with PrismFlow isn't available on Windows yet.", spec.display_name)],
         };
     }
     let mut d = AppDetection {
@@ -71,7 +71,7 @@ pub fn detect(spec: &AgentSpec) -> AppDetection {
         path: None,
         version: None,
         version_verified: false,
-        notes: vec!["Launched by PrismFlow through its local gateway; your own configuration for this agent is not changed.".into()],
+        notes: vec!["PrismFlow opens it for you. Your own settings for it don't change.".into()],
     };
     let Some(bin) = find_binary(spec) else {
         d.notes = vec![format!("{} was not found on PATH or in common install locations.", spec.display_name)];
@@ -83,11 +83,11 @@ pub fn detect(spec: &AgentSpec) -> AppDetection {
         d.installed = true;
         d.version_verified = v.contains(spec.verified_version);
         if !d.version_verified {
-            d.notes.push(format!("Verified with {} {}; this version runs staged verification before being trusted.", spec.display_name, spec.verified_version));
+            d.notes.push(format!("Tested with {} {}. Press Test after connecting.", spec.display_name, spec.verified_version));
         }
         d.version = Some(v);
     } else {
-        d.notes.push(format!("Found {}, but `--version` failed.", bin.display()));
+        d.notes.push(format!("Found {}, but it didn't start.", bin.display()));
     }
     d
 }

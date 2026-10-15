@@ -180,7 +180,7 @@ impl Sessions {
                 return Err("Codex is still working on the previous message. Wait, or stop it.".into());
             }
             if !x.session.turns.is_empty() && x.session.thread_id.is_none() {
-                return Err("This session's first turn did not start a Codex thread, so it cannot continue. Start a new session.".into());
+                return Err("This session can't continue. Start a new one.".into());
             }
             let args = turn_args(profile, x.session.sandbox, x.session.thread_id.as_deref(), prompt);
             x.session.turns.push(Turn {
