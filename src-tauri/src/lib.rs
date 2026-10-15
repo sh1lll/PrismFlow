@@ -1,7 +1,11 @@
+pub mod adapters;
 pub mod cli;
 pub mod config_engine;
 pub mod credentials;
+pub mod diagnostics;
+pub mod discovery;
 pub mod providers;
+pub mod state;
 
 #[tauri::command]
 fn ping() -> String {
