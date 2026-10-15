@@ -82,6 +82,28 @@ fn running_sessions(svc: State<'_, Service>, id: String) -> Cmd<Vec<u32>> {
 }
 
 #[tauri::command]
+async fn check_custom_url(svc: State<'_, Service>, url: String) -> Cmd<providers::UrlCheck> {
+    svc.check_custom_url(&url).await
+}
+
+#[tauri::command]
+async fn add_custom_provider(
+    svc: State<'_, Service>,
+    name: String,
+    url: String,
+    protocol: providers::Protocol,
+    requires_key: bool,
+    consent: bool,
+) -> Cmd<providers::ProviderDefinition> {
+    svc.add_custom_provider(&name, &url, protocol, requires_key, consent).await
+}
+
+#[tauri::command]
+fn remove_custom_provider(svc: State<'_, Service>, id: String) -> Cmd<()> {
+    svc.remove_custom_provider(&id)
+}
+
+#[tauri::command]
 fn list_connections(svc: State<'_, Service>) -> Cmd<Vec<state::ConnectionRecord>> {
     svc.connections()
 }
@@ -118,6 +140,9 @@ pub fn run() {
         agent_timeout: Duration::from_secs(120),
         upstream_overrides: Default::default(),
     };
+    if let Err(e) = service.load_custom_providers() {
+        service.diag.record(diagnostics::Level::Error, "provider.custom_load", &format!("Custom providers could not be loaded: {e}"));
+    }
     service.diag.record(diagnostics::Level::Info, "app.start", concat!("PrismFlow ", env!("CARGO_PKG_VERSION"), " started."));
     tauri::Builder::default()
         .manage(service)
@@ -145,6 +170,9 @@ pub fn run() {
             disconnect,
             list_connections,
             running_sessions,
+            check_custom_url,
+            add_custom_provider,
+            remove_custom_provider,
             launch_connection,
             get_diagnostics,
             export_diagnostics,

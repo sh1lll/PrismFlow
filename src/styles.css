@@ -63,3 +63,6 @@ input.check { width: auto; margin: 0 4px 0 0; vertical-align: middle; }
 details summary { cursor: pointer; color: var(--muted); }
 ul { margin: 6px 0; padding-left: 0; list-style: none; }
 @media (max-width: 900px) { .grid2 { grid-template-columns: 1fr; } }
+.card.compact { padding: 10px 14px; margin-bottom: 8px; }
+.rowbtn { width: 100%; background: none; border: 0; color: var(--text); padding: 0; cursor: pointer; text-align: left; font-size: 14px; }
+.mb { margin-bottom: 12px; }

@@ -405,10 +405,6 @@ mod tests {
             plan_connect(home.path(), providers::get("nvidia_nim").unwrap(), "m", &helper(), None),
             Err(CodexError::ProtocolUnsupported(_))
         ));
-        assert!(matches!(
-            plan_connect(home.path(), providers::get("custom_openai").unwrap(), "m", &helper(), None),
-            Err(CodexError::MissingBaseUrl(_))
-        ));
     }
 
     #[test]

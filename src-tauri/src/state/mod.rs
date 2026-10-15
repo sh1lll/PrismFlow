@@ -145,6 +145,22 @@ impl StateStore {
         self.save(&all)
     }
 
+    pub fn load_custom_providers(&self) -> Result<Vec<crate::providers::CustomProvider>, ConfigError> {
+        let file = self.dir.join("custom_providers.json");
+        match fs::read_to_string(&file) {
+            Ok(s) => serde_json::from_str(&s).map_err(|e| ConfigError::Parse { file, detail: e.to_string() }),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Vec::new()),
+            Err(e) => Err(ConfigError::Io { file, detail: e.to_string() }),
+        }
+    }
+
+    pub fn save_custom_providers(&self, list: &[crate::providers::CustomProvider]) -> Result<(), ConfigError> {
+        let file = self.dir.join("custom_providers.json");
+        let json = serde_json::to_string_pretty(list)
+            .map_err(|e| ConfigError::Io { file: file.clone(), detail: e.to_string() })?;
+        atomic_write(&file, &json)
+    }
+
     pub fn get(&self, id: &str) -> Result<Option<ConnectionRecord>, ConfigError> {
         Ok(self.load()?.into_iter().find(|r| r.id == id))
     }

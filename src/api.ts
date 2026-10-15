@@ -10,10 +10,24 @@ export interface Provider {
   model_list_path: string | null;
   auth_check_path: string | null;
   docs_url: string;
+  keys_url: string;
+  local: boolean;
+  custom: boolean;
+  requires_key: boolean;
+  key_optional: boolean;
+  verified_at: string;
   has_credential: boolean;
   codex_direct: boolean;
   /** How each app reaches this provider; null = unsupported. */
   routes: Record<AppId, Route | null>;
+}
+
+export interface UrlCheck {
+  normalized: string;
+  host: string;
+  loopback: boolean;
+  resolves_private: boolean;
+  warnings: string[];
 }
 
 export type AppId = "codex_cli" | "claude_code";
@@ -113,6 +127,10 @@ export const api = {
   verify: (id: string) => invoke<VerificationReport>("verify_connection", { id }),
   disconnect: (id: string) => invoke<string | null>("disconnect", { id }),
   connections: () => invoke<Connection[]>("list_connections"),
+  checkCustomUrl: (url: string) => invoke<UrlCheck>("check_custom_url", { url }),
+  addCustomProvider: (name: string, url: string, protocol: Protocol, requiresKey: boolean, consent: boolean) =>
+    invoke<Provider>("add_custom_provider", { name, url, protocol, requiresKey, consent }),
+  removeCustomProvider: (id: string) => invoke<void>("remove_custom_provider", { id }),
   runningSessions: (id: string) => invoke<number[]>("running_sessions", { id }),
   launch: (id: string) => invoke<void>("launch_connection", { id }),
   diagnostics: () => invoke<DiagEvent[]>("get_diagnostics"),

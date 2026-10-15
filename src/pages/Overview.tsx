@@ -55,7 +55,7 @@ export default function Overview({ go }: { go: (p: Page) => void }) {
         <div className="card">
           <div className="section-title">Provider keys</div>
           {keyed.length === 0 ? <div className="muted">None stored.</div> : keyed.map((p) => <div key={p.id}>{p.display_name}</div>)}
-          <div className="muted small">Keys live only in the macOS Keychain.</div>
+          <div className="muted small">Keys live only in your system's secure store.</div>
         </div>
         {apps.length === 0 ? (
           <div className="card muted">Detecting applications…</div>

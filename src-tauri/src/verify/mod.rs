@@ -230,9 +230,10 @@ async fn run_stages(
     }
 
     // Stage 2 — credential validation.
-    let key = match env.store.get(&account_key(provider.id, "default")) {
-        Ok(k) => k,
-        Err(_) => {
+    let stored = env.store.get(&account_key(provider.id, "default")).ok();
+    let key = match stored.or_else(|| (!provider.requires_key).then(String::new)) {
+        Some(k) => k,
+        None => {
             run.push(2, "Credential", StageOutcome::Fail, format!(
                 "No {} key is stored. Add it under Providers.", provider.display_name
             ));
@@ -241,7 +242,9 @@ async fn run_stages(
     };
     let secrets = [key.as_str()];
     match provider.auth_check_path {
-        Some(path) => match discovery::check_credential(&env.client, &env.base_url, path, &key).await {
+        _ if key.is_empty() => run.push(2, "Credential", StageOutcome::Skipped,
+            format!("{} needs no key.", provider.display_name)),
+        Some(path) => match discovery::check_credential_as(&env.client, &env.base_url, path, &key, provider.auth_style).await {
             Ok(()) => run.push(2, "Credential", StageOutcome::Pass, "The provider accepted the stored key."),
             Err(e) => {
                 let status = status_for_probe(&e);
@@ -261,7 +264,7 @@ async fn run_stages(
 
     // Stages 3 + 4 — endpoint and model.
     match provider.model_list_path {
-        Some(path) => match discovery::list_models(&env.client, &env.base_url, path, Some(&key)).await {
+        Some(path) => match discovery::list_models_as(&env.client, &env.base_url, path, (!key.is_empty()).then_some(key.as_str()), provider.auth_style).await {
             Ok(models) => {
                 let transport = if env.base_url.starts_with("https://") { " over TLS" } else { "" };
                 run.push(3, "Endpoint", StageOutcome::Pass, format!(

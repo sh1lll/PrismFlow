@@ -23,9 +23,9 @@ function Stages({ stages }: { stages: StageResult[] }) {
 function NewConnection({ providers, onDone }: { providers: Provider[]; onDone: () => void }) {
   const [appId, setAppId] = useState<AppId>("codex_cli");
   const eligible = providers.filter((p) => p.routes[appId] != null);
-  const [providerId, setProviderId] = useState(eligible.find((p) => p.has_credential)?.id ?? eligible[0]?.id ?? "");
+  const [providerId, setProviderId] = useState(eligible.find((p) => p.has_credential || p.key_optional)?.id ?? eligible[0]?.id ?? "");
   useEffect(() => {
-    if (!eligible.some((p) => p.id === providerId)) setProviderId(eligible.find((p) => p.has_credential)?.id ?? eligible[0]?.id ?? "");
+    if (!eligible.some((p) => p.id === providerId)) setProviderId(eligible.find((p) => p.has_credential || p.key_optional)?.id ?? eligible[0]?.id ?? "");
   }, [appId]);
   const [model, setModel] = useState("");
   const [models, setModels] = useState<ModelInfo[] | null>(null);
@@ -87,7 +87,7 @@ function NewConnection({ providers, onDone }: { providers: Provider[]; onDone: (
       <select value={providerId} onChange={(e) => setProviderId(e.target.value)}>
         {eligible.map((p) => (
           <option key={p.id} value={p.id}>
-            {p.display_name} · {ROUTE_LABEL[p.routes[appId]!]}{p.has_credential ? "" : " — no key yet"}
+            {p.display_name} · {ROUTE_LABEL[p.routes[appId]!]}{p.has_credential || p.key_optional ? "" : " — no key yet"}
           </option>
         ))}
       </select>
@@ -98,7 +98,7 @@ function NewConnection({ providers, onDone }: { providers: Provider[]; onDone: (
             : "This provider has no Responses API; PrismFlow's local gateway translates Codex's requests."}
         </div>
       )}
-      {provider && !provider.has_credential && <div className="warn small mt">Add a {provider.display_name} key under Providers first.</div>}
+      {provider && !provider.has_credential && !provider.key_optional && <div className="warn small mt">Add a {provider.display_name} key under Providers first.</div>}
 
       <label className="small muted mt-block">Model</label>
       <div className="row">
@@ -129,7 +129,7 @@ function NewConnection({ providers, onDone }: { providers: Provider[]; onDone: (
       )}
 
       <div className="row mt">
-        <button className="primary" disabled={!model.trim() || busy !== "" || !provider?.has_credential} onClick={doPreview}>
+        <button className="primary" disabled={!model.trim() || busy !== "" || !(provider?.has_credential || provider?.key_optional)} onClick={doPreview}>
           {busy === "preview" ? "Preparing…" : "Review changes"}
         </button>
       </div>

@@ -19,6 +19,7 @@ use std::time::Duration;
 
 #[derive(Debug, Serialize)]
 pub struct ProviderView {
+    pub key_optional: bool,
     #[serde(flatten)]
     pub def: ProviderDefinition,
     pub has_credential: bool,
@@ -73,7 +74,7 @@ pub fn route_for(app_id: &str, p: &ProviderDefinition) -> Option<Route> {
         return None; // custom providers wait for URL validation + consent (SPEC §6.3)
     }
     match app_id {
-        codex::APP_ID if codex_direct(p) => Some(Route::Direct),
+        codex::APP_ID if codex_direct(p) && p.requires_key => Some(Route::Direct),
         codex::APP_ID => Some(Route::Gateway),
         claude_code::APP_ID => Some(Route::Gateway),
         _ => None,
@@ -114,16 +115,23 @@ impl Service {
         self.store.get(&account_key(provider_id, "default")).ok()
     }
 
+    /// The key to use for `p`: the stored one, or a placeholder for
+    /// providers that need none (local servers). None = missing and required.
+    fn usable_key(&self, p: &ProviderDefinition) -> Option<String> {
+        self.key(p.id).or_else(|| (!p.requires_key).then(|| "no-key-required".to_string()))
+    }
+
     fn upstream_url(&self, p: &ProviderDefinition) -> String {
         self.upstream_overrides.get(p.id).cloned().unwrap_or_else(|| p.base_url.to_string())
     }
 
     pub fn providers(&self) -> Vec<ProviderView> {
         providers::registry()
-            .iter()
+            .into_iter()
             .map(|def| ProviderView {
                 def: def.clone(),
                 has_credential: self.key(def.id).is_some(),
+                key_optional: !def.requires_key,
                 codex_direct: codex_direct(def),
                 routes: APPS.iter().map(|a| (*a, route_for(a, def))).collect(),
             })
@@ -183,13 +191,85 @@ impl Service {
             return Err("Custom providers are not supported in this build.".into());
         }
         let key = self.key(p.id);
-        discovery::list_models(&self.client, &self.upstream_url(p), path, key.as_deref())
+        discovery::list_models_as(&self.client, &self.upstream_url(p), path, key.as_deref(), p.auth_style)
             .await
             .map_err(|e| {
                 let msg = format!("Model discovery for {} failed: {e}", p.display_name);
                 self.diag.record(Level::Warn, "discovery.failed", &msg);
                 msg
             })
+    }
+
+    /// Load saved custom providers into the registry (call at startup).
+    pub fn load_custom_providers(&self) -> R<()> {
+        let list = self.state.load_custom_providers().map_err(|e| e.to_string())?;
+        providers::set_custom(&list);
+        Ok(())
+    }
+
+    pub async fn check_custom_url(&self, url: &str) -> R<providers::UrlCheck> {
+        let url = url.to_string();
+        tokio::task::spawn_blocking(move || providers::check_custom_url(&url)).await.map_err(|e| e.to_string())?
+    }
+
+    /// Save a custom provider. `consent` must be true: the user has read the
+    /// URL check's warnings and agreed to send data to that host (SPEC §6.3).
+    pub async fn add_custom_provider(
+        &self,
+        name: &str,
+        url: &str,
+        protocol: Protocol,
+        requires_key: bool,
+        consent: bool,
+    ) -> R<ProviderDefinition> {
+        let name = name.trim();
+        if name.is_empty() || name.len() > 60 {
+            return Err("Give the provider a name (up to 60 characters).".into());
+        }
+        let check = self.check_custom_url(url).await?;
+        if !consent {
+            return Err(format!("Confirm that PrismFlow may send requests to {} before saving.", check.host));
+        }
+        let id = providers::custom_id(name);
+        if providers::get(&id).is_some_and(|p| !p.custom) {
+            return Err(format!("'{name}' clashes with a built-in provider; choose another name."));
+        }
+        let mut list = self.state.load_custom_providers().map_err(|e| e.to_string())?;
+        if self.connections()?.iter().any(|r| r.provider_id == id) {
+            return Err(format!("{name} has connections; disconnect them before changing it."));
+        }
+        list.retain(|c| c.id != id);
+        list.push(providers::CustomProvider {
+            id: id.clone(),
+            display_name: name.into(),
+            base_url: check.normalized.clone(),
+            protocol,
+            requires_key,
+            consented_host: check.host.clone(),
+        });
+        self.state.save_custom_providers(&list).map_err(|e| e.to_string())?;
+        providers::set_custom(&list);
+        self.diag.record(Level::Info, "provider.custom_added", &format!(
+            "Added custom provider {name} ({}) at {}; user consented to send requests to {}.", id, check.normalized, check.host
+        ));
+        Ok(provider(&id)?.clone())
+    }
+
+    pub fn remove_custom_provider(&self, id: &str) -> R<()> {
+        let p = provider(id)?;
+        if !p.custom {
+            return Err("Built-in providers cannot be removed.".into());
+        }
+        if self.connections()?.iter().any(|r| r.provider_id == id) {
+            return Err(format!("Disconnect everything using {} first.", p.display_name));
+        }
+        let _ = self.store.delete(&account_key(id, "default"));
+        let mut list = self.state.load_custom_providers().map_err(|e| e.to_string())?;
+        list.retain(|c| c.id != id);
+        self.state.save_custom_providers(&list).map_err(|e| e.to_string())?;
+        providers::set_custom(&list);
+        self.diag.record(Level::Info, "provider.custom_removed", &format!("Removed custom provider {id} and its key."));
+        Ok(())
     }
 
     pub fn applications(&self) -> Vec<AppDetection> {
@@ -297,7 +377,7 @@ impl Service {
                 "Codex asks PrismFlow's helper for the key at runtime. Any program running as your user can run that helper too.".into(),
             ),
         }
-        if self.key(p.id).is_none() {
+        if self.usable_key(p).is_none() {
             warnings.insert(0, format!("No {} key is stored yet; add one before connecting.", p.display_name));
         }
         Ok(ConnectPreview {
@@ -314,7 +394,7 @@ impl Service {
 
     pub async fn connect(&self, app_id: &str, provider_id: &str, model: &str) -> R<ConnectionRecord> {
         let (p, route, mut plan) = self.plan(app_id, provider_id, model)?;
-        if app_id == codex::APP_ID && self.key(p.id).is_some() {
+        if app_id == codex::APP_ID && self.usable_key(p).is_some() {
             if let Err(e) = self.write_codex_catalog(p, validate_model_id(model)?).await {
                 // Codex still works without a catalog (it falls back to defaults).
                 self.diag.record(Level::Warn, "connect.catalog", &format!(
@@ -323,7 +403,7 @@ impl Service {
                 plan = self.plan_with(app_id, provider_id, model, None)?.2;
             }
         }
-        if self.key(p.id).is_none() {
+        if self.usable_key(p).is_none() {
             return Err(format!("Add a {} key under Providers first.", p.display_name));
         }
         if route == Route::Gateway {
@@ -398,7 +478,7 @@ impl Service {
         let mut specs = Vec::new();
         for (provider_id, models) in models {
             let p = provider(&provider_id)?;
-            let Some(key) = self.key(p.id) else {
+            let Some(key) = self.usable_key(p) else {
                 self.diag.record(Level::Warn, "gateway.no_key", &format!(
                     "{} has gateway connections but no stored key; its requests will fail until a key is added.", p.display_name
                 ));
@@ -608,7 +688,7 @@ mod tests {
         assert_eq!(route_for(CODEX, get("nvidia_nim")), Some(Route::Gateway));
         assert_eq!(route_for(CLAUDE, get("openrouter")), Some(Route::Gateway));
         assert_eq!(route_for(CLAUDE, get("nvidia_nim")), Some(Route::Gateway));
-        assert_eq!(route_for(CLAUDE, get("custom_openai")), None);
+        assert_eq!(route_for(CODEX, get("ollama")), Some(Route::Gateway), "keyless local servers go through the gateway");
         assert_eq!(route_for("vscode", get("openrouter")), None);
     }
 
@@ -723,6 +803,28 @@ mod tests {
         assert!(!s.providers().iter().any(|p| p.has_credential));
     }
 
+    #[tokio::test]
+    async fn custom_provider_needs_consent_and_persists() {
+        let _g = providers::TEST_CUSTOM_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let dir = tempfile::tempdir().unwrap();
+        let s = service(dir.path());
+        let err = s.add_custom_provider("Box", "http://localhost:4000/v1", Protocol::OpenAiChat, false, false).await.unwrap_err();
+        assert!(err.contains("Confirm"));
+        let p = s.add_custom_provider("Box", "http://localhost:4000/v1/", Protocol::OpenAiChat, false, true).await.unwrap();
+        assert_eq!(p.id, "custom_box");
+        assert_eq!(p.base_url, "http://localhost:4000/v1");
+        assert_eq!(route_for(CLAUDE, &p), Some(Route::Gateway));
+        assert_eq!(s.state.load_custom_providers().unwrap().len(), 1);
+        // reload from disk into a fresh registry view
+        providers::set_custom(&[]);
+        s.load_custom_providers().unwrap();
+        assert!(providers::get("custom_box").is_some());
+        assert!(s.add_custom_provider("Bad", "http://example.com/v1", Protocol::OpenAiChat, true, true).await.is_err());
+        s.remove_custom_provider("custom_box").unwrap();
+        assert!(providers::get("custom_box").is_none());
+        assert!(s.remove_custom_provider("openrouter").is_err());
+    }
+
     #[test]
     fn rejects_bad_inputs() {
         let dir = tempfile::tempdir().unwrap();
@@ -730,7 +832,6 @@ mod tests {
         assert!(s.set_credential("openrouter", "two words").is_err());
         assert!(s.set_credential("nope", "k").is_err());
         assert!(s.preview(CODEX, "openrouter", "has space").is_err());
-        assert!(s.preview(CLAUDE, "custom_openai", "m").unwrap_err().contains("base URL"));
         assert!(s.preview("vscode", "openrouter", "m").is_err());
     }
 

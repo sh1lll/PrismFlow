@@ -2,6 +2,7 @@
 //! (SPEC §9 Stage 2). Redirects are never followed, so a credential is
 //! never forwarded to a host the user did not choose (SPEC §6.3).
 
+use crate::providers::AuthStyle;
 use serde::Serialize;
 use std::time::Duration;
 
@@ -58,10 +59,17 @@ async fn get(
     client: &reqwest::Client,
     url: &str,
     key: Option<&str>,
+    style: AuthStyle,
 ) -> Result<serde_json::Value, ProbeError> {
     let mut req = client.get(url);
+    if style == AuthStyle::Anthropic {
+        req = req.header("anthropic-version", "2023-06-01");
+    }
     if let Some(k) = key {
-        req = req.bearer_auth(k);
+        req = match style {
+            AuthStyle::Bearer => req.bearer_auth(k),
+            AuthStyle::Anthropic => req.header("x-api-key", k),
+        };
     }
     let resp = req.send().await.map_err(|e| {
         // reqwest errors can embed the URL but never headers; still sanitize.
@@ -90,7 +98,17 @@ pub async fn list_models(
     path: &str,
     key: Option<&str>,
 ) -> Result<Vec<ModelInfo>, ProbeError> {
-    let body = get(client, &join(base_url, path), key).await?;
+    list_models_as(client, base_url, path, key, AuthStyle::Bearer).await
+}
+
+pub async fn list_models_as(
+    client: &reqwest::Client,
+    base_url: &str,
+    path: &str,
+    key: Option<&str>,
+    style: AuthStyle,
+) -> Result<Vec<ModelInfo>, ProbeError> {
+    let body = get(client, &join(base_url, path), key, style).await?;
     let data = body
         .get("data")
         .and_then(|d| d.as_array())
@@ -125,7 +143,17 @@ pub async fn check_credential(
     path: &str,
     key: &str,
 ) -> Result<(), ProbeError> {
-    get(client, &join(base_url, path), Some(key)).await.map(|_| ())
+    check_credential_as(client, base_url, path, key, AuthStyle::Bearer).await
+}
+
+pub async fn check_credential_as(
+    client: &reqwest::Client,
+    base_url: &str,
+    path: &str,
+    key: &str,
+    style: AuthStyle,
+) -> Result<(), ProbeError> {
+    get(client, &join(base_url, path), Some(key), style).await.map(|_| ())
 }
 
 #[cfg(test)]
@@ -178,6 +206,21 @@ mod tests {
             check_credential(&client(), &base, "/key", "bad-key").await,
             Err(ProbeError::Unauthorized(401))
         );
+    }
+
+    #[tokio::test]
+    async fn anthropic_style_sends_x_api_key_and_version() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/v1/models"))
+            .and(header("x-api-key", "sk-ant-good"))
+            .and(header("anthropic-version", "2023-06-01"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({"data": [{"id": "claude-x", "display_name": "X"}]})))
+            .mount(&server)
+            .await;
+        let m = list_models_as(&client(), &server.uri(), "/v1/models", Some("sk-ant-good"), AuthStyle::Anthropic).await.unwrap();
+        assert_eq!(m[0].id, "claude-x");
+        assert!(check_credential_as(&client(), &server.uri(), "/v1/models", "sk-ant-bad", AuthStyle::Anthropic).await.is_err());
     }
 
     #[tokio::test]
