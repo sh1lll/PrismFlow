@@ -370,7 +370,8 @@ pub fn run() {
         codex_home: adapters::codex::codex_home(),
         claude_dir: adapters::claude_code::config_dir(),
         helper,
-        agent_timeout: Duration::from_secs(120),
+        // Local models can take minutes on a coding agent's first, long prompt.
+        agent_timeout: Duration::from_secs(300),
         upstream_overrides: Default::default(),
     };
     if let Err(e) = service.load_custom_providers() {

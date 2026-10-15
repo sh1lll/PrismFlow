@@ -726,3 +726,10 @@ async fn web_tools_off_leaves_requests_untouched() {
     assert_eq!(v["type"], "message", "{v}");
     h.broker.stop().await;
 }
+
+#[test]
+fn engine_never_gets_a_fixed_whole_request_timeout() {
+    // Guard for the 2026-10-15 finding: a 60 s cap cut long streamed answers.
+    let src = include_str!("supervisor.rs");
+    assert!(src.contains(r#".env("UPSTREAM_TIMEOUT_MS", "0")"#));
+}

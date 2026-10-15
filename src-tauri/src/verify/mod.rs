@@ -184,7 +184,11 @@ async fn run_claude(bin: &Path, settings: &Path, workdir: &Path, prompt: &str, t
         .kill_on_drop(true);
     for (k, _) in std::env::vars_os() {
         let k = k.to_string_lossy();
-        if k.starts_with("ANTHROPIC_") || k.starts_with("CLAUDE_CODE_") {
+        // Everything a parent Claude Code session or SDK host sets, but keep
+        // CLAUDE_CONFIG_DIR (the user's own choice of config folder).
+        if k.starts_with("ANTHROPIC_") || k.starts_with("CLAUDE_CODE_") || k.starts_with("CLAUDE_AGENT_SDK_")
+            || k == "CLAUDECODE" || k == "CLAUDE_EFFORT" || k == "CLAUDE_PID"
+        {
             cmd.env_remove(k.as_ref());
         }
     }

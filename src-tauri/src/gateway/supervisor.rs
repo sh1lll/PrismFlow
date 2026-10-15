@@ -314,7 +314,11 @@ pub fn spawn(rt: &GatewayRuntime, specs: &[UpstreamSpec], settings: &super::Runt
         .env("PORT", port.to_string())
         .env("GATEWAY_CONFIG_PATH", &config_path)
         .env(CLIENT_KEY_ENV, &client_key)
-        .env("MANAGER_API_KEY", &manager_key);
+        .env("MANAGER_API_KEY", &manager_key)
+        // The engine's default is a fixed 60 s for the whole upstream request,
+        // which cuts off any long streamed answer (found by an end-to-end app
+        // test, 2026-10-15). Disable it; the broker enforces an idle timeout.
+        .env("UPSTREAM_TIMEOUT_MS", "0");
     for s in specs {
         cmd.env(key_env(&s.provider_id), &s.key);
     }
