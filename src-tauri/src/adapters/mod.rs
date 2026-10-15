@@ -3,6 +3,21 @@
 
 pub mod codex;
 
+use std::path::PathBuf;
+
+/// Directories GUI-launched apps usually lack on PATH (macOS launchd gives
+/// `/usr/bin:/bin:/usr/sbin:/sbin`). Codex's npm shim also needs `node`.
+pub fn extra_bin_dirs() -> Vec<PathBuf> {
+    let mut dirs = vec![PathBuf::from("/opt/homebrew/bin"), PathBuf::from("/usr/local/bin")];
+    if let Some(home) = dirs::home_dir() {
+        for rel in [".local/bin", ".npm-global/bin", ".volta/bin", ".bun/bin"] {
+            dirs.push(home.join(rel));
+        }
+    }
+    dirs
+}
+
+
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct AppDetection {
     pub app_id: String,

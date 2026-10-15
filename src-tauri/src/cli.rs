@@ -29,9 +29,25 @@ pub fn handle_args(
                 }
             }
         }
+        [cmd, sub, flag, connection]
+            if cmd == "token" && sub == "print" && flag == "--connection" =>
+        {
+            match store.get(&crate::gateway::tokens::account(connection)) {
+                Ok(token) => {
+                    let _ = writeln!(out, "{}", token);
+                    Some(0)
+                }
+                Err(_) => {
+                    eprintln!(
+                        "prismflow: connection '{connection}' has no gateway token (it was disconnected or revoked). Reconnect it in the app."
+                    );
+                    Some(2)
+                }
+            }
+        }
         [] => None,
         _ => {
-            eprintln!("usage: prismflow [--version | credential print --provider <id>]");
+            eprintln!("usage: prismflow [--version | credential print --provider <id> | token print --connection <id>]");
             Some(64)
         }
     }
@@ -74,6 +90,19 @@ mod tests {
     #[test]
     fn missing_credential_exits_2_with_empty_stdout() {
         let (code, out) = run(&["credential", "print", "--provider", "nope"], &InMemoryStore::new());
+        assert_eq!(code, Some(2));
+        assert!(out.is_empty());
+    }
+
+    #[test]
+    fn token_print_serves_only_existing_tokens() {
+        let store = InMemoryStore::new();
+        let token = crate::gateway::tokens::mint(&store, "claude_code:openrouter").unwrap();
+        let (code, out) = run(&["token", "print", "--connection", "claude_code:openrouter"], &store);
+        assert_eq!(code, Some(0));
+        assert_eq!(out.trim(), token);
+        crate::gateway::tokens::revoke(&store, "claude_code:openrouter").unwrap();
+        let (code, out) = run(&["token", "print", "--connection", "claude_code:openrouter"], &store);
         assert_eq!(code, Some(2));
         assert!(out.is_empty());
     }

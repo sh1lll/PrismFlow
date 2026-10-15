@@ -18,10 +18,15 @@ serde_json = "1"
 thiserror = "2"
 keyring = { version = "3", features = ["apple-native", "windows-native", "sync-secret-service"] }
 toml_edit = "0.22"
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "process"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "stream"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "process", "net", "sync", "io-util"] }
 dirs = "6"
 uuid = { version = "1", features = ["v4"] }
+# Slice 2 broker (docs/superpowers/plans/2026-10-14-prismflow-gateway-slice2.md)
+axum = { version = "0.8", default-features = false, features = ["http1", "tokio", "json"] }
+sha2 = "0.10"
+getrandom = "0.3"
+futures-util = { version = "0.3", default-features = false }
 
 [dev-dependencies]
 wiremock = "0.6"

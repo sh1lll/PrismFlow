@@ -11,8 +11,8 @@ use std::sync::Mutex;
 const REDACTED: &str = "[REDACTED]";
 const MAX_EVENTS: usize = 500;
 /// Prefixes of provider key formats (OpenAI/OpenRouter/Anthropic `sk-`,
-/// Hugging Face `hf_`, NVIDIA `nvapi-`, Google `AIza`).
-const KEY_PREFIXES: &[&str] = &["sk-", "hf_", "nvapi-", "AIza"];
+/// Hugging Face `hf_`, NVIDIA `nvapi-`, Google `AIza`, PrismFlow local tokens `pft_`).
+const KEY_PREFIXES: &[&str] = &["sk-", "hf_", "nvapi-", "AIza", "pft_"];
 const MIN_KEY_LEN: usize = 12;
 
 fn looks_like_key(token: &str) -> bool {

@@ -4,6 +4,7 @@ pub mod config_engine;
 pub mod credentials;
 pub mod diagnostics;
 pub mod discovery;
+pub mod gateway;
 pub mod providers;
 pub mod service;
 pub mod state;

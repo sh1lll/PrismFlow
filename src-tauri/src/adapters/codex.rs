@@ -10,7 +10,7 @@
 //! PrismFlow therefore owns one profile file per provider and never edits the
 //! user's `config.toml`. Disconnect deletes only that file.
 
-use super::AppDetection;
+use super::{extra_bin_dirs, AppDetection};
 use crate::config_engine::{self, ConfigError, EditPlan, TomlVal};
 use crate::providers::{Protocol, ProviderDefinition};
 use std::path::{Path, PathBuf};
@@ -21,18 +21,6 @@ pub const MANAGED_MARKER: &str = "# Managed by PrismFlow";
 /// Versions this adapter has been verified against (SPEC §21.2).
 pub const VERIFIED_MIN: (u32, u32, u32) = (0, 162, 0);
 pub const VERIFIED_MAX: (u32, u32, u32) = (0, 162, u32::MAX);
-
-/// Directories GUI-launched apps usually lack on PATH (macOS launchd gives
-/// `/usr/bin:/bin:/usr/sbin:/sbin`). Codex's npm shim also needs `node`.
-fn extra_bin_dirs() -> Vec<PathBuf> {
-    let mut dirs = vec![PathBuf::from("/opt/homebrew/bin"), PathBuf::from("/usr/local/bin")];
-    if let Some(home) = dirs::home_dir() {
-        for rel in [".local/bin", ".npm-global/bin", ".volta/bin", ".bun/bin"] {
-            dirs.push(home.join(rel));
-        }
-    }
-    dirs
-}
 
 /// PATH for Codex child processes: its own directory first, then the
 /// common install locations, then the inherited PATH.
