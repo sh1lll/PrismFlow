@@ -164,6 +164,9 @@ pub struct UpstreamSpec {
     /// The key is a ChatGPT access token from a Codex sign-in; the engine's
     /// Codex OAuth plugin injects it (refresh disabled, see signin.rs).
     pub codex_oauth: bool,
+    /// Extra headers every request to this upstream needs (GitHub Copilot's
+    /// endpoint headers and short-lived session token).
+    pub headers: Vec<(String, String)>,
 }
 
 impl std::fmt::Debug for UpstreamSpec {
@@ -182,7 +185,10 @@ pub fn key_env(provider_id: &str) -> String {
     format!("PRISMFLOW_UPSTREAM_{}", provider_id.to_ascii_uppercase())
 }
 
-/// The engine config. It names env vars and never holds values, so the file is safe at rest.
+/// The engine config. Keys are env-var names, never values. The one
+/// exception: GitHub Copilot's short-lived session headers (the engine has
+/// no env templating for headers); the file is private (0600) and rewritten
+/// on every refresh.
 pub fn render_config(specs: &[UpstreamSpec], settings: &super::RuntimeSettings) -> serde_json::Value {
     let providers: Vec<_> = specs
         .iter()
@@ -192,6 +198,7 @@ pub fn render_config(specs: &[UpstreamSpec], settings: &super::RuntimeSettings) 
             "apiKeyEnv": key_env(&s.provider_id),
             "baseurl": s.base_url,
             "models": s.models,
+            "extraHeaders": { "default": s.headers.iter().map(|(k, v)| (k.clone(), json!(v))).collect::<serde_json::Map<String, serde_json::Value>>(), "byModel": {} },
         }))
         .collect();
     // Env references only: the file never holds a token.
@@ -438,7 +445,7 @@ mod tests {
             engine_type: "openai_chat_completions",
             base_url: "https://integrate.api.nvidia.com/v1".into(),
             models: vec!["meta/llama-3.3-70b-instruct".into()],
-            key: "nvapi-supersecretvalue".into(), codex_oauth: false };
+            key: "nvapi-supersecretvalue".into(), codex_oauth: false, headers: vec![] };
         let cfg = render_config(std::slice::from_ref(&spec), &crate::gateway::RuntimeSettings::default());
         let text = cfg.to_string();
         assert!(!text.contains("supersecret"));

@@ -130,8 +130,10 @@ async fn add_custom_provider(
     protocol: providers::Protocol,
     requires_key: bool,
     consent: bool,
+    gcloud: Option<bool>,
 ) -> Cmd<providers::ProviderDefinition> {
-    svc.add_custom_provider(&name, &url, protocol, requires_key, consent).await
+    let source = if gcloud.unwrap_or(false) { providers::CredentialSource::Gcloud } else { providers::CredentialSource::Keychain };
+    svc.add_custom_provider(&name, &url, protocol, requires_key, consent, source).await
 }
 
 #[tauri::command]
@@ -500,6 +502,30 @@ pub fn run() {
                 if let Err(e) = svc.sync_gateway().await {
                     svc.diag.record(diagnostics::Level::Error, "gateway.startup", &e);
                 }
+                // Google Cloud tokens last an hour: refresh the gateway's copy.
+                let refresher = svc.clone();
+                tauri::async_runtime::spawn(async move {
+                    loop {
+                        tokio::time::sleep(Duration::from_secs(45 * 60)).await;
+                        if refresher.needs_token_refresh() && !refresher.copilot_needs_refresh() {
+                            if let Err(e) = refresher.sync_gateway().await {
+                                refresher.diag.record(diagnostics::Level::Warn, "gateway.refresh", &e);
+                            }
+                        }
+                    }
+                });
+                // GitHub Copilot tokens are short-lived: refresh before they expire.
+                let copilot = svc.clone();
+                tauri::async_runtime::spawn(async move {
+                    loop {
+                        tokio::time::sleep(Duration::from_secs(60)).await;
+                        if copilot.copilot_needs_refresh() {
+                            if let Err(e) = copilot.sync_gateway().await {
+                                copilot.diag.record(diagnostics::Level::Warn, "gateway.copilot_refresh", &e);
+                            }
+                        }
+                    }
+                });
                 // Chat bots the user turned on come back with the app.
                 let b = handle.state::<BotState>();
                 let bs = bots::BotSettings::load(&b.dir);

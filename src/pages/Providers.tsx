@@ -11,7 +11,16 @@ const STYLE: Record<Protocol, string> = {
 type Msg = { tone: string; text: string } | null;
 
 /** Providers whose address includes something of yours (a resource name, an account ID). */
-const PRESETS: Record<string, { name: string; field: string; hint: string; url: (v: string) => string }> = {
+const PRESETS: Record<string, { name: string; field: string; hint: string; url: (v: string) => string; gcloud?: boolean }> = {
+  vertex: {
+    name: "Google Vertex AI", field: "Project ID (and region, optional: my-project/us-central1)", hint: "my-project", gcloud: true,
+    url: (v) => {
+      const [project, region] = v.split("/");
+      return region && region !== "global"
+        ? `https://${region}-aiplatform.googleapis.com/v1/projects/${project}/locations/${region}/endpoints/openapi`
+        : `https://aiplatform.googleapis.com/v1/projects/${project}/locations/global/endpoints/openapi`;
+    },
+  },
   azure: { name: "Azure OpenAI", field: "Resource name", hint: "The name before .openai.azure.com", url: (v) => `https://${v}.openai.azure.com/openai/v1` },
   cloudflare: { name: "Cloudflare Workers AI", field: "Account ID", hint: "Shown on your Cloudflare dashboard", url: (v) => `https://api.cloudflare.com/client/v4/accounts/${v}/ai/v1` },
 };
@@ -80,6 +89,8 @@ function KeyEditor({ p, onChange, setMsg }: { p: Provider; onChange: () => void;
 const SIGNIN: Record<string, { tool: string; login: string; note: string }> = {
   gh_cli: { tool: "GitHub", login: "gh auth login", note: "Uses your GitHub account's free AI models." },
   codex_login: { tool: "ChatGPT", login: "codex login", note: "Uses your ChatGPT plan. OpenAI may stop allowing this at any time." },
+  copilot_cli: { tool: "GitHub Copilot", login: "copilot login", note: "Uses your Copilot plan through GitHub's official Copilot CLI." },
+  gcloud: { tool: "Google Cloud", login: "gcloud auth login", note: "Uses your Google Cloud sign-in. Usage is charged to your Google Cloud project." },
 };
 
 function SignIn({ p, onChange, setMsg }: { p: Provider; onChange: () => void; setMsg: (m: Msg) => void }) {
@@ -172,7 +183,7 @@ function AddCustom({ onDone }: { onDone: () => void }) {
     setNeedsKey(true);
   }
   function setPresetField(v: string) {
-    const clean = v.trim().replace(/[^A-Za-z0-9-]/g, "");
+    const clean = v.trim().replace(/[^A-Za-z0-9/-]/g, "");
     setPresetValue(clean);
     setUrl(clean ? PRESETS[preset].url(clean) : "");
   }
@@ -189,7 +200,7 @@ function AddCustom({ onDone }: { onDone: () => void }) {
     setBusy(true);
     setError("");
     try {
-      await api.addCustomProvider(name, url, protocol, needsKey, consent);
+      await api.addCustomProvider(name, url, protocol, needsKey, consent, !!(preset && PRESETS[preset].gcloud));
       setName(""); setUrl(""); setCheck(null); setConsent(false); setNeedsKey(true); setProtocol("OpenAiChat"); setPreset(""); setPresetValue("");
       onDone();
     } catch (e) { setError(errText(e)); }
@@ -256,7 +267,7 @@ export default function Providers() {
     const match = (p: Provider) => !f || p.display_name.toLowerCase().includes(f) || p.id.includes(f);
     const list = (providers ?? []).filter(match).sort((a, b) => Number(b.has_credential) - Number(a.has_credential));
     return [
-      { title: "Use an account you already have", items: list.filter((p) => p.credential_source !== "keychain"), alwaysShow: false },
+      { title: "Use an account you already have", items: list.filter((p) => p.credential_source !== "keychain" && !p.custom), alwaysShow: false },
       { title: "AI providers", items: list.filter((p) => !p.local && !p.custom && p.credential_source === "keychain"), alwaysShow: false },
       { title: "Running on this computer", items: list.filter((p) => p.local && !p.custom), alwaysShow: false },
       { title: "Added by you", items: list.filter((p) => p.custom), alwaysShow: !f },

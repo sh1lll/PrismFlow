@@ -99,6 +99,19 @@
       "_evidence": "endpoint and OAuth handling from the pinned engine's built-in Codex OAuth support; live check NEEDS_OWNER"
     },
     {
+      "id": "github_copilot",
+      "display_name": "GitHub Copilot",
+      "base_url": "https://api.githubcopilot.com",
+      "protocols": [
+        "OpenAiChat"
+      ],
+      "model_list_path": "/models",
+      "docs_url": "https://docs.github.com/en/copilot/how-tos/copilot-sdk/auth/authenticate",
+      "credential_source": "copilot_cli",
+      "verified_at": "2026-10-15",
+      "_evidence": "Official Copilot SDK/CLI route: session.provider.getEndpoint (SDK 1.0.22, experimental). Probed Copilot CLI 1.0.98 over JSON-RPC up to 'Session is not authenticated'; live use needs a Copilot subscription and `copilot login`"
+    },
+    {
       "id": "groq",
       "display_name": "Groq",
       "base_url": "https://api.groq.com/openai/v1",
@@ -681,6 +694,635 @@
       "model_list_path": "/models",
       "auth_check_path": "/models",
       "docs_url": "https://docs.opper.ai",
+      "verified_at": "2026-10-15",
+      "_evidence": "probed 2026-10-15: live, rejects an invalid key"
+    },
+    {
+      "id": "qwencloud",
+      "display_name": "QwenCloud Token Plan",
+      "base_url": "https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1",
+      "protocols": [
+        "OpenAiChat"
+      ],
+      "model_list_path": "/models",
+      "auth_check_path": "/models",
+      "docs_url": "https://www.alibabacloud.com/help/en/model-studio/token-plan-overview",
+      "keys_url": "https://home.qwencloud.com/api-keys",
+      "verified_at": "2026-10-15",
+      "_evidence": "probed 2026-10-15: live, rejects an invalid key (401 InvalidApiKey); Singapore region; keys start sk-sp-; Alibaba may revoke keys used for non-interactive automation"
+    },
+    {
+      "id": "ai21",
+      "display_name": "AI21 Labs",
+      "base_url": "https://api.ai21.com/studio/v1",
+      "protocols": [
+        "OpenAiChat"
+      ],
+      "model_list_path": "/models",
+      "docs_url": "https://docs.ai21.com/reference/jamba-1-6-api-ref",
+      "verified_at": "2026-10-15",
+      "_evidence": "probed 2026-10-15: public model list answers; chat rejects an invalid key"
+    },
+    {
+      "id": "aihubmix",
+      "display_name": "AiHubMix",
+      "base_url": "https://aihubmix.com/v1",
+      "protocols": [
+        "OpenAiChat"
+      ],
+      "model_list_path": "/models",
+      "docs_url": "https://docs.aihubmix.com/en",
+      "verified_at": "2026-10-15",
+      "_evidence": "probed 2026-10-15: public model list answers; chat rejects an invalid key"
+    },
+    {
+      "id": "aimlapi",
+      "display_name": "AI/ML API",
+      "base_url": "https://api.aimlapi.com/v1",
+      "protocols": [
+        "OpenAiChat"
+      ],
+      "model_list_path": "/models",
+      "docs_url": "https://docs.aimlapi.com/",
+      "verified_at": "2026-10-15",
+      "_evidence": "probed 2026-10-15: public model list answers; chat rejects an invalid key"
+    },
+    {
+      "id": "akashml",
+      "display_name": "AkashML",
+      "base_url": "https://api.akashml.com/v1",
+      "protocols": [
+        "OpenAiChat"
+      ],
+      "model_list_path": "/models",
+      "auth_check_path": "/models",
+      "docs_url": "https://akashml.com/docs",
+      "verified_at": "2026-10-15",
+      "_evidence": "probed 2026-10-15: live, rejects an invalid key"
+    },
+    {
+      "id": "arliai",
+      "display_name": "Arli AI",
+      "base_url": "https://api.arliai.com/v1",
+      "protocols": [
+        "OpenAiChat"
+      ],
+      "model_list_path": "/models",
+      "auth_check_path": "/models",
+      "verified_at": "2026-10-15",
+      "_evidence": "probed 2026-10-15: live, rejects an invalid key"
+    },
+    {
+      "id": "avian",
+      "display_name": "Avian",
+      "base_url": "https://api.avian.io/v1",
+      "protocols": [
+        "OpenAiChat"
+      ],
+      "model_list_path": "/models",
+      "verified_at": "2026-10-15",
+      "_evidence": "probed 2026-10-15: public model list answers; chat rejects an invalid key"
+    },
+    {
+      "id": "baseten",
+      "display_name": "Baseten",
+      "base_url": "https://inference.baseten.co/v1",
+      "protocols": [
+        "OpenAiChat"
+      ],
+      "model_list_path": "/models",
+      "auth_check_path": "/models",
+      "docs_url": "https://docs.baseten.co/development/model-apis/overview",
+      "verified_at": "2026-10-15",
+      "_evidence": "probed 2026-10-15: live, rejects an invalid key"
+    },
+    {
+      "id": "byteplus_ark",
+      "display_name": "BytePlus ModelArk",
+      "base_url": "https://ark.ap-southeast.bytepluses.com/api/v3",
+      "protocols": [
+        "OpenAiChat"
+      ],
+      "model_list_path": "/models",
+      "auth_check_path": "/models",
+      "docs_url": "https://docs.byteplus.com/en/docs/ModelArk/1298454",
+      "verified_at": "2026-10-15",
+      "_evidence": "probed 2026-10-15: live, rejects an invalid key"
+    },
+    {
+      "id": "bytez",
+      "display_name": "Bytez",
+      "base_url": "https://api.bytez.com/models/v2/openai/v1",
+      "protocols": [
+        "OpenAiChat"
+      ],
+      "model_list_path": "/models",
+      "auth_check_path": "/models",
+      "docs_url": "https://docs.bytez.com/",
+      "verified_at": "2026-10-15",
+      "_evidence": "probed 2026-10-15: live, rejects an invalid key"
+    },
+    {
+      "id": "cloudrift",
+      "display_name": "CloudRift",
+      "base_url": "https://inference.cloudrift.ai/v1",
+      "protocols": [
+        "OpenAiChat"
+      ],
+      "model_list_path": "/models",
+      "docs_url": "https://docs.cloudrift.ai/",
+      "verified_at": "2026-10-15",
+      "_evidence": "probed 2026-10-15: public model list answers; chat rejects an invalid key"
+    },
+    {
+      "id": "cometapi",
+      "display_name": "CometAPI",
+      "base_url": "https://api.cometapi.com/v1",
+      "protocols": [
+        "OpenAiChat"
+      ],
+      "model_list_path": "/models",
+      "auth_check_path": "/models",
+      "verified_at": "2026-10-15",
+      "_evidence": "probed 2026-10-15: live, rejects an invalid key"
+    },
+    {
+      "id": "cortecs",
+      "display_name": "Cortecs",
+      "base_url": "https://api.cortecs.ai/v1",
+      "protocols": [
+        "OpenAiChat"
+      ],
+      "model_list_path": "/models",
+      "docs_url": "https://docs.cortecs.ai/",
+      "verified_at": "2026-10-15",
+      "_evidence": "probed 2026-10-15: public model list answers; chat rejects an invalid key"
+    },
+    {
+      "id": "crusoe",
+      "display_name": "Crusoe",
+      "base_url": "https://managed-inference-api-proxy.crusoecloud.com/v1",
+      "protocols": [
+        "OpenAiChat"
+      ],
+      "model_list_path": "/models",
+      "auth_check_path": "/models",
+      "docs_url": "https://docs.crusoecloud.com/managed-inference/overview",
+      "verified_at": "2026-10-15",
+      "_evidence": "probed 2026-10-15: live, rejects an invalid key"
+    },
+    {
+      "id": "digitalocean",
+      "display_name": "DigitalOcean Gradient",
+      "base_url": "https://inference.do-ai.run/v1",
+      "protocols": [
+        "OpenAiChat"
+      ],
+      "model_list_path": "/models",
+      "auth_check_path": "/models",
+      "docs_url": "https://docs.digitalocean.com/products/gradient-ai-platform/how-to/use-serverless-inference/",
+      "verified_at": "2026-10-15",
+      "_evidence": "probed 2026-10-15: live, rejects an invalid key"
+    },
+    {
+      "id": "friendli",
+      "display_name": "FriendliAI",
+      "base_url": "https://api.friendli.ai/serverless/v1",
+      "protocols": [
+        "OpenAiChat"
+      ],
+      "model_list_path": "/models",
+      "docs_url": "https://friendli.ai/docs/guides/serverless_endpoints/introduction",
+      "verified_at": "2026-10-15",
+      "_evidence": "probed 2026-10-15: public model list answers; chat rejects an invalid key"
+    },
+    {
+      "id": "gmi",
+      "display_name": "GMI Cloud",
+      "base_url": "https://api.gmi-serving.com/v1",
+      "protocols": [
+        "OpenAiChat"
+      ],
+      "model_list_path": "/models",
+      "auth_check_path": "/models",
+      "docs_url": "https://docs.gmicloud.ai/inference-engine/api-reference/llm-api-reference",
+      "verified_at": "2026-10-15",
+      "_evidence": "probed 2026-10-15: live, rejects an invalid key"
+    },
+    {
+      "id": "helicone",
+      "display_name": "Helicone AI Gateway",
+      "base_url": "https://ai-gateway.helicone.ai/v1",
+      "protocols": [
+        "OpenAiChat"
+      ],
+      "model_list_path": "/models",
+      "verified_at": "2026-10-15",
+      "_evidence": "probed 2026-10-15: public model list answers; chat rejects an invalid key"
+    },
+    {
+      "id": "hunyuan",
+      "display_name": "Tencent Hunyuan",
+      "base_url": "https://api.hunyuan.cloud.tencent.com/v1",
+      "protocols": [
+        "OpenAiChat"
+      ],
+      "model_list_path": "/models",
+      "auth_check_path": "/models",
+      "docs_url": "https://cloud.tencent.com/document/product/1729/111007",
+      "verified_at": "2026-10-15",
+      "_evidence": "probed 2026-10-15: live, rejects an invalid key"
+    },
+    {
+      "id": "tencent_tokenhub",
+      "display_name": "Tencent TokenHub",
+      "base_url": "https://tokenhub-intl.tencentcloudmaas.com/v1",
+      "protocols": [
+        "OpenAiChat"
+      ],
+      "model_list_path": "/models",
+      "auth_check_path": "/models",
+      "verified_at": "2026-10-15",
+      "_evidence": "probed 2026-10-15: live, rejects an invalid key"
+    },
+    {
+      "id": "inception",
+      "display_name": "Inception (Mercury)",
+      "base_url": "https://api.inceptionlabs.ai/v1",
+      "protocols": [
+        "OpenAiChat"
+      ],
+      "model_list_path": "/models",
+      "docs_url": "https://docs.inceptionlabs.ai/get-started/get-started",
+      "verified_at": "2026-10-15",
+      "_evidence": "probed 2026-10-15: public model list answers; chat rejects an invalid key"
+    },
+    {
+      "id": "inference_net",
+      "display_name": "Inference.net",
+      "base_url": "https://api.inference.net/v1",
+      "protocols": [
+        "OpenAiChat"
+      ],
+      "model_list_path": "/models",
+      "auth_check_path": "/models",
+      "docs_url": "https://docs.inference.net/quickstart",
+      "verified_at": "2026-10-15",
+      "_evidence": "probed 2026-10-15: live, rejects an invalid key"
+    },
+    {
+      "id": "infermatic",
+      "display_name": "Infermatic",
+      "base_url": "https://api.totalgpt.ai/v1",
+      "protocols": [
+        "OpenAiChat"
+      ],
+      "model_list_path": "/models",
+      "auth_check_path": "/models",
+      "verified_at": "2026-10-15",
+      "_evidence": "probed 2026-10-15: live, rejects an invalid key"
+    },
+    {
+      "id": "io_intelligence",
+      "display_name": "io.net Intelligence",
+      "base_url": "https://api.intelligence.io.solutions/api/v1",
+      "protocols": [
+        "OpenAiChat"
+      ],
+      "model_list_path": "/models",
+      "auth_check_path": "/models",
+      "docs_url": "https://docs.io.net/reference/get-started-with-io-intelligence-api",
+      "verified_at": "2026-10-15",
+      "_evidence": "probed 2026-10-15: live, rejects an invalid key"
+    },
+    {
+      "id": "ionos",
+      "display_name": "IONOS AI Model Hub",
+      "base_url": "https://openai.inference.de-txl.ionos.com/v1",
+      "protocols": [
+        "OpenAiChat"
+      ],
+      "model_list_path": "/models",
+      "auth_check_path": "/models",
+      "docs_url": "https://docs.ionos.com/cloud/ai/ai-model-hub",
+      "verified_at": "2026-10-15",
+      "_evidence": "probed 2026-10-15: live, rejects an invalid key"
+    },
+    {
+      "id": "longcat",
+      "display_name": "Meituan LongCat",
+      "base_url": "https://api.longcat.chat/openai/v1",
+      "protocols": [
+        "OpenAiChat"
+      ],
+      "model_list_path": "/models",
+      "auth_check_path": "/models",
+      "verified_at": "2026-10-15",
+      "_evidence": "probed 2026-10-15: live, rejects an invalid key"
+    },
+    {
+      "id": "mancer",
+      "display_name": "Mancer",
+      "base_url": "https://neuro.mancer.tech/oai/v1",
+      "protocols": [
+        "OpenAiChat"
+      ],
+      "model_list_path": "/models",
+      "docs_url": "https://mancer.tech/docs",
+      "verified_at": "2026-10-15",
+      "_evidence": "probed 2026-10-15: public model list answers; chat rejects an invalid key"
+    },
+    {
+      "id": "martian",
+      "display_name": "Martian",
+      "base_url": "https://api.withmartian.com/v1",
+      "protocols": [
+        "OpenAiChat"
+      ],
+      "model_list_path": "/models",
+      "auth_check_path": "/models",
+      "verified_at": "2026-10-15",
+      "_evidence": "probed 2026-10-15: live, rejects an invalid key"
+    },
+    {
+      "id": "meta_llama",
+      "display_name": "Meta Llama API",
+      "base_url": "https://api.llama.com/compat/v1",
+      "protocols": [
+        "OpenAiChat"
+      ],
+      "model_list_path": "/models",
+      "auth_check_path": "/models",
+      "docs_url": "https://llama.developer.meta.com/docs/overview",
+      "verified_at": "2026-10-15",
+      "_evidence": "probed 2026-10-15: live, rejects an invalid key"
+    },
+    {
+      "id": "nanogpt",
+      "display_name": "NanoGPT",
+      "base_url": "https://nano-gpt.com/api/v1",
+      "protocols": [
+        "OpenAiChat"
+      ],
+      "model_list_path": "/models",
+      "docs_url": "https://docs.nano-gpt.com/introduction",
+      "verified_at": "2026-10-15",
+      "_evidence": "probed 2026-10-15: public model list answers; chat rejects an invalid key"
+    },
+    {
+      "id": "netmind",
+      "display_name": "NetMind",
+      "base_url": "https://api.netmind.ai/inference-api/openai/v1",
+      "protocols": [
+        "OpenAiChat"
+      ],
+      "verified_at": "2026-10-15",
+      "_evidence": "probed 2026-10-15: chat endpoint live (404 unknown model); no model list (enter the model)"
+    },
+    {
+      "id": "nous",
+      "display_name": "Nous Research",
+      "base_url": "https://inference-api.nousresearch.com/v1",
+      "protocols": [
+        "OpenAiChat"
+      ],
+      "model_list_path": "/models",
+      "docs_url": "https://portal.nousresearch.com/help",
+      "verified_at": "2026-10-15",
+      "_evidence": "probed 2026-10-15: public model list answers; chat rejects an invalid key"
+    },
+    {
+      "id": "nscale",
+      "display_name": "Nscale",
+      "base_url": "https://inference.api.nscale.com/v1",
+      "protocols": [
+        "OpenAiChat"
+      ],
+      "model_list_path": "/models",
+      "auth_check_path": "/models",
+      "docs_url": "https://docs.nscale.com/docs/inference/serverless-models/current",
+      "verified_at": "2026-10-15",
+      "_evidence": "probed 2026-10-15: live, rejects an invalid key"
+    },
+    {
+      "id": "ovhcloud",
+      "display_name": "OVHcloud AI Endpoints",
+      "base_url": "https://oai.endpoints.kepler.ai.cloud.ovh.net/v1",
+      "protocols": [
+        "OpenAiChat"
+      ],
+      "model_list_path": "/models",
+      "auth_check_path": "/models",
+      "docs_url": "https://help.ovhcloud.com/csm/en-public-cloud-ai-endpoints-getting-started",
+      "verified_at": "2026-10-15",
+      "_evidence": "probed 2026-10-15: live, rejects an invalid key"
+    },
+    {
+      "id": "parasail",
+      "display_name": "Parasail",
+      "base_url": "https://api.parasail.io/v1",
+      "protocols": [
+        "OpenAiChat"
+      ],
+      "model_list_path": "/models",
+      "auth_check_path": "/models",
+      "docs_url": "https://docs.parasail.io/parasail-docs",
+      "verified_at": "2026-10-15",
+      "_evidence": "probed 2026-10-15: live, rejects an invalid key"
+    },
+    {
+      "id": "perplexity",
+      "display_name": "Perplexity (Sonar)",
+      "base_url": "https://api.perplexity.ai",
+      "protocols": [
+        "OpenAiChat"
+      ],
+      "model_list_path": "/v1/models",
+      "auth_check_path": "/v1/models",
+      "docs_url": "https://docs.perplexity.ai/getting-started/quickstart",
+      "keys_url": "https://console.perplexity.ai",
+      "verified_at": "2026-10-15",
+      "_evidence": "probed 2026-10-15: chat at the root (401 with an invalid key); models at /v1/models (401)"
+    },
+    {
+      "id": "poe",
+      "display_name": "Poe",
+      "base_url": "https://api.poe.com/v1",
+      "protocols": [
+        "OpenAiChat"
+      ],
+      "model_list_path": "/models",
+      "docs_url": "https://creator.poe.com/docs/external-applications/openai-compatible-api",
+      "keys_url": "https://poe.com/api/keys",
+      "verified_at": "2026-10-15",
+      "_evidence": "probed 2026-10-15: public model list answers; chat rejects an invalid key"
+    },
+    {
+      "id": "publicai",
+      "display_name": "PublicAI",
+      "base_url": "https://api.publicai.co/v1",
+      "protocols": [
+        "OpenAiChat"
+      ],
+      "model_list_path": "/models",
+      "auth_check_path": "/models",
+      "docs_url": "https://platform.publicai.co/docs",
+      "verified_at": "2026-10-15",
+      "_evidence": "probed 2026-10-15: live, rejects an invalid key"
+    },
+    {
+      "id": "qianfan",
+      "display_name": "Baidu Qianfan",
+      "base_url": "https://qianfan.baidubce.com/v2",
+      "protocols": [
+        "OpenAiChat"
+      ],
+      "verified_at": "2026-10-15",
+      "_evidence": "probed 2026-10-15: chat rejects an invalid key (401 invalid_iam_token); model list needs IAM (enter the model)"
+    },
+    {
+      "id": "reka",
+      "display_name": "Reka",
+      "base_url": "https://api.reka.ai/v1",
+      "protocols": [
+        "OpenAiChat"
+      ],
+      "model_list_path": "/models",
+      "auth_check_path": "/models",
+      "verified_at": "2026-10-15",
+      "_evidence": "probed 2026-10-15: live, rejects an invalid key"
+    },
+    {
+      "id": "requesty",
+      "display_name": "Requesty",
+      "base_url": "https://router.requesty.ai/v1",
+      "protocols": [
+        "OpenAiChat"
+      ],
+      "model_list_path": "/models",
+      "auth_check_path": "/models",
+      "docs_url": "https://docs.requesty.ai/quickstart",
+      "verified_at": "2026-10-15",
+      "_evidence": "probed 2026-10-15: live, rejects an invalid key"
+    },
+    {
+      "id": "sarvam",
+      "display_name": "Sarvam AI",
+      "base_url": "https://api.sarvam.ai/v1",
+      "protocols": [
+        "OpenAiChat"
+      ],
+      "model_list_path": "/models",
+      "verified_at": "2026-10-15",
+      "_evidence": "probed 2026-10-15: public model list answers; chat rejects an invalid key"
+    },
+    {
+      "id": "stepfun",
+      "display_name": "StepFun",
+      "base_url": "https://api.stepfun.ai/v1",
+      "protocols": [
+        "OpenAiChat"
+      ],
+      "model_list_path": "/models",
+      "auth_check_path": "/models",
+      "verified_at": "2026-10-15",
+      "_evidence": "probed 2026-10-15: live, rejects an invalid key"
+    },
+    {
+      "id": "synthetic",
+      "display_name": "Synthetic",
+      "base_url": "https://api.synthetic.new/openai/v1",
+      "protocols": [
+        "OpenAiChat"
+      ],
+      "model_list_path": "/models",
+      "docs_url": "https://dev.synthetic.new/docs/api/overview",
+      "verified_at": "2026-10-15",
+      "_evidence": "probed 2026-10-15: public model list answers; chat rejects an invalid key"
+    },
+    {
+      "id": "venice",
+      "display_name": "Venice AI",
+      "base_url": "https://api.venice.ai/api/v1",
+      "protocols": [
+        "OpenAiChat"
+      ],
+      "model_list_path": "/models",
+      "docs_url": "https://docs.venice.ai/api-reference/api-spec",
+      "verified_at": "2026-10-15",
+      "_evidence": "probed 2026-10-15: public model list answers; chat rejects an invalid key"
+    },
+    {
+      "id": "vultr",
+      "display_name": "Vultr Inference",
+      "base_url": "https://api.vultrinference.com/v1",
+      "protocols": [
+        "OpenAiChat"
+      ],
+      "model_list_path": "/models",
+      "docs_url": "https://docs.vultr.com/products/serverless/inference",
+      "verified_at": "2026-10-15",
+      "_evidence": "probed 2026-10-15: public model list answers; chat rejects an invalid key"
+    },
+    {
+      "id": "writer",
+      "display_name": "Writer (Palmyra)",
+      "base_url": "https://api.writer.com/v1",
+      "protocols": [
+        "OpenAiChat"
+      ],
+      "model_list_path": "/models",
+      "auth_check_path": "/models",
+      "docs_url": "https://dev.writer.com/home/introduction",
+      "verified_at": "2026-10-15",
+      "_evidence": "probed 2026-10-15: live, rejects an invalid key"
+    },
+    {
+      "id": "xiaomi_mimo",
+      "display_name": "Xiaomi MiMo",
+      "base_url": "https://api.xiaomimimo.com/v1",
+      "protocols": [
+        "OpenAiChat"
+      ],
+      "model_list_path": "/models",
+      "auth_check_path": "/models",
+      "docs_url": "https://platform.xiaomimimo.com/docs",
+      "verified_at": "2026-10-15",
+      "_evidence": "probed 2026-10-15: live, rejects an invalid key"
+    },
+    {
+      "id": "zhipu_cn",
+      "display_name": "Zhipu GLM (China)",
+      "base_url": "https://open.bigmodel.cn/api/paas/v4",
+      "protocols": [
+        "OpenAiChat"
+      ],
+      "model_list_path": "/models",
+      "auth_check_path": "/models",
+      "verified_at": "2026-10-15",
+      "_evidence": "probed 2026-10-15: live, rejects an invalid key"
+    },
+    {
+      "id": "minimax_cn",
+      "display_name": "MiniMax (China)",
+      "base_url": "https://api.minimaxi.com/v1",
+      "protocols": [
+        "OpenAiChat"
+      ],
+      "model_list_path": "/models",
+      "auth_check_path": "/models",
+      "verified_at": "2026-10-15",
+      "_evidence": "probed 2026-10-15: live, rejects an invalid key"
+    },
+    {
+      "id": "siliconflow_cn",
+      "display_name": "SiliconFlow (China)",
+      "base_url": "https://api.siliconflow.cn/v1",
+      "protocols": [
+        "OpenAiChat"
+      ],
+      "model_list_path": "/models",
+      "auth_check_path": "/models",
       "verified_at": "2026-10-15",
       "_evidence": "probed 2026-10-15: live, rejects an invalid key"
     },

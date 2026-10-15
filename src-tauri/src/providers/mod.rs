@@ -41,6 +41,12 @@ pub enum CredentialSource {
     GhCli,
     /// The sign-in Codex made with OpenAI (`codex login`), read at use.
     CodexLogin,
+    /// The Google Cloud CLI's sign-in (`gcloud auth print-access-token`);
+    /// tokens last an hour, so PrismFlow refreshes them (Vertex AI).
+    Gcloud,
+    /// GitHub's official Copilot CLI sign-in (`copilot login`); PrismFlow
+    /// asks the CLI for the endpoint and a short-lived token.
+    CopilotCli,
 }
 
 /// A provider definition. Only verified facts live here (SPEC §3.3):
@@ -186,6 +192,9 @@ pub struct CustomProvider {
     pub requires_key: bool,
     /// The host the user explicitly consented to send requests to.
     pub consented_host: String,
+    /// Keychain key, or a sign-in (Vertex AI uses `gcloud`).
+    #[serde(default)]
+    pub credential_source: CredentialSource,
 }
 
 impl CustomProvider {
@@ -205,7 +214,7 @@ impl CustomProvider {
             local: is_loopback_host(&host),
             requires_key: self.requires_key,
             verified_at: String::new(),
-            credential_source: CredentialSource::Keychain,
+            credential_source: self.credential_source,
         }
         .into_def(true)
     }
@@ -341,8 +350,8 @@ mod tests {
             assert!(!p.protocols.is_empty());
             assert!(!p.verified_at.is_empty(), "{} lacks verified_at", p.id);
             assert!(p.docs_url.is_empty() || p.docs_url.starts_with("https://"));
-            // Codestral publishes no model list; the user types the model name.
-            assert!(p.model_list_path.is_some() || p.credential_source == CredentialSource::CodexLogin || p.id == "mistral_codestral");
+            // These publish no model list; the user types the model name.
+            assert!(p.model_list_path.is_some() || p.credential_source == CredentialSource::CodexLogin || ["mistral_codestral", "netmind", "qianfan"].contains(&p.id));
         }
         assert!(!catalog_version().is_empty());
     }
@@ -377,6 +386,7 @@ mod tests {
             protocol: Protocol::OpenAiChat,
             requires_key: false,
             consented_host: "localhost".into(),
+            credential_source: CredentialSource::Keychain,
         };
         set_custom(std::slice::from_ref(&c));
         let p = get("custom_unit_test_srv").unwrap();

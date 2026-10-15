@@ -9,6 +9,18 @@
 
 use std::path::Path;
 
+/// A Google Cloud access token from the user's own `gcloud` sign-in (Vertex
+/// AI's documented way; tokens last one hour).
+pub fn gcloud_token() -> Option<String> {
+    let gcloud = crate::adapters::find_exe("gcloud")?;
+    let out = std::process::Command::new(gcloud).args(["auth", "print-access-token", "--quiet"]).stdin(std::process::Stdio::null()).output().ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let t = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    (!t.is_empty() && !t.contains(char::is_whitespace)).then_some(t)
+}
+
 pub fn gh_token() -> Option<String> {
     let gh = crate::adapters::find_exe("gh")?;
     let out = std::process::Command::new(gh).args(["auth", "token"]).stdin(std::process::Stdio::null()).output().ok()?;

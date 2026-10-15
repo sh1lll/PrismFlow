@@ -172,6 +172,9 @@ impl Service {
             Keychain => self.store.get(&account_key(provider_id, "default")).ok(),
             GhCli if self.has_signin_consent(provider_id) => crate::credentials::signin::gh_token(),
             CodexLogin if self.has_signin_consent(provider_id) => crate::credentials::signin::codex_access_token(&self.codex_home),
+            Gcloud if self.has_signin_consent(provider_id) => crate::credentials::signin::gcloud_token(),
+            // The real token is fetched per model when the gateway starts.
+            CopilotCli if self.has_signin_consent(provider_id) && crate::credentials::copilot::signed_in() => Some("copilot".into()),
             _ => None,
         }
     }
@@ -187,6 +190,8 @@ impl Service {
             Keychain => false,
             GhCli => crate::credentials::signin::gh_token().is_some(),
             CodexLogin => crate::credentials::signin::codex_access_token(&self.codex_home).is_some(),
+            Gcloud => crate::credentials::signin::gcloud_token().is_some(),
+            CopilotCli => crate::credentials::copilot::signed_in(),
         }
     }
 
@@ -203,6 +208,8 @@ impl Service {
             if !self.signin_available(p) {
                 return Err(match p.credential_source {
                     providers::CredentialSource::GhCli => "Sign in with the GitHub CLI first: run `gh auth login`.".into(),
+                    providers::CredentialSource::Gcloud => "Sign in with the Google Cloud CLI first: run `gcloud auth login`.".into(),
+                    providers::CredentialSource::CopilotCli => "Install GitHub's Copilot CLI and sign in first: run `copilot login`.".into(),
                     _ => "Sign in to ChatGPT in Codex first: run `codex login`.".into(),
                 });
             }
@@ -297,6 +304,9 @@ impl Service {
 
     pub async fn discover_models(&self, provider_id: &str) -> R<Vec<ModelInfo>> {
         let p = provider(provider_id)?;
+        if p.credential_source == providers::CredentialSource::CopilotCli {
+            return self.copilot_models().await;
+        }
         let path = p.model_list_path.ok_or("This provider doesn't list its models. Type the model name.")?;
         if p.base_url.is_empty() {
             return Err("Custom providers are not supported in this build.".into());
@@ -309,6 +319,25 @@ impl Service {
                 self.diag.record(Level::Warn, "discovery.failed", &msg);
                 msg
             })
+    }
+
+    /// Copilot's model list, from the endpoint its CLI hands out.
+    async fn copilot_models(&self) -> R<Vec<ModelInfo>> {
+        if !self.has_signin_consent("github_copilot") {
+            return Err("Turn on GitHub Copilot on the Providers page first.".into());
+        }
+        let ep = tokio::task::spawn_blocking(|| crate::credentials::copilot::endpoint(None)).await.map_err(|e| e.to_string())??;
+        let mut req = self.client.get(format!("{}/models", ep.base_url)).bearer_auth(&ep.api_key);
+        for (k, v) in &ep.headers {
+            req = req.header(k, v);
+        }
+        let v: serde_json::Value = req.send().await.map_err(|e| e.without_url().to_string())?.json().await.map_err(|e| e.to_string())?;
+        Ok(v["data"].as_array().map(|a| a.iter().filter_map(|m| Some(ModelInfo {
+            id: m["id"].as_str()?.to_string(),
+            name: m["name"].as_str().map(String::from),
+            context_length: m["capabilities"]["limits"]["max_context_window_tokens"].as_u64(),
+            reports_tools: m["capabilities"]["supports"]["tool_calls"].as_bool(),
+        })).collect()).unwrap_or_default())
     }
 
     pub fn settings(&self) -> crate::gateway::RuntimeSettings {
@@ -379,6 +408,7 @@ impl Service {
         protocol: Protocol,
         requires_key: bool,
         consent: bool,
+        source: providers::CredentialSource,
     ) -> R<ProviderDefinition> {
         let name = name.trim();
         if name.is_empty() || name.len() > 60 {
@@ -404,6 +434,7 @@ impl Service {
             protocol,
             requires_key,
             consented_host: check.host.clone(),
+            credential_source: source,
         });
         self.state.save_custom_providers(&list).map_err(|e| e.to_string())?;
         providers::set_custom(&list);
@@ -817,6 +848,19 @@ impl Service {
 
     /// Bring the broker in line with the gateway connections in state:
     /// start it, reconfigure it, or stop it when none remain (SPEC §13.6).
+    /// True when a gateway connection uses a sign-in whose token expires
+    /// (gcloud): the gateway then needs a fresh token regularly.
+    pub fn needs_token_refresh(&self) -> bool {
+        self.connections().unwrap_or_default().iter().any(|r| {
+            r.route == Route::Gateway && providers::get(&r.provider_id).is_some_and(|p| p.credential_source == providers::CredentialSource::Gcloud)
+        })
+    }
+
+    /// True when a Copilot token the gateway holds expires soon.
+    pub fn copilot_needs_refresh(&self) -> bool {
+        crate::credentials::copilot::expiring_within(Duration::from_secs(8 * 60))
+    }
+
     pub async fn sync_gateway(&self) -> R<BrokerStatus> {
         let records: Vec<ConnectionRecord> = self
             .state
@@ -856,6 +900,27 @@ impl Service {
                 ));
                 continue;
             };
+            if p.credential_source == providers::CredentialSource::CopilotCli {
+                // Copilot binds tokens to a model; one endpoint per provider here (its first model).
+                crate::credentials::copilot::reset_expiry();
+                let first = models.first().cloned();
+                let ep = tokio::task::spawn_blocking(move || crate::credentials::copilot::endpoint(first.as_deref()))
+                    .await
+                    .map_err(|e| e.to_string())?;
+                match ep {
+                    Ok(ep) => specs.push(UpstreamSpec {
+                        provider_id: p.id.into(),
+                        engine_type: ep.engine_type,
+                        base_url: ep.base_url,
+                        models,
+                        key: ep.api_key,
+                        codex_oauth: false,
+                        headers: ep.headers,
+                    }),
+                    Err(e) => self.diag.record(Level::Warn, "gateway.copilot", &format!("GitHub Copilot isn't available: {e}")),
+                }
+                continue;
+            }
             specs.push(UpstreamSpec {
                 provider_id: p.id.into(),
                 engine_type: engine_type(p),
@@ -863,6 +928,7 @@ impl Service {
                 models,
                 key,
                 codex_oauth: p.credential_source == providers::CredentialSource::CodexLogin,
+                headers: Vec::new(),
             });
         }
         self.broker.start(specs, bindings).await.map_err(|e| e.to_string())
@@ -1390,9 +1456,9 @@ mod tests {
         let _g = providers::TEST_CUSTOM_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let dir = tempfile::tempdir().unwrap();
         let s = service(dir.path());
-        let err = s.add_custom_provider("Box", "http://localhost:4000/v1", Protocol::OpenAiChat, false, false).await.unwrap_err();
+        let err = s.add_custom_provider("Box", "http://localhost:4000/v1", Protocol::OpenAiChat, false, false, Default::default()).await.unwrap_err();
         assert!(err.contains("Confirm"));
-        let p = s.add_custom_provider("Box", "http://localhost:4000/v1/", Protocol::OpenAiChat, false, true).await.unwrap();
+        let p = s.add_custom_provider("Box", "http://localhost:4000/v1/", Protocol::OpenAiChat, false, true, Default::default()).await.unwrap();
         assert_eq!(p.id, "custom_box");
         assert_eq!(p.base_url, "http://localhost:4000/v1");
         assert_eq!(route_for(CLAUDE, &p), Some(Route::Gateway));
@@ -1401,7 +1467,7 @@ mod tests {
         providers::set_custom(&[]);
         s.load_custom_providers().unwrap();
         assert!(providers::get("custom_box").is_some());
-        assert!(s.add_custom_provider("Bad", "http://example.com/v1", Protocol::OpenAiChat, true, true).await.is_err());
+        assert!(s.add_custom_provider("Bad", "http://example.com/v1", Protocol::OpenAiChat, true, true, Default::default()).await.is_err());
         s.remove_custom_provider("custom_box").unwrap();
         assert!(providers::get("custom_box").is_none());
         assert!(s.remove_custom_provider("openrouter").is_err());

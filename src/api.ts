@@ -16,7 +16,7 @@ export interface Provider {
   requires_key: boolean;
   key_optional: boolean;
   verified_at: string;
-  credential_source: "keychain" | "gh_cli" | "codex_login";
+  credential_source: "keychain" | "gh_cli" | "codex_login" | "gcloud" | "copilot_cli";
   signin_available: boolean;
   has_credential: boolean;
   codex_direct: boolean;
@@ -196,8 +196,8 @@ export const api = {
   disconnect: (id: string) => invoke<string | null>("disconnect", { id }),
   connections: () => invoke<Connection[]>("list_connections"),
   checkCustomUrl: (url: string) => invoke<UrlCheck>("check_custom_url", { url }),
-  addCustomProvider: (name: string, url: string, protocol: Protocol, requiresKey: boolean, consent: boolean) =>
-    invoke<Provider>("add_custom_provider", { name, url, protocol, requiresKey, consent }),
+  addCustomProvider: (name: string, url: string, protocol: Protocol, requiresKey: boolean, consent: boolean, gcloud = false) =>
+    invoke<Provider>("add_custom_provider", { name, url, protocol, requiresKey, consent, gcloud }),
   removeCustomProvider: (id: string) => invoke<void>("remove_custom_provider", { id }),
   setRouting: (id: string, routing: Routing) => invoke<Connection>("set_routing", { id, routing }),
   getSettings: () => invoke<RuntimeSettings>("get_settings"),

@@ -147,7 +147,7 @@ async fn run() -> serde_json::Value {
         engine_type: "openai_chat_completions",
         base_url: format!("http://127.0.0.1:{up}/v1"),
         models: vec![MODEL.into()],
-        key: "perf-upstream-key".into(), codex_oauth: false };
+        key: "perf-upstream-key".into(), codex_oauth: false, headers: vec![] };
     let binding = Binding { connection_id: "perf".into(), provider_id: "perf".into(), ..Default::default() };
     broker.start(vec![spec], vec![(token.clone(), binding)]).await.expect("broker starts");
     let client = reqwest::Client::builder().no_proxy().build().unwrap();

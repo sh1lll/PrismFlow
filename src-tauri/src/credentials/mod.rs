@@ -1,5 +1,6 @@
 pub mod keychain;
 pub mod memory;
+pub mod copilot;
 pub mod oauth;
 pub mod signin;
 
