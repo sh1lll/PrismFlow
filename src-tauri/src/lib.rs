@@ -1,3 +1,8 @@
+pub mod cli;
+pub mod config_engine;
+pub mod credentials;
+pub mod providers;
+
 #[tauri::command]
 fn ping() -> String {
     "pong".to_string()
