@@ -225,9 +225,11 @@ async fn real_claude_code_and_codex_through_the_gateway() {
 /// Live run against the user's own Ollama: real agents, real model, no mocks.
 /// `PRISMFLOW_LIVE_OLLAMA=<model> cargo test --test real_agents`
 async fn live_local_ollama(model: &str) {
-    let claude_id = "claude_code:ollama";
-    let codex_id = "codex_cli:ollama";
-    let accounts = vec![tokens::account(claude_id), tokens::account(codex_id)];
+    let apps: Vec<String> = std::env::var("PRISMFLOW_LIVE_APPS")
+        .unwrap_or_else(|_| "claude_code,codex_cli".into())
+        .split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect();
+    let ids: Vec<String> = apps.iter().map(|a| format!("{a}:ollama")).collect();
+    let accounts: Vec<String> = ids.iter().map(|i| tokens::account(i)).collect();
     for a in &accounts {
         assert!(!keychain_has(a), "refusing to run: real Keychain item {a} exists");
     }
@@ -263,7 +265,8 @@ async fn live_local_ollama(model: &str) {
             .unwrap_or_default(),
     };
     let mut failures = Vec::new();
-    for (app, id) in [(claude_code::APP_ID, claude_id), (codex::APP_ID, codex_id)] {
+    for (app, id) in apps.iter().zip(&ids) {
+        let (app, id) = (app.as_str(), id.as_str());
         svc.connect(app, "ollama", model).await.expect("connect");
         let report = svc.verify(id).await.expect("verify");
         eprintln!("\n== {id} ({model}): {:?}", report.status);
@@ -271,10 +274,17 @@ async fn live_local_ollama(model: &str) {
             eprintln!("  {} {:<13} {:?}: {}", s.stage, s.name, s.outcome, s.detail.lines().next().unwrap_or(""));
         }
         if !matches!(report.status, ConnectionStatus::ConnectedAndVerified | ConnectionStatus::PartiallyCompatible) {
+            for e in svc.diagnostics(50).iter().filter(|e| e.code.starts_with("broker.")) {
+                eprintln!("  diag {} {}", e.code, e.message);
+            }
+            let log = state_dir.join("agents").join(id.replace(':', "-")).join("cline-data/logs/cline.log");
+            if let Ok(l) = std::fs::read_to_string(&log) {
+                eprintln!("  cline.log tail:\n{}", l.lines().rev().take(25).collect::<Vec<_>>().into_iter().rev().collect::<Vec<_>>().join("\n"));
+            }
             failures.push(format!("{id}: {:?}\n{:#?}", report.status, report.stages));
         }
     }
-    for id in [claude_id, codex_id] {
+    for id in &ids {
         svc.disconnect(id).await.expect("disconnect");
     }
     assert!(failures.is_empty(), "{}", failures.join("\n"));

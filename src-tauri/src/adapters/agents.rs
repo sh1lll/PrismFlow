@@ -130,12 +130,18 @@ pub fn plan_files(
                 "version": 1,
                 "lastUsedProvider": "openai-compatible",
                 "modes": {},
+                // Cline 3.0.70 silently ignores an entry without `updatedAt` and
+                // falls back to api.openai.com (verified 2026-10-14).
                 "providers": { "openai-compatible": { "settings": {
                     "provider": "openai-compatible", "model": model, "baseUrl": base
-                }, "tokenSource": "manual" } }
+                }, "updatedAt": "2026-10-14T00:00:00.000Z", "tokenSource": "manual" } }
             });
             files.push((dir.join("cline-data/settings/providers.json"), serde_json::to_string_pretty(&providers).unwrap()));
             script.push_str(&format!("OPENAI_API_KEY=\"$({token_cmd})\"\nexport OPENAI_API_KEY\n"));
+            // Defense in depth: the gateway is plain-http loopback, so a dead
+            // HTTPS proxy keeps the token from ever reaching a remote host if
+            // Cline falls back to a default endpoint.
+            script.push_str("export HTTPS_PROXY=http://127.0.0.1:9 https_proxy=http://127.0.0.1:9 NO_PROXY=127.0.0.1,localhost no_proxy=127.0.0.1,localhost\n");
             script.push_str(&format!(
                 "exec {bin} --data-dir {} -P openai-compatible -m {} \"$@\"\n",
                 q(&dir.join("cline-data").display().to_string()),
@@ -239,6 +245,8 @@ mod tests {
         let s = &providers["providers"]["openai-compatible"]["settings"];
         assert_eq!(s["baseUrl"], "http://127.0.0.1:47821/v1");
         assert!(s.get("apiKey").is_none(), "Cline reads OPENAI_API_KEY when no key is stored");
+        assert!(providers["providers"]["openai-compatible"]["updatedAt"].is_string(), "without it Cline ignores the entry");
+        assert!(cline[0].1.contains("HTTPS_PROXY=http://127.0.0.1:9"), "token must not be able to leave over https");
 
         let pi = files("pi");
         let models: serde_json::Value = serde_json::from_str(&pi[1].1).unwrap();
