@@ -144,7 +144,7 @@ pub fn key_env(provider_id: &str) -> String {
 }
 
 /// The engine config. It names env vars and never holds values, so the file is safe at rest.
-pub fn render_config(specs: &[UpstreamSpec]) -> serde_json::Value {
+pub fn render_config(specs: &[UpstreamSpec], settings: &super::RuntimeSettings) -> serde_json::Value {
     let providers: Vec<_> = specs
         .iter()
         .map(|s| json!({
@@ -171,7 +171,16 @@ pub fn render_config(specs: &[UpstreamSpec]) -> serde_json::Value {
         "providerHealthCheck": { "enabled": false },
         "mcpGateway": { "enabled": false, "websocket": { "enabled": false } },
         "rawTrace": { "enabled": false },
-        "billing": { "enabled": false }
+        "billing": { "enabled": false },
+        "upstreamConcurrency": {
+            "enabled": settings.max_concurrency_per_provider > 0,
+            "maxInFlightPerProvider": settings.max_concurrency_per_provider.max(1),
+            "queueTimeoutMs": 30_000
+        },
+        "upstreamRetry": {
+            "enabled": settings.upstream_retries > 0,
+            "maxAttempts": settings.upstream_retries + 1
+        }
     })
 }
 
@@ -212,10 +221,10 @@ pub fn tail_text(tail: &LogTail, lines: usize) -> String {
 }
 
 /// Write the config into `work_dir` and start the engine.
-pub fn spawn(rt: &GatewayRuntime, specs: &[UpstreamSpec], work_dir: &Path) -> Result<EngineChild, String> {
+pub fn spawn(rt: &GatewayRuntime, specs: &[UpstreamSpec], settings: &super::RuntimeSettings, work_dir: &Path) -> Result<EngineChild, String> {
     std::fs::create_dir_all(work_dir).map_err(|e| format!("Cannot create {}: {e}", work_dir.display()))?;
     let config_path = work_dir.join("gateway.config.json");
-    let body = serde_json::to_string_pretty(&render_config(specs)).map_err(|e| e.to_string())?;
+    let body = serde_json::to_string_pretty(&render_config(specs, settings)).map_err(|e| e.to_string())?;
     crate::config_engine::atomic_write(&config_path, &body).map_err(|e| e.to_string())?;
     #[cfg(unix)]
     {
@@ -332,7 +341,7 @@ mod tests {
             models: vec!["meta/llama-3.3-70b-instruct".into()],
             key: "nvapi-supersecretvalue".into(),
         };
-        let cfg = render_config(std::slice::from_ref(&spec));
+        let cfg = render_config(std::slice::from_ref(&spec), &crate::gateway::RuntimeSettings::default());
         let text = cfg.to_string();
         assert!(!text.contains("supersecret"));
         assert_eq!(cfg["host"], "127.0.0.1");

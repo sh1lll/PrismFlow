@@ -28,11 +28,34 @@ pub fn configured_port() -> u16 {
     std::env::var("PRISMFLOW_BROKER_PORT").ok().and_then(|p| p.parse().ok()).unwrap_or(DEFAULT_PORT)
 }
 
+/// User-tunable gateway limits (another tool runtime settings parity). Persisted by
+/// the service; `0` disables a limit.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, serde::Deserialize)]
+#[serde(default)]
+pub struct RuntimeSettings {
+    /// Requests per minute per connection, enforced by the broker.
+    pub rate_limit_per_minute: u32,
+    /// Concurrent upstream requests per provider, enforced by the engine.
+    pub max_concurrency_per_provider: u32,
+    /// Transport retries per upstream attempt (engine), for idempotent failures.
+    pub upstream_retries: u32,
+}
+
+impl Default for RuntimeSettings {
+    fn default() -> Self {
+        Self { rate_limit_per_minute: 0, max_concurrency_per_provider: 0, upstream_retries: 1 }
+    }
+}
+
 /// What a valid local token is allowed to reach.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Binding {
     pub connection_id: String,
     pub provider_id: String,
+    /// The connection's own model; empty = use whatever the client sends.
+    pub model: String,
+    /// Tiers, reasoning policy and fallbacks for this connection.
+    pub routing: Arc<crate::routing::Routing>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -99,6 +122,9 @@ struct EngineState {
 
 pub(crate) struct Inner {
     port: Mutex<u16>,
+    pub(crate) settings: RwLock<RuntimeSettings>,
+    /// Fixed one-minute windows per connection: (window start, count).
+    limiter: Mutex<HashMap<String, (std::time::Instant, u32)>>,
     bindings: RwLock<HashMap<tokens::TokenDigest, Binding>>,
     engine: RwLock<EngineState>,
     counters: Mutex<Counters>,
@@ -127,6 +153,25 @@ impl Inner {
         self.bindings.read().unwrap_or_else(|e| e.into_inner()).get(&tokens::digest(token)).cloned()
     }
 
+    /// True when `connection` may send another request this minute.
+    pub(crate) fn admit(&self, connection: &str) -> bool {
+        let limit = self.settings.read().unwrap_or_else(|e| e.into_inner()).rate_limit_per_minute;
+        if limit == 0 {
+            return true;
+        }
+        let mut l = self.limiter.lock().unwrap_or_else(|e| e.into_inner());
+        let now = std::time::Instant::now();
+        let slot = l.entry(connection.to_string()).or_insert((now, 0));
+        if now.duration_since(slot.0) >= Duration::from_secs(60) {
+            *slot = (now, 0);
+        }
+        if slot.1 >= limit {
+            return false;
+        }
+        slot.1 += 1;
+        true
+    }
+
     fn count(&self, f: impl FnOnce(&mut Counters)) {
         f(&mut self.counters.lock().unwrap_or_else(|e| e.into_inner()));
     }
@@ -137,6 +182,7 @@ struct Running {
     server: JoinHandle<()>,
     supervisor: Option<(watch::Sender<bool>, JoinHandle<()>)>,
     specs: Vec<UpstreamSpec>,
+    settings: RuntimeSettings,
 }
 
 /// The broker. Cheap to share; all methods take `&self`.
@@ -152,12 +198,16 @@ impl Broker {
     pub fn new(port: u16, work_dir: PathBuf, diag: Option<Arc<DiagnosticsLog>>) -> Self {
         let client = reqwest::Client::builder()
             .redirect(reqwest::redirect::Policy::none())
+            // Idle (not total) limit: long streams are fine while bytes flow.
+            .read_timeout(Duration::from_secs(300))
             .no_proxy()
             .build()
             .expect("reqwest client");
         Self {
             inner: Arc::new(Inner {
                 port: Mutex::new(port),
+                settings: RwLock::new(RuntimeSettings::default()),
+                limiter: Mutex::new(HashMap::new()),
                 bindings: RwLock::new(HashMap::new()),
                 engine: RwLock::new(EngineState {
                     phase: Phase::Stopped,
@@ -213,6 +263,15 @@ impl Broker {
         }
     }
 
+    /// Update limits; engine-side ones apply on the next `start`.
+    pub fn set_settings(&self, settings: RuntimeSettings) {
+        *self.inner.settings.write().unwrap_or_else(|e| e.into_inner()) = settings;
+    }
+
+    pub fn settings(&self) -> RuntimeSettings {
+        self.inner.settings.read().unwrap_or_else(|e| e.into_inner()).clone()
+    }
+
     /// Replace the token table. Tokens missing from `bindings` stop working
     /// on the next request (revocation).
     pub fn set_bindings(&self, bindings: Vec<(String, Binding)>) {
@@ -235,11 +294,12 @@ impl Broker {
         let mut running = self.running.lock().await;
         if running.is_none() {
             let (stop_tx, server) = self.bind().await?;
-            *running = Some(Running { server_stop: Some(stop_tx), server, supervisor: None, specs: Vec::new() });
+            *running = Some(Running { server_stop: Some(stop_tx), server, supervisor: None, specs: Vec::new(), settings: self.settings() });
         }
         let r = running.as_mut().expect("just set");
         let engine_alive = r.supervisor.as_ref().is_some_and(|(_, h)| !h.is_finished());
-        if !engine_alive || r.specs != specs {
+        let settings = self.settings();
+        if !engine_alive || r.specs != specs || r.settings != settings {
             if let Some((stop, handle)) = r.supervisor.take() {
                 let _ = stop.send(true);
                 let _ = handle.await;
@@ -255,6 +315,7 @@ impl Broker {
             let handle = tokio::spawn(supervise(self.inner.clone(), runtime, specs.clone(), stop_rx));
             r.supervisor = Some((stop_tx, handle));
             r.specs = specs;
+            r.settings = settings;
         }
         drop(running);
         self.wait_settled(READY_TIMEOUT + Duration::from_secs(5)).await;
@@ -339,7 +400,8 @@ impl Broker {
 async fn supervise(inner: Arc<Inner>, rt: GatewayRuntime, specs: Vec<UpstreamSpec>, mut stop: watch::Receiver<bool>) {
     let mut failures: u32 = 0;
     loop {
-        let attempt = supervisor::spawn(&rt, &specs, &inner.work_dir.join("gateway"));
+        let settings = inner.settings.read().unwrap_or_else(|e| e.into_inner()).clone();
+        let attempt = supervisor::spawn(&rt, &specs, &settings, &inner.work_dir.join("gateway"));
         let mut child: Option<EngineChild> = None;
         let error = match attempt {
             Err(e) => e,

@@ -566,6 +566,7 @@ esac"#;
             created_at: 0,
             status: ConnectionStatus::Unverified,
             last_report: None,
+            routing: Default::default(),
         };
         Fixture { _home: home, server, record, store }
     }
@@ -679,7 +680,7 @@ esac"#;
         let helper = fake_codex(home.path(), "echo helper");
         let nim = providers::get("nvidia_nim").unwrap();
         let plan = claude_code::plan_connect(home.path(), nim, "meta/llama-3.3-70b-instruct", &helper,
-            "claude_code:nvidia_nim", "http://127.0.0.1:47821").unwrap();
+            "claude_code:nvidia_nim", "http://127.0.0.1:47821", &crate::routing::Routing::default()).unwrap();
         config_engine::apply(&plan).unwrap();
         let server = MockServer::start().await;
         Mock::given(method("GET")).and(path("/models"))
@@ -695,7 +696,7 @@ esac"#;
             id: "claude_code:nvidia_nim".into(), provider_id: "nvidia_nim".into(), app_id: claude_code::APP_ID.into(),
             model: "meta/llama-3.3-70b-instruct".into(), profile: claude_code::profile_name("nvidia_nim"),
             route: crate::state::Route::Gateway, managed_file: plan.file, created_at: 0,
-            status: ConnectionStatus::Unverified, last_report: None,
+            status: ConnectionStatus::Unverified, last_report: None, routing: Default::default(),
         };
         let work = tempfile::tempdir().unwrap();
         let env = VerifyEnv {

@@ -200,10 +200,29 @@ impl Service {
             })
     }
 
+    pub fn settings(&self) -> crate::gateway::RuntimeSettings {
+        self.broker.settings()
+    }
+
+    /// Save gateway limits and apply them (engine-side ones restart the engine).
+    pub async fn set_settings(&self, settings: crate::gateway::RuntimeSettings) -> R<crate::gateway::RuntimeSettings> {
+        if settings.rate_limit_per_minute > 10_000 || settings.max_concurrency_per_provider > 256 || settings.upstream_retries > 5 {
+            return Err("Limits out of range: up to 10000 requests/min, 256 concurrent, 5 retries.".into());
+        }
+        self.state.save_settings(&settings).map_err(|e| e.to_string())?;
+        self.broker.set_settings(settings.clone());
+        self.diag.record(Level::Info, "settings.saved", &format!("Gateway limits: {settings:?}."));
+        if self.broker.is_running().await {
+            self.sync_gateway().await?;
+        }
+        Ok(settings)
+    }
+
     /// Load saved custom providers into the registry (call at startup).
     pub fn load_custom_providers(&self) -> R<()> {
         let list = self.state.load_custom_providers().map_err(|e| e.to_string())?;
         providers::set_custom(&list);
+        self.broker.set_settings(self.state.load_settings().map_err(|e| e.to_string())?);
         Ok(())
     }
 
@@ -334,7 +353,10 @@ impl Service {
             (codex::APP_ID, Route::Direct) => codex::plan_connect(&self.codex_home, p, model, &self.helper, catalog).map_err(|e| e.to_string())?,
             (codex::APP_ID, Route::Gateway) => codex::plan_connect_gateway(&self.codex_home, p, model, &self.helper, &id, &url, catalog)
                 .map_err(|e| e.to_string())?,
-            _ => claude_code::plan_connect(&self.claude_dir, p, model, &self.helper, &id, &url).map_err(|e| e.to_string())?,
+            _ => {
+                let routing = self.state.get(&id).ok().flatten().map(|r| r.routing).unwrap_or_default();
+                claude_code::plan_connect(&self.claude_dir, p, model, &self.helper, &id, &url, &routing).map_err(|e| e.to_string())?
+            }
         };
         Ok((p, route, plan))
     }
@@ -438,6 +460,8 @@ impl Service {
             created_at: now_secs(),
             status: ConnectionStatus::Unverified,
             last_report: None,
+            // Switching model keeps the connection's routing choices.
+            routing: self.state.get(&id).ok().flatten().map(|r| r.routing).unwrap_or_default(),
         };
         self.state.upsert(record.clone()).map_err(|e| e.to_string())?;
         self.diag.record(Level::Info, "connect.applied", &format!(
@@ -448,6 +472,48 @@ impl Service {
                 self.diag.record(Level::Error, "connect.gateway", &format!("{id} is configured, but the gateway is not running: {e}"));
             }
         }
+        Ok(record)
+    }
+
+    /// Change a gateway connection's tiers, reasoning policy and fallbacks.
+    pub async fn set_routing(&self, id: &str, routing: crate::routing::Routing) -> R<ConnectionRecord> {
+        let mut record = self.state.get(id).map_err(|e| e.to_string())?.ok_or("Unknown connection.")?;
+        if record.route != Route::Gateway {
+            return Err("Routing options need the gateway route. Direct Codex connections talk to the provider themselves.".into());
+        }
+        if record.app_id != claude_code::APP_ID && !routing.tiers.is_empty() {
+            return Err("Per-tier models apply to Claude Code only; Codex uses one model per profile.".into());
+        }
+        if routing.fallbacks.len() > 5 {
+            return Err("Use at most 5 fallback models.".into());
+        }
+        if !routing.fallbacks.is_empty() && !routing.fallback_consent {
+            return Err("Fallbacks can send one request to several providers and bill each of them. Confirm that before saving.".into());
+        }
+        for r in routing.tiers.values().chain(routing.fallbacks.iter()) {
+            let p = provider(&r.provider_id)?;
+            validate_model_id(&r.model)?;
+            if route_for(&record.app_id, p).is_none() {
+                return Err(format!("{} cannot serve {}.", p.display_name, app_name(&record.app_id)));
+            }
+            if self.usable_key(p).is_none() {
+                return Err(format!("Add a {} key under Providers before routing to it.", p.display_name));
+            }
+        }
+        record.routing = routing;
+        record.status = ConnectionStatus::Unverified;
+        self.state.upsert(record.clone()).map_err(|e| e.to_string())?;
+        if record.app_id == claude_code::APP_ID {
+            // Model display names in the settings file follow the tiers.
+            let (_, _, plan) = self.plan(&record.app_id, &record.provider_id, &record.model)?;
+            config_engine::apply(&plan).map_err(|e| e.to_string())?;
+        }
+        self.diag.record(Level::Info, "routing.saved", &format!(
+            "{id}: {} tier override(s), reasoning {:?}, {} fallback(s){}.",
+            record.routing.tiers.len(), record.routing.reasoning, record.routing.fallbacks.len(),
+            if record.routing.fallback_consent { " (multi-provider billing accepted)" } else { "" }
+        ));
+        self.sync_gateway().await?;
         Ok(record)
     }
 
@@ -469,10 +535,18 @@ impl Service {
         let mut bindings = Vec::new();
         for r in &records {
             let token = tokens::ensure(self.store.as_ref(), &r.id).map_err(|e| format!("Secure store error: {e}"))?;
-            bindings.push((token, Binding { connection_id: r.id.clone(), provider_id: r.provider_id.clone() }));
-            let m = models.entry(r.provider_id.clone()).or_default();
-            if !m.contains(&r.model) {
-                m.push(r.model.clone());
+            bindings.push((token, Binding {
+                connection_id: r.id.clone(),
+                provider_id: r.provider_id.clone(),
+                model: r.model.clone(),
+                routing: std::sync::Arc::new(r.routing.clone()),
+            }));
+            let primary = crate::routing::ModelRef::new(&r.provider_id, &r.model);
+            for target in r.routing.refs(&primary) {
+                let m = models.entry(target.provider_id.clone()).or_default();
+                if !m.contains(&target.model) {
+                    m.push(target.model.clone());
+                }
             }
         }
         let mut specs = Vec::new();

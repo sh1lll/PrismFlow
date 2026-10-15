@@ -76,6 +76,9 @@ pub struct ConnectionRecord {
     pub created_at: u64,
     pub status: ConnectionStatus,
     pub last_report: Option<VerificationReport>,
+    /// Gateway connections only: tiers, reasoning policy, fallbacks.
+    #[serde(default)]
+    pub routing: crate::routing::Routing,
 }
 
 /// Resolve the state directory: `PRISMFLOW_STATE_DIR` (tests, portable
@@ -145,6 +148,22 @@ impl StateStore {
         self.save(&all)
     }
 
+    pub fn load_settings(&self) -> Result<crate::gateway::RuntimeSettings, ConfigError> {
+        let file = self.dir.join("settings.json");
+        match fs::read_to_string(&file) {
+            Ok(s) => serde_json::from_str(&s).map_err(|e| ConfigError::Parse { file, detail: e.to_string() }),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Default::default()),
+            Err(e) => Err(ConfigError::Io { file, detail: e.to_string() }),
+        }
+    }
+
+    pub fn save_settings(&self, settings: &crate::gateway::RuntimeSettings) -> Result<(), ConfigError> {
+        let file = self.dir.join("settings.json");
+        let json = serde_json::to_string_pretty(settings)
+            .map_err(|e| ConfigError::Io { file: file.clone(), detail: e.to_string() })?;
+        atomic_write(&file, &json)
+    }
+
     pub fn load_custom_providers(&self) -> Result<Vec<crate::providers::CustomProvider>, ConfigError> {
         let file = self.dir.join("custom_providers.json");
         match fs::read_to_string(&file) {
@@ -182,6 +201,7 @@ mod tests {
             created_at: 1,
             status: ConnectionStatus::Unverified,
             last_report: None,
+            routing: Default::default(),
         }
     }
 

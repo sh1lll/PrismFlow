@@ -6,6 +6,7 @@ pub mod diagnostics;
 pub mod discovery;
 pub mod gateway;
 pub mod providers;
+pub mod routing;
 pub mod service;
 pub mod state;
 pub mod verify;
@@ -104,6 +105,21 @@ fn remove_custom_provider(svc: State<'_, Service>, id: String) -> Cmd<()> {
 }
 
 #[tauri::command]
+async fn set_routing(svc: State<'_, Service>, id: String, routing: routing::Routing) -> Cmd<state::ConnectionRecord> {
+    svc.set_routing(&id, routing).await
+}
+
+#[tauri::command]
+fn get_settings(svc: State<'_, Service>) -> gateway::RuntimeSettings {
+    svc.settings()
+}
+
+#[tauri::command]
+async fn set_settings(svc: State<'_, Service>, settings: gateway::RuntimeSettings) -> Cmd<gateway::RuntimeSettings> {
+    svc.set_settings(settings).await
+}
+
+#[tauri::command]
 fn list_connections(svc: State<'_, Service>) -> Cmd<Vec<state::ConnectionRecord>> {
     svc.connections()
 }
@@ -170,6 +186,9 @@ pub fn run() {
             disconnect,
             list_connections,
             running_sessions,
+            set_routing,
+            get_settings,
+            set_settings,
             check_custom_url,
             add_custom_provider,
             remove_custom_provider,

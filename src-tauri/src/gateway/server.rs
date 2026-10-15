@@ -120,6 +120,11 @@ async fn proxy(State(inner): State<Arc<Inner>>, req: Request) -> Response {
         inner.record(Level::Warn, "broker.unauthorized", &format!("Rejected {method} {path}: missing, unknown or revoked local token."));
         return reject(StatusCode::UNAUTHORIZED, "authentication_error", "missing, unknown or revoked local token; reconnect this app in PrismFlow");
     };
+    if !inner.admit(&binding.connection_id) {
+        inner.count(|c| c.rejected += 1);
+        inner.record(Level::Warn, "broker.rate_limited", &format!("{}: over the per-minute request limit.", binding.connection_id));
+        return reject(StatusCode::TOO_MANY_REQUESTS, "rate_limit_error", "this connection is over its per-minute request limit (Settings)");
+    }
     let upstream = match inner.upstream() {
         Ok(u) => u,
         Err(phase) => {
@@ -129,20 +134,16 @@ async fn proxy(State(inner): State<Arc<Inner>>, req: Request) -> Response {
     };
 
     let query = req.uri().query().map(|q| format!("?{q}")).unwrap_or_default();
-    let mut headers = HeaderMap::new();
+    let mut base_headers = HeaderMap::new();
     for (name, value) in req.headers() {
         let n = name.as_str();
         if STRIP_REQUEST.contains(&n) || n.starts_with("x-target-") || n.starts_with("x-prismflow-") {
             continue;
         }
-        headers.append(name.clone(), value.clone());
+        base_headers.append(name.clone(), value.clone());
     }
     let auth = HeaderValue::from_str(&format!("Bearer {}", upstream.client_key)).expect("hex key is a valid header");
-    headers.insert(header::AUTHORIZATION, auth);
-    headers.insert(
-        HeaderName::from_static("x-target-provider"),
-        HeaderValue::from_str(&binding.provider_id).expect("provider ids are ASCII"),
-    );
+    base_headers.insert(header::AUTHORIZATION, auth);
 
     let body: Bytes = match axum::body::to_bytes(req.into_body(), BODY_LIMIT).await {
         Ok(b) => b,
@@ -151,18 +152,73 @@ async fn proxy(State(inner): State<Arc<Inner>>, req: Request) -> Response {
             return reject(StatusCode::PAYLOAD_TOO_LARGE, "request_too_large", "request body exceeds 50 MiB");
         }
     };
+
+    // Routing (tiers, reasoning, fallbacks) applies to JSON POST bodies.
+    let front = crate::routing::Front::of(&path);
+    let mut json: Option<serde_json::Value> =
+        (method == axum::http::Method::POST).then(|| serde_json::from_slice(&body).ok()).flatten();
+    let requested = json.as_ref().and_then(|j| j["model"].as_str()).map(str::to_string);
+    let primary = crate::routing::ModelRef::new(
+        &binding.provider_id,
+        if binding.model.is_empty() { requested.as_deref().unwrap_or("") } else { &binding.model },
+    );
+    let (tier, chain) = binding.routing.plan(&primary, requested.as_deref());
+    let effort = binding.routing.effort_for(tier);
+    if let Some(j) = json.as_mut() {
+        crate::routing::apply_effort(j, front, effort);
+    }
+    let body = match &json {
+        Some(j) if effort != crate::routing::Effort::FromClient => Bytes::from(serde_json::to_vec(j).unwrap_or_default()),
+        _ => body,
+    };
+
     let url = format!("http://127.0.0.1:{}{path}{query}", upstream.port);
-    let sent = inner.client.request(method.clone(), url).headers(headers).body(body).send().await;
-    inner.count(|c| c.requests += 1);
-    let resp = match sent {
-        Ok(r) => r,
-        Err(e) => {
-            inner.count(|c| c.upstream_errors += 1);
-            let msg = format!("{} {method} {path}: gateway engine unreachable ({})", binding.connection_id,
-                if e.is_timeout() { "timeout" } else if e.is_connect() { "connect" } else { "transport" });
-            inner.record(Level::Error, "broker.engine_unreachable", &msg);
-            return reject(StatusCode::BAD_GATEWAY, "api_error", "the gateway engine is unreachable");
+    let mut last_error: Option<Response> = None;
+    let mut resp = None;
+    for (attempt, target) in chain.iter().enumerate() {
+        let mut headers = base_headers.clone();
+        let Ok(provider) = HeaderValue::from_str(&target.provider_id) else { continue };
+        headers.insert(HeaderName::from_static("x-target-provider"), provider);
+        // Only rewrite the model when routing chose it; otherwise the body's
+        // own model stands (unchanged slice-2 behaviour).
+        if !binding.model.is_empty() || attempt > 0 || tier != crate::routing::Tier::Default {
+            if let Ok(m) = HeaderValue::from_str(&target.model) {
+                if !target.model.is_empty() {
+                    headers.insert(HeaderName::from_static("x-target-model"), m);
+                }
+            }
         }
+        let sent = inner.client.request(method.clone(), &url).headers(headers).body(body.clone()).send().await;
+        inner.count(|c| c.requests += 1);
+        match sent {
+            Ok(r) if !crate::routing::should_fall_back(r.status().as_u16()) || attempt + 1 == chain.len() => {
+                if attempt > 0 {
+                    inner.record(Level::Warn, "broker.fallback", &format!(
+                        "{} {method} {path}: served by {}/{} after {attempt} failed attempt(s).",
+                        binding.connection_id, target.provider_id, target.model
+                    ));
+                }
+                resp = Some((r, attempt, target.clone()));
+                break;
+            }
+            Ok(r) => {
+                inner.count(|c| c.upstream_errors += 1);
+                inner.record(Level::Warn, "broker.fallback_next", &format!(
+                    "{} {method} {path}: {}/{} answered {}; trying the next fallback.",
+                    binding.connection_id, target.provider_id, target.model, r.status().as_u16()
+                ));
+            }
+            Err(e) => {
+                inner.count(|c| c.upstream_errors += 1);
+                let msg = format!("{} {method} {path}: gateway engine unreachable ({})", binding.connection_id,
+                    if e.is_timeout() { "timeout" } else if e.is_connect() { "connect" } else { "transport" });
+                inner.record(Level::Error, "broker.engine_unreachable", &msg);
+                last_error = Some(reject(StatusCode::BAD_GATEWAY, "api_error", "the gateway engine is unreachable"));
+            }
+        }
+    }
+    let Some((resp, attempts, served_by)) = resp else {
+        return last_error.unwrap_or_else(|| reject(StatusCode::BAD_GATEWAY, "api_error", "no route could serve this request"));
     };
     let status = resp.status();
     if !status.is_success() {
@@ -172,6 +228,12 @@ async fn proxy(State(inner): State<Arc<Inner>>, req: Request) -> Response {
         ));
     }
     let mut out = Response::builder().status(status);
+    if let Ok(v) = HeaderValue::from_str(&format!("{}/{}", served_by.provider_id, served_by.model)) {
+        out = out.header("x-prismflow-served-by", v);
+    }
+    if attempts > 0 {
+        out = out.header("x-prismflow-fallback-count", attempts.to_string());
+    }
     for (name, value) in resp.headers() {
         if !STRIP_RESPONSE.contains(&name.as_str()) {
             out = out.header(name, value);

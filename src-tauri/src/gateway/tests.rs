@@ -87,7 +87,7 @@ async fn harness() -> Harness {
         models: vec![MODEL.into()],
         key: UPSTREAM_KEY.into(),
     };
-    let binding = Binding { connection_id: "claude_code:nvidia_nim".into(), provider_id: "nvidia_nim".into() };
+    let binding = Binding { connection_id: "claude_code:nvidia_nim".into(), provider_id: "nvidia_nim".into(), ..Default::default() };
     let status = broker.start(vec![spec], vec![(token.clone(), binding)]).await.expect("broker starts");
     assert_eq!(status.phase, Phase::Ready);
     Harness { broker, token, _dir: dir, diag_path, _upstream: upstream }
@@ -406,7 +406,7 @@ async fn anthropic_harness() -> Harness {
         models: vec![CLAUDE_MODEL.into()],
         key: ANTHROPIC_KEY.into(),
     };
-    let binding = Binding { connection_id: "codex_cli:anthropic".into(), provider_id: "anthropic".into() };
+    let binding = Binding { connection_id: "codex_cli:anthropic".into(), provider_id: "anthropic".into(), ..Default::default() };
     broker.start(vec![spec], vec![(token.clone(), binding)]).await.expect("broker starts");
     Harness { broker, token, _dir: dir, diag_path, _upstream: upstream }
 }
@@ -441,4 +441,128 @@ async fn messages_front_passes_through_to_an_anthropic_upstream() {
         assert!(body.contains(needle), "missing {needle} in:\n{body}");
     }
     h.broker.stop().await;
+}
+
+// ---- Routing: tiers, fallbacks, reasoning --------------------------------
+
+use crate::routing::{Effort, ModelRef, Routing, Tier};
+
+const KEY_A: &str = "sk-provider-a-0123456789abcdef";
+const KEY_B: &str = "sk-provider-b-0123456789abcdef";
+
+/// Provider A is down (503); provider B answers and echoes nothing secret.
+async fn two_upstreams() -> (MockServer, MockServer) {
+    let a = MockServer::start().await;
+    Mock::given(method("POST")).and(path("/v1/chat/completions"))
+        .respond_with(ResponseTemplate::new(503).set_body_string("overloaded"))
+        .mount(&a).await;
+    let b = MockServer::start().await;
+    Mock::given(method("POST")).and(path("/v1/chat/completions"))
+        .and(header("authorization", format!("Bearer {KEY_B}").as_str()))
+        .respond_with(ResponseTemplate::new(200).insert_header("content-type", "text/event-stream").set_body_string(text_stream()))
+        .mount(&b).await;
+    (a, b)
+}
+
+async fn routed(routing: Routing) -> (Harness, MockServer) {
+    let (a, b) = two_upstreams().await;
+    let dir = tempfile::tempdir().unwrap();
+    let diag_path = dir.path().join("diagnostics.jsonl");
+    let broker = Broker::new(0, dir.path().to_path_buf(), Some(Arc::new(DiagnosticsLog::new(diag_path.clone()))));
+    let token = tokens::generate();
+    let spec = |id: &str, url: String, key: &str, model: &str| UpstreamSpec {
+        provider_id: id.into(), engine_type: "openai_chat_completions", base_url: format!("{url}/v1"),
+        models: vec![model.into()], key: key.into(),
+    };
+    let specs = vec![spec("prov_a", a.uri(), KEY_A, "model-a"), spec("prov_b", b.uri(), KEY_B, "model-b")];
+    let binding = Binding {
+        connection_id: "claude_code:prov_a".into(), provider_id: "prov_a".into(), model: "model-a".into(),
+        routing: Arc::new(routing),
+    };
+    broker.start(specs, vec![(token.clone(), binding)]).await.expect("broker starts");
+    (Harness { broker, token, _dir: dir, diag_path, _upstream: a }, b)
+}
+
+fn chat_body(model: &str) -> serde_json::Value {
+    serde_json::json!({"model": model, "stream": true, "messages": [{"role": "user", "content": "hi"}]})
+}
+
+#[tokio::test]
+async fn fallback_serves_from_the_next_provider_only_with_consent() {
+    let fb = vec![ModelRef::new("prov_b", "model-b")];
+    let (h, _b) = routed(Routing { fallbacks: fb.clone(), fallback_consent: false, ..Default::default() }).await;
+    let r = h.post("/v1/chat/completions", chat_body("prismflow-default")).header("x-api-key", &h.token).send().await.unwrap();
+    assert!(!r.status().is_success(), "without consent the failure must surface, not fall back");
+    h.broker.stop().await;
+
+    let (h, b) = routed(Routing { fallbacks: fb, fallback_consent: true, ..Default::default() }).await;
+    let r = h.post("/v1/chat/completions", chat_body("prismflow-default")).header("x-api-key", &h.token).send().await.unwrap();
+    assert_eq!(r.status(), 200);
+    assert_eq!(r.headers()["x-prismflow-served-by"], "prov_b/model-b");
+    assert_eq!(r.headers()["x-prismflow-fallback-count"], "1");
+    assert!(r.text().await.unwrap().contains("FLOW_OK"));
+    assert_eq!(b.received_requests().await.unwrap().len(), 1);
+    let diag = std::fs::read_to_string(&h.diag_path).unwrap();
+    assert!(diag.contains("broker.fallback") && !diag.contains(KEY_A) && !diag.contains(KEY_B));
+    h.broker.stop().await;
+}
+
+#[tokio::test]
+async fn tier_alias_routes_to_its_own_provider_with_its_reasoning() {
+    let mut routing = Routing { reasoning: Effort::Low, ..Default::default() };
+    routing.tiers.insert(Tier::Haiku, ModelRef::new("prov_b", "model-b"));
+    routing.tier_reasoning.insert(Tier::Haiku, Effort::High);
+    let (h, b) = routed(routing).await;
+    let r = h.post("/v1/chat/completions", chat_body("prismflow-haiku")).header("x-api-key", &h.token).send().await.unwrap();
+    assert_eq!(r.status(), 200);
+    assert_eq!(r.headers()["x-prismflow-served-by"], "prov_b/model-b");
+    assert!(r.headers().get("x-prismflow-fallback-count").is_none());
+    let sent = &b.received_requests().await.unwrap()[0];
+    let body: serde_json::Value = serde_json::from_slice(&sent.body).unwrap();
+    assert_eq!(body["model"], "model-b", "upstream must see the real model, not the alias: {body}");
+    assert_eq!(body["reasoning_effort"], "high", "{body}");
+    h.broker.stop().await;
+}
+
+#[tokio::test]
+async fn per_connection_rate_limit_answers_429() {
+    let h = harness().await;
+    h.broker.set_settings(RuntimeSettings { rate_limit_per_minute: 1, ..Default::default() });
+    let ok = h.post("/v1/messages", messages_body(false, false)).header("x-api-key", &h.token).send().await.unwrap();
+    assert_eq!(ok.status(), 200);
+    let limited = h.post("/v1/messages", messages_body(false, false)).header("x-api-key", &h.token).send().await.unwrap();
+    assert_eq!(limited.status(), 429);
+    assert!(limited.text().await.unwrap().contains("per-minute"));
+    h.broker.stop().await;
+}
+
+#[test]
+fn engine_config_carries_concurrency_and_retry_limits() {
+    let spec = UpstreamSpec { provider_id: "p".into(), engine_type: "openai_chat_completions", base_url: "https://x/v1".into(), models: vec![], key: "k".into() };
+    let cfg = supervisor::render_config(&[spec], &RuntimeSettings { max_concurrency_per_provider: 4, upstream_retries: 2, ..Default::default() });
+    assert_eq!(cfg["upstreamConcurrency"]["enabled"], true);
+    assert_eq!(cfg["upstreamConcurrency"]["maxInFlightPerProvider"], 4);
+    assert_eq!(cfg["upstreamRetry"]["maxAttempts"], 3);
+    let off = supervisor::render_config(&[], &RuntimeSettings { max_concurrency_per_provider: 0, upstream_retries: 0, ..Default::default() });
+    assert_eq!(off["upstreamConcurrency"]["enabled"], false);
+    assert_eq!(off["upstreamRetry"]["enabled"], false);
+}
+
+#[tokio::test]
+async fn engine_starts_and_serves_with_concurrency_limits_enabled() {
+    let upstream = chat_upstream().await;
+    let dir = tempfile::tempdir().unwrap();
+    let broker = Broker::new(0, dir.path().to_path_buf(), None);
+    broker.set_settings(RuntimeSettings { max_concurrency_per_provider: 2, upstream_retries: 2, rate_limit_per_minute: 100 });
+    let token = tokens::generate();
+    let spec = UpstreamSpec {
+        provider_id: "nvidia_nim".into(), engine_type: "openai_chat_completions",
+        base_url: format!("{}/v1", upstream.uri()), models: vec![MODEL.into()], key: UPSTREAM_KEY.into(),
+    };
+    let binding = Binding { connection_id: "c".into(), provider_id: "nvidia_nim".into(), ..Default::default() };
+    broker.start(vec![spec], vec![(token.clone(), binding)]).await.expect("engine accepts the limits config");
+    let r = client().post(format!("{}/v1/messages", broker.url())).json(&messages_body(false, false))
+        .header("x-api-key", &token).send().await.unwrap();
+    assert_eq!(r.status(), 200);
+    broker.stop().await;
 }

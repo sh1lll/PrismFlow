@@ -19,6 +19,7 @@
 use super::{extra_bin_dirs, AppDetection};
 use crate::config_engine::{ConfigError, EditPlan};
 use crate::providers::ProviderDefinition;
+use crate::routing::{ModelRef, Routing, Tier};
 use serde_json::json;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -28,16 +29,26 @@ pub const MARKER_KEY: &str = "_prismflow";
 pub const VERIFIED_MIN: (u32, u32, u32) = (2, 1, 0);
 pub const VERIFIED_MAX: (u32, u32, u32) = (2, 1, u32::MAX);
 
-/// Every model slot Claude Code may use, all pointed at the chosen model, so
-/// background, subagent and tier switches never ask the gateway for a model
-/// the user did not pick (plan D4).
-pub const MODEL_ENV: &[&str] = &[
-    "ANTHROPIC_MODEL",
-    "ANTHROPIC_DEFAULT_OPUS_MODEL",
-    "ANTHROPIC_DEFAULT_SONNET_MODEL",
-    "ANTHROPIC_DEFAULT_HAIKU_MODEL",
-    "ANTHROPIC_SMALL_FAST_MODEL",
-    "CLAUDE_CODE_SUBAGENT_MODEL",
+/// Every model slot Claude Code may use (2.1.207 strings), each set to a
+/// PrismFlow alias the broker resolves (`routing`). Unknown slots fall back
+/// to the connection's own model at the broker, never to a model the user
+/// did not pick (plan D4).
+pub const MODEL_ENV: &[(&str, Tier)] = &[
+    ("ANTHROPIC_MODEL", Tier::Default),
+    ("ANTHROPIC_DEFAULT_FABLE_MODEL", Tier::Fable),
+    ("ANTHROPIC_DEFAULT_OPUS_MODEL", Tier::Opus),
+    ("ANTHROPIC_DEFAULT_SONNET_MODEL", Tier::Sonnet),
+    ("ANTHROPIC_DEFAULT_HAIKU_MODEL", Tier::Haiku),
+    ("ANTHROPIC_SMALL_FAST_MODEL", Tier::Haiku),
+    ("CLAUDE_CODE_SUBAGENT_MODEL", Tier::Subagent),
+];
+
+/// Display names for the picker (`*_MODEL_NAME`), so users see real models.
+const NAME_ENV: &[(&str, Tier)] = &[
+    ("ANTHROPIC_DEFAULT_FABLE_MODEL_NAME", Tier::Fable),
+    ("ANTHROPIC_DEFAULT_OPUS_MODEL_NAME", Tier::Opus),
+    ("ANTHROPIC_DEFAULT_SONNET_MODEL_NAME", Tier::Sonnet),
+    ("ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME", Tier::Haiku),
 ];
 
 pub fn find_binary() -> Option<PathBuf> {
@@ -150,6 +161,7 @@ pub fn plan_connect(
     helper: &Path,
     connection_id: &str,
     broker_url: &str,
+    routing: &Routing,
 ) -> Result<EditPlan, ClaudeCodeError> {
     let file = settings_file(dir, provider.id);
     let before = match std::fs::read_to_string(&file) {
@@ -162,8 +174,13 @@ pub fn plan_connect(
     env.insert("ANTHROPIC_BASE_URL".into(), json!(broker_url));
     env.insert("ANTHROPIC_AUTH_TOKEN".into(), json!(""));
     env.insert("ANTHROPIC_API_KEY".into(), json!(""));
-    for k in MODEL_ENV {
-        env.insert((*k).into(), json!(model));
+    let primary = ModelRef::new(provider.id, model);
+    for (k, tier) in MODEL_ENV {
+        env.insert((*k).into(), json!(tier.alias()));
+    }
+    for (k, tier) in NAME_ENV {
+        let r = routing.tiers.get(tier).unwrap_or(&primary);
+        env.insert((*k).into(), json!(format!("{} ({})", r.model, r.provider_id)));
     }
     env.insert("CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC".into(), json!("1"));
     let doc = json!({
@@ -182,7 +199,12 @@ pub fn plan_connect(
     let summary = vec![
         format!("Create {} (your own settings.json is not modified)", file.display()),
         format!("Route Claude Code to PrismFlow's gateway at {broker_url} for {}", provider.display_name),
-        format!("Use model {model} for every Claude Code model slot"),
+        if routing.tiers.is_empty() {
+            format!("Use model {model} for every Claude Code model slot")
+        } else {
+            format!("Use model {model} by default, with per-tier overrides: {}", routing.tiers.iter()
+                .map(|(t, r)| format!("{t:?} → {}/{}", r.provider_id, r.model)).collect::<Vec<_>>().join(", "))
+        },
         "Fetch a revocable local token from the Keychain at runtime via apiKeyHelper".into(),
         "Ignore any ANTHROPIC_AUTH_TOKEN / ANTHROPIC_API_KEY in your shell for this profile only".into(),
     ];
@@ -220,7 +242,7 @@ mod tests {
     }
 
     fn plan(dir: &Path, model: &str) -> EditPlan {
-        plan_connect(dir, providers::get("nvidia_nim").unwrap(), model, &helper(), "claude_code:nvidia_nim", URL).unwrap()
+        plan_connect(dir, providers::get("nvidia_nim").unwrap(), model, &helper(), "claude_code:nvidia_nim", URL, &Routing::default()).unwrap()
     }
 
     #[test]
@@ -232,9 +254,10 @@ mod tests {
         assert_eq!(v["env"]["ANTHROPIC_BASE_URL"], URL);
         assert_eq!(v["env"]["ANTHROPIC_AUTH_TOKEN"], "");
         assert_eq!(v["env"]["ANTHROPIC_API_KEY"], "");
-        for k in MODEL_ENV {
-            assert_eq!(v["env"][*k], "meta/llama-3.3-70b-instruct", "{k}");
+        for (k, tier) in MODEL_ENV {
+            assert_eq!(v["env"][*k], tier.alias(), "{k}");
         }
+        assert_eq!(v["env"]["ANTHROPIC_DEFAULT_OPUS_MODEL_NAME"], "meta/llama-3.3-70b-instruct (nvidia_nim)");
         assert_eq!(
             v["apiKeyHelper"],
             "'/Applications/Prism Flow.app/Contents/MacOS/prismflow' token print --connection 'claude_code:nvidia_nim'"
@@ -252,7 +275,7 @@ mod tests {
         let again = plan(dir.path(), "a/one");
         assert_eq!(again.before, again.after);
         let switched = plan(dir.path(), "b/two");
-        assert!(switched.after.contains("\"b/two\""));
+        assert!(switched.after.contains("b/two (nvidia_nim)"));
         assert_eq!(fs::read_to_string(&user).unwrap(), "{\n  \"theme\": \"dark\"\n}\n");
     }
 
@@ -263,7 +286,7 @@ mod tests {
         let foreign = settings_file(dir.path(), "nvidia_nim");
         fs::write(&foreign, "{\"env\":{}}").unwrap();
         assert!(matches!(
-            plan_connect(dir.path(), providers::get("nvidia_nim").unwrap(), "m", &helper(), "c", URL),
+            plan_connect(dir.path(), providers::get("nvidia_nim").unwrap(), "m", &helper(), "c", URL, &Routing::default()),
             Err(ClaudeCodeError::NotOurs(_))
         ));
         assert!(matches!(disconnect(&foreign, backups.path()), Err(ClaudeCodeError::NotOurs(_))));
