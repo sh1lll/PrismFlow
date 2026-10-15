@@ -174,6 +174,22 @@ async fn proxy(State(inner): State<Arc<Inner>>, req: Request) -> Response {
 
     let url = format!("http://127.0.0.1:{}{path}{query}", upstream.port);
 
+    // Claude Code's background requests (titles, suggestions): answered here.
+    let shortcuts_on = inner.settings.read().unwrap_or_else(|e| e.into_inner()).shortcuts;
+    if shortcuts_on && front == crate::routing::Front::Messages && path == "/v1/messages" {
+        if let Some((j, s)) = json.as_ref().and_then(|j| super::shortcuts::detect(j).map(|s| (j, s))) {
+            inner.count(|c| c.shortcuts += 1);
+            let (sse, text) = super::shortcuts::respond(j, &s);
+            let kind = if sse { "text/event-stream" } else { "application/json" };
+            return Response::builder()
+                .status(StatusCode::OK)
+                .header(header::CONTENT_TYPE, kind)
+                .header("x-prismflow-shortcut", s.kind())
+                .body(Body::from(text))
+                .unwrap_or_else(|_| reject(StatusCode::INTERNAL_SERVER_ERROR, "api_error", "shortcut response"));
+        }
+    }
+
     // Local web tools: Anthropic's server-side WebSearch/WebFetch, run here.
     let web_on = inner.settings.read().unwrap_or_else(|e| e.into_inner()).web_tools.enabled;
     if web_on && front == crate::routing::Front::Messages {

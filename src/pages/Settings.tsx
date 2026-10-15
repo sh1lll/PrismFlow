@@ -39,6 +39,14 @@ export default function Settings() {
         <div className="row mt"><button className="primary" disabled={!s} onClick={save}>Save</button></div>
         {msg && <div className={`small mt ${msg.tone}`}>{msg.text}</div>}
       </div>
+      {s && (
+        <div className="card">
+          <div className="section-title">Speed up Claude Code</div>
+          <div className="small muted">Claude Code sends small extra requests, like naming your chat. PrismFlow answers these itself, so your model only works on what you asked.</div>
+          <label className="small mt-block"><input type="checkbox" className="check" checked={s.shortcuts} onChange={(e) => setS({ ...s, shortcuts: e.target.checked })} /> On</label>
+          <div className="row mt"><button className="primary" onClick={save}>Save</button></div>
+        </div>
+      )}
       {s && <WebTools s={s} setS={setS} save={save} />}
       <Updates />
       <RemoveAll />

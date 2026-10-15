@@ -59,6 +59,7 @@ export interface GatewayStatus {
   requests: number;
   rejected: number;
   upstream_errors: number;
+  shortcuts: number;
   connections: number;
   upstreams: string[];
 }
@@ -125,6 +126,7 @@ export interface RuntimeSettings {
   rate_limit_per_minute: number;
   max_concurrency_per_provider: number;
   upstream_retries: number;
+  shortcuts: boolean;
   web_tools: WebToolsSettings;
 }
 

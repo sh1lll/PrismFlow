@@ -51,7 +51,7 @@ export default function GatewayCard() {
         <details className="mt">
           <summary className="small">Details</summary>
           <div className="small muted">
-            {status.url} (this computer only) · {status.requests} requests · {status.rejected} refused · {status.upstream_errors} errors
+            {status.url} (this computer only) · {status.requests} requests · {status.rejected} refused · {status.upstream_errors} errors · {status.shortcuts} answered locally
             {status.restarts > 0 && ` · ${status.restarts} restarts`} · {status.engine}{status.node ? ` on Node ${status.node}` : ""}
           </div>
         </details>

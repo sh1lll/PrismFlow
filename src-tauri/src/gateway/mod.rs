@@ -5,6 +5,7 @@
 //! → provider (upstream key). See the Slice 2 plan for the threat model.
 
 pub mod server;
+pub mod shortcuts;
 pub mod webloop;
 pub mod supervisor;
 pub mod tokens;
@@ -42,11 +43,13 @@ pub struct RuntimeSettings {
     pub upstream_retries: u32,
     /// Local WebSearch/WebFetch for Claude Code (off by default).
     pub web_tools: crate::webtools::WebToolsSettings,
+    /// Answer Claude Code's background requests (titles, suggestions) locally.
+    pub shortcuts: bool,
 }
 
 impl Default for RuntimeSettings {
     fn default() -> Self {
-        Self { rate_limit_per_minute: 0, max_concurrency_per_provider: 0, upstream_retries: 1, web_tools: Default::default() }
+        Self { rate_limit_per_minute: 0, max_concurrency_per_provider: 0, upstream_retries: 1, web_tools: Default::default(), shortcuts: true }
     }
 }
 
@@ -85,6 +88,8 @@ pub struct BrokerStatus {
     pub requests: u64,
     pub rejected: u64,
     pub upstream_errors: u64,
+    /// Background requests answered locally (see `shortcuts`).
+    pub shortcuts: u64,
     pub connections: usize,
     pub upstreams: Vec<String>,
 }
@@ -106,6 +111,7 @@ struct Counters {
     requests: u64,
     rejected: u64,
     upstream_errors: u64,
+    shortcuts: u64,
 }
 
 /// Where requests go right now. Only the supervisor writes it.
@@ -264,6 +270,7 @@ impl Broker {
             requests: c.requests,
             rejected: c.rejected,
             upstream_errors: c.upstream_errors,
+            shortcuts: c.shortcuts,
             connections: bindings.len(),
             upstreams,
         }

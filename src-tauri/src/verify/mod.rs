@@ -851,7 +851,7 @@ esac"#;
             phase, url: "http://127.0.0.1:47821".into(), port: 47821,
             engine: "@the-next-ai/ai-gateway 1.0.21".into(), node: Some("v22".into()),
             detail: (phase != Phase::Ready).then(|| "Node.js 20 or newer is required".into()),
-            restarts: 0, requests: 0, rejected: 0, upstream_errors: 0, connections: 1, upstreams: vec!["nvidia_nim".into()],
+            restarts: 0, requests: 0, rejected: 0, upstream_errors: 0, shortcuts: 0, connections: 1, upstreams: vec!["nvidia_nim".into()],
         }
     }
 

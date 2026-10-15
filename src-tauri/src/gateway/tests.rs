@@ -733,3 +733,35 @@ fn engine_never_gets_a_fixed_whole_request_timeout() {
     let src = include_str!("supervisor.rs");
     assert!(src.contains(r#".env("UPSTREAM_TIMEOUT_MS", "0")"#));
 }
+
+#[tokio::test]
+async fn claude_code_background_requests_never_reach_the_provider() {
+    let h = harness().await;
+    let title = serde_json::json!({"model": "claude-opus-4-8", "max_tokens": 64000, "stream": true,
+        "system": [{"type": "text", "text": "You are Claude Code, Anthropic's official CLI for Claude. Generate a concise, sentence-case title (3-7 words) that captures the main topic"}],
+        "messages": [{"role": "user", "content": [{"type": "text", "text": "<session>\nfix the flaky login test\n</session>"}]}],
+        "output_config": {"format": {"type": "json_schema", "schema": {"type": "object", "properties": {"title": {"type": "string"}}}}}});
+    let r = h.post("/v1/messages", title).header("x-api-key", &h.token).send().await.unwrap();
+    assert_eq!(r.headers()["x-prismflow-shortcut"], "title");
+    let sse = r.text().await.unwrap();
+    assert!(sse.contains("Fix the flaky login test") && sse.contains("event: message_stop"), "{sse}");
+
+    let suggest = serde_json::json!({"model": "claude-opus-4-8", "max_tokens": 64000, "stream": false,
+        "tools": [{"name": "Bash", "input_schema": {"type": "object"}}],
+        "messages": [{"role": "user", "content": "hi"}, {"role": "assistant", "content": "hello"},
+            {"role": "user", "content": "[SUGGESTION MODE: Suggest what the user might naturally type next into Claude Code.]"}]});
+    let v: serde_json::Value = h.post("/v1/messages", suggest).header("x-api-key", &h.token).send().await.unwrap().json().await.unwrap();
+    assert_eq!(v["content"], serde_json::json!([]), "{v}");
+
+    assert!(h._upstream.received_requests().await.unwrap().is_empty(), "no provider call for background requests");
+    assert_eq!(h.broker.status().shortcuts, 2);
+
+    // Switched off in Settings: the same request goes to the provider.
+    h.broker.set_settings(RuntimeSettings { shortcuts: false, ..Default::default() });
+    let mut b = messages_body(false, false);
+    b["messages"] = serde_json::json!([{"role": "user", "content": "[SUGGESTION MODE: x]"}]);
+    let v: serde_json::Value = h.post("/v1/messages", b).header("x-api-key", &h.token).send().await.unwrap().json().await.unwrap();
+    assert_eq!(v["type"], "message");
+    assert_eq!(h._upstream.received_requests().await.unwrap().len(), 1);
+    h.broker.stop().await;
+}
