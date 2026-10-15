@@ -29,6 +29,30 @@ pub struct ProviderView {
     pub routes: BTreeMap<&'static str, Option<Route>>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum UninstallOutcome {
+    Planned,
+    Done,
+    Failed,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct UninstallItem {
+    pub what: String,
+    pub outcome: UninstallOutcome,
+    pub detail: String,
+}
+
+/// SPEC §23. `complete` is false when a step failed; nothing after a failed
+/// restore is removed, so the user keeps keys and state to fix it.
+#[derive(Debug, Clone, Serialize)]
+pub struct UninstallReport {
+    pub dry_run: bool,
+    pub complete: bool,
+    pub items: Vec<UninstallItem>,
+}
+
 #[derive(Debug, Serialize)]
 pub struct ConnectPreview {
     pub app_id: String,
@@ -654,6 +678,106 @@ impl Service {
         })
     }
 
+    /// Remove everything PrismFlow added (SPEC §23, acceptance §13.15):
+    /// managed agent files (via disconnect, which also revokes tokens), every
+    /// secure-store entry, the gateway, and the state directory.
+    pub async fn uninstall(&self, dry_run: bool) -> R<UninstallReport> {
+        use UninstallOutcome::*;
+        let mut items = Vec::new();
+        let mut push = |what: String, outcome, detail: String| items.push(UninstallItem { what, outcome, detail });
+
+        // 1. Connections: restore each app's config and revoke its token.
+        for r in self.connections()? {
+            if dry_run {
+                push(format!("Disconnect {}", r.id), Planned, format!("Delete {}", r.managed_file.display()));
+                continue;
+            }
+            match self.disconnect(&r.id).await {
+                Ok(_) => push(format!("Disconnect {}", r.id), Done, format!("Removed {}", r.managed_file.display())),
+                Err(e) => {
+                    push(format!("Disconnect {}", r.id), Failed, e);
+                    return Ok(UninstallReport { dry_run, complete: false, items });
+                }
+            }
+        }
+
+        // 2. Stray PrismFlow-owned agent files (e.g. left by a crash).
+        let strays = [
+            (self.codex_home.clone(), ".config.toml", codex::MANAGED_MARKER),
+            (self.claude_dir.clone(), ".settings.json", "\"_prismflow\""),
+        ];
+        for (dir, suffix, marker) in strays {
+            let Ok(entries) = std::fs::read_dir(&dir) else { continue };
+            for e in entries.flatten() {
+                let name = e.file_name().to_string_lossy().to_string();
+                if !(name.starts_with("prismflow-") && name.ends_with(suffix)) {
+                    continue;
+                }
+                let ours = std::fs::read_to_string(e.path()).map(|c| c.contains(marker)).unwrap_or(false);
+                if !ours {
+                    push(format!("Keep {}", e.path().display()), Planned, "Not marked as PrismFlow-managed; left alone.".into());
+                    continue;
+                }
+                if dry_run {
+                    push(format!("Remove {}", e.path().display()), Planned, "PrismFlow-managed file with no connection".into());
+                } else if let Err(err) = std::fs::remove_file(e.path()) {
+                    push(format!("Remove {}", e.path().display()), Failed, err.to_string());
+                    return Ok(UninstallReport { dry_run, complete: false, items });
+                } else {
+                    push(format!("Remove {}", e.path().display()), Done, String::new());
+                }
+            }
+        }
+
+        // 3. Secure store: every provider key and every possible token.
+        let mut accounts: Vec<(String, String)> = providers::registry()
+            .into_iter()
+            .map(|p| (account_key(p.id, "default"), format!("{} key", p.display_name)))
+            .collect();
+        for app in APPS {
+            for p in providers::registry() {
+                let id = connection_id(app, p.id);
+                accounts.push((tokens::account(&id), format!("gateway token for {id}")));
+            }
+        }
+        for (acct, label) in accounts {
+            if self.store.get(&acct).is_err() {
+                continue;
+            }
+            if dry_run {
+                push(format!("Delete {label}"), Planned, "From the system secure store".into());
+                continue;
+            }
+            match self.store.delete(&acct) {
+                Ok(()) | Err(CredentialError::NotFound(_)) => push(format!("Delete {label}"), Done, String::new()),
+                Err(e) => {
+                    push(format!("Delete {label}"), Failed, e.to_string());
+                    return Ok(UninstallReport { dry_run, complete: false, items });
+                }
+            }
+        }
+
+        // 4. Gateway and state directory (backups, catalogs, logs, settings).
+        let dir = self.state.dir().to_path_buf();
+        if dry_run {
+            push("Stop the gateway".into(), Planned, String::new());
+            push(format!("Delete {}", dir.display()), Planned, "State, backups, diagnostics, settings, custom providers".into());
+        } else {
+            self.broker.stop().await;
+            push("Stop the gateway".into(), Done, String::new());
+            match std::fs::remove_dir_all(&dir) {
+                Ok(()) => push(format!("Delete {}", dir.display()), Done, String::new()),
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                Err(e) => {
+                    push(format!("Delete {}", dir.display()), Failed, e.to_string());
+                    return Ok(UninstallReport { dry_run, complete: false, items });
+                }
+            }
+            providers::set_custom(&[]);
+        }
+        Ok(UninstallReport { dry_run, complete: true, items })
+    }
+
     pub fn connections(&self) -> R<Vec<ConnectionRecord>> {
         self.state.load().map_err(|e| e.to_string())
     }
@@ -897,6 +1021,31 @@ mod tests {
         s.remove_custom_provider("custom_box").unwrap();
         assert!(providers::get("custom_box").is_none());
         assert!(s.remove_custom_provider("openrouter").is_err());
+    }
+
+    #[tokio::test]
+    async fn uninstall_leaves_no_trace_and_dry_run_changes_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        let s = service(dir.path());
+        std::fs::write(s.codex_home.join("config.toml"), "# mine\n").unwrap();
+        std::fs::write(s.codex_home.join("prismflow-mine.config.toml"), "model = \"user file, unmarked\"\n").unwrap();
+        let before_codex: Vec<_> = walk(&s.codex_home);
+        s.set_credential("openrouter", "sk-or-v1-abcdefabcdef").unwrap();
+        s.connect(CODEX, "openrouter", "a/b").await.unwrap();
+        std::fs::write(s.codex_home.join("prismflow-stray.config.toml"), format!("{}\nmodel = \"x\"\n", codex::MANAGED_MARKER)).unwrap();
+
+        let plan = s.uninstall(true).await.unwrap();
+        assert!(plan.complete && plan.dry_run);
+        assert!(plan.items.iter().all(|i| i.outcome == UninstallOutcome::Planned));
+        assert!(plan.items.iter().any(|i| i.what.contains("OpenRouter key")));
+        assert_eq!(s.connections().unwrap().len(), 1, "dry run must not act");
+
+        let done = s.uninstall(false).await.unwrap();
+        assert!(done.complete, "{:#?}", done.items);
+        assert!(s.key("openrouter").is_none());
+        assert!(!s.state.dir().exists());
+        assert!(!s.codex_home.join("prismflow-stray.config.toml").exists());
+        assert_eq!(walk(&s.codex_home), before_codex, "user files, including the unmarked look-alike, survive");
     }
 
     #[test]

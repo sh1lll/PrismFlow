@@ -120,6 +120,11 @@ async fn set_settings(svc: State<'_, Service>, settings: gateway::RuntimeSetting
 }
 
 #[tauri::command]
+async fn uninstall(svc: State<'_, Service>, dry_run: bool) -> Cmd<service::UninstallReport> {
+    svc.uninstall(dry_run).await
+}
+
+#[tauri::command]
 fn list_connections(svc: State<'_, Service>) -> Cmd<Vec<state::ConnectionRecord>> {
     svc.connections()
 }
@@ -187,6 +192,7 @@ pub fn run() {
             list_connections,
             running_sessions,
             set_routing,
+            uninstall,
             get_settings,
             set_settings,
             check_custom_url,

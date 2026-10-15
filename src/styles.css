@@ -71,3 +71,4 @@ textarea { background: #0d0d12; border: 1px solid var(--line); color: var(--text
 .mt-s { margin-top: 6px; }
 .tier-label { min-width: 170px; }
 select { background: #0d0d12; border: 1px solid var(--line); color: var(--text); border-radius: 8px; padding: 8px 10px; font-size: 14px; }
+.danger-zone { border-color: var(--err); }

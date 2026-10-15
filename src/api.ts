@@ -120,6 +120,9 @@ export interface RuntimeSettings {
   upstream_retries: number;
 }
 
+export interface UninstallItem { what: string; outcome: "planned" | "done" | "failed"; detail: string }
+export interface UninstallReport { dry_run: boolean; complete: boolean; items: UninstallItem[] }
+
 export interface ConnectPreview {
   app_id: AppId;
   route: Route;
@@ -151,6 +154,7 @@ export const api = {
   setRouting: (id: string, routing: Routing) => invoke<Connection>("set_routing", { id, routing }),
   getSettings: () => invoke<RuntimeSettings>("get_settings"),
   setSettings: (settings: RuntimeSettings) => invoke<RuntimeSettings>("set_settings", { settings }),
+  uninstall: (dryRun: boolean) => invoke<UninstallReport>("uninstall", { dryRun }),
   runningSessions: (id: string) => invoke<number[]>("running_sessions", { id }),
   launch: (id: string) => invoke<void>("launch_connection", { id }),
   diagnostics: () => invoke<DiagEvent[]>("get_diagnostics"),
