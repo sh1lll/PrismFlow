@@ -53,6 +53,35 @@ function KeyEditor({ p, onChange, setMsg }: { p: Provider; onChange: () => void;
   );
 }
 
+const SIGNIN: Record<string, { tool: string; login: string; risk: string }> = {
+  gh_cli: {
+    tool: "GitHub CLI", login: "gh auth login",
+    risk: "Uses GitHub Models with your GitHub sign-in. Requests count against your GitHub Models limits and follow GitHub's terms.",
+  },
+  codex_login: {
+    tool: "Codex", login: "codex login",
+    risk: "Uses your ChatGPT plan through Codex's sign-in. This is not an official API for other tools: OpenAI may limit or disallow it at any time, and usage counts against your ChatGPT plan.",
+  },
+};
+
+function SignIn({ p, onChange, setMsg }: { p: Provider; onChange: () => void; setMsg: (m: { tone: string; text: string } | null) => void }) {
+  const info = SIGNIN[p.credential_source];
+  const set = (consent: boolean) => api.setSigninConsent(p.id, consent)
+    .then(() => { setMsg({ tone: "ok", text: consent ? "PrismFlow will use this sign-in. It is read when needed and never stored." : "PrismFlow no longer uses this sign-in." }); onChange(); })
+    .catch((e) => setMsg({ tone: "err", text: errText(e) }));
+  if (!p.signin_available) {
+    return <div className="small muted">Sign in with {info.tool} first: run <code>{info.login}</code>, then come back.</div>;
+  }
+  return p.has_credential ? (
+    <button className="danger" onClick={() => set(false)}>Stop using my {info.tool} sign-in</button>
+  ) : (
+    <div>
+      <div className="warn small">{info.risk}</div>
+      <button className="ghost mt" onClick={() => { if (confirm(`${info.risk}\n\nUse your ${info.tool} sign-in?`)) set(true); }}>Use my {info.tool} sign-in</button>
+    </div>
+  );
+}
+
 function ProviderRow({ p, onChange }: { p: Provider; onChange: () => void }) {
   const [open, setOpen] = useState(false);
   const [msg, setMsg] = useState<{ tone: string; text: string } | null>(null);
@@ -73,7 +102,7 @@ function ProviderRow({ p, onChange }: { p: Provider; onChange: () => void }) {
       <button className="row spread rowbtn" onClick={() => setOpen(!open)} aria-expanded={open}>
         <span><b>{p.display_name}</b> <span className="muted small">{p.base_url}</span></span>
         <span className={`badge ${p.has_credential ? "ok" : p.key_optional ? "muted" : "muted"}`}>
-          {p.has_credential ? "Key stored" : p.key_optional ? "No key needed" : "No key"}
+          {p.credential_source !== "keychain" ? (p.has_credential ? "Sign-in in use" : "Not used") : p.has_credential ? "Key stored" : p.key_optional ? "No key needed" : "No key"}
         </span>
       </button>
       {open && (
@@ -99,7 +128,7 @@ function ProviderRow({ p, onChange }: { p: Provider; onChange: () => void }) {
           })}
           {p.local && !ready && <div className="small muted">Start the server on this machine before connecting; verification checks it is reachable.</div>}
           <div className="mt row">
-            <KeyEditor p={p} onChange={onChange} setMsg={setMsg} />
+            {p.credential_source === "keychain" ? <KeyEditor p={p} onChange={onChange} setMsg={setMsg} /> : <SignIn p={p} onChange={onChange} setMsg={setMsg} />}
             {p.custom && <button className="danger" onClick={removeProvider}>Remove provider</button>}
           </div>
           {msg && <div className={`small mt ${msg.tone}`}>{msg.text}</div>}
@@ -182,7 +211,8 @@ export default function Providers() {
     const match = (p: Provider) => !f || p.display_name.toLowerCase().includes(f) || p.id.includes(f) || p.base_url.includes(f);
     const list = (providers ?? []).filter(match).sort((a, b) => Number(b.has_credential) - Number(a.has_credential));
     return [
-      { title: "Cloud providers", items: list.filter((p) => !p.local && !p.custom) },
+      { title: "Your existing sign-ins", items: list.filter((p) => p.credential_source !== "keychain") },
+      { title: "Cloud providers", items: list.filter((p) => !p.local && !p.custom && p.credential_source === "keychain") },
       { title: "On this machine", items: list.filter((p) => p.local && !p.custom) },
       { title: "Your custom providers", items: list.filter((p) => p.custom) },
     ];

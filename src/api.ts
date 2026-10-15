@@ -16,6 +16,8 @@ export interface Provider {
   requires_key: boolean;
   key_optional: boolean;
   verified_at: string;
+  credential_source: "keychain" | "gh_cli" | "codex_login";
+  signin_available: boolean;
   has_credential: boolean;
   codex_direct: boolean;
   /** How each app reaches this provider; null = unsupported. */
@@ -179,6 +181,7 @@ export const api = {
   companionRevoke: (id: string) => invoke<CompanionView>("companion_revoke", { id }),
   companionAllowActions: (id: string, allow: boolean) => invoke<CompanionView>("companion_allow_actions", { id, allow }),
   uninstall: (dryRun: boolean) => invoke<UninstallReport>("uninstall", { dryRun }),
+  setSigninConsent: (providerId: string, consent: boolean) => invoke<void>("set_signin_consent", { providerId, consent }),
   runningSessions: (id: string) => invoke<number[]>("running_sessions", { id }),
   launch: (id: string) => invoke<void>("launch_connection", { id }),
   diagnostics: () => invoke<DiagEvent[]>("get_diagnostics"),
