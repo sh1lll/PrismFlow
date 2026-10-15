@@ -1,6 +1,7 @@
 //! Application adapters (SPEC §4). Provider and application support stay
 //! independent: an adapter consumes a `ProviderDefinition`, never owns one.
 
+pub mod agents;
 pub mod claude_code;
 pub mod codex;
 pub mod processes;
@@ -34,5 +35,7 @@ pub struct AppDetection {
 }
 
 pub fn detect_all() -> Vec<AppDetection> {
-    vec![codex::detect(), claude_code::detect()]
+    let mut all = vec![codex::detect(), claude_code::detect()];
+    all.extend(agents::AGENTS.iter().map(agents::detect));
+    all
 }
