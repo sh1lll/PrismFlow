@@ -275,7 +275,11 @@ async fn live_local_ollama(model: &str) {
         for s in &report.stages {
             eprintln!("  {} {:<13} {:?}: {}", s.stage, s.name, s.outcome, s.detail.lines().next().unwrap_or(""));
         }
-        if !matches!(report.status, ConnectionStatus::ConnectedAndVerified | ConnectionStatus::PartiallyCompatible) {
+        // Guided apps (Claude Desktop) top out at Unverified: the app itself is not driven.
+        let ok = matches!(report.status, ConnectionStatus::ConnectedAndVerified | ConnectionStatus::PartiallyCompatible)
+            || (app == "claude_desktop" && report.status == ConnectionStatus::Unverified
+                && report.stages.iter().any(|s| s.stage == 5 && s.outcome == prismflow_lib::state::StageOutcome::Pass));
+        if !ok {
             for e in svc.diagnostics(50).iter().filter(|e| e.code.starts_with("broker.")) {
                 eprintln!("  diag {} {}", e.code, e.message);
             }
