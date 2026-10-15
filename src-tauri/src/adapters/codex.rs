@@ -113,7 +113,7 @@ pub fn profile_file(home: &Path, provider_id: &str) -> PathBuf {
 
 #[derive(Debug, thiserror::Error)]
 pub enum CodexError {
-    #[error("{0} does not offer the OpenAI Responses API, which Codex requires; it needs the compatibility gateway (not built yet)")]
+    #[error("{0} does not offer the OpenAI Responses API, which Codex requires; connect it through PrismFlow's gateway")]
     ProtocolUnsupported(String),
     #[error("{0} needs a base URL; custom providers are not supported in this build")]
     MissingBaseUrl(String),
@@ -141,6 +141,37 @@ pub fn plan_connect(
     if provider.base_url.is_empty() {
         return Err(CodexError::MissingBaseUrl(provider.display_name.into()));
     }
+    let args = vec!["credential".into(), "print".into(), "--provider".into(), provider.id.into()];
+    plan_profile(home, provider, model, provider.base_url, helper, args)
+}
+
+/// Plan a profile that reaches `provider` through PrismFlow's gateway
+/// (GATEWAY-O): Codex speaks Responses to the broker, the engine speaks the
+/// provider's own protocol upstream, and `auth.command` fetches the
+/// connection's revocable local token instead of the provider key.
+pub fn plan_connect_gateway(
+    home: &Path,
+    provider: &ProviderDefinition,
+    model: &str,
+    helper: &Path,
+    connection_id: &str,
+    broker_url: &str,
+) -> Result<EditPlan, CodexError> {
+    if provider.base_url.is_empty() {
+        return Err(CodexError::MissingBaseUrl(provider.display_name.into()));
+    }
+    let args = vec!["token".into(), "print".into(), "--connection".into(), connection_id.into()];
+    plan_profile(home, provider, model, &format!("{broker_url}/v1"), helper, args)
+}
+
+fn plan_profile(
+    home: &Path,
+    provider: &ProviderDefinition,
+    model: &str,
+    base_url: &str,
+    helper: &Path,
+    auth_args: Vec<String>,
+) -> Result<EditPlan, CodexError> {
     let file = profile_file(home, provider.id);
     if let Ok(existing) = std::fs::read_to_string(&file) {
         if !is_ours(&existing) {
@@ -160,7 +191,7 @@ pub fn plan_connect(
             vec!["model_providers".to_string(), table.clone()],
             vec![
                 ("name".to_string(), TomlVal::Str(format!("{} (via PrismFlow)", provider.display_name))),
-                ("base_url".to_string(), TomlVal::Str(provider.base_url.into())),
+                ("base_url".to_string(), TomlVal::Str(base_url.into())),
                 ("wire_api".to_string(), TomlVal::Str("responses".into())),
             ],
         ),
@@ -168,15 +199,7 @@ pub fn plan_connect(
             vec!["model_providers".to_string(), table, "auth".to_string()],
             vec![
                 ("command".to_string(), TomlVal::Str(helper.display().to_string())),
-                (
-                    "args".to_string(),
-                    TomlVal::StrArray(vec![
-                        "credential".into(),
-                        "print".into(),
-                        "--provider".into(),
-                        provider.id.into(),
-                    ]),
-                ),
+                ("args".to_string(), TomlVal::StrArray(auth_args)),
             ],
         ),
     ];
@@ -286,6 +309,21 @@ mod tests {
             plan_connect(home.path(), providers::get("custom_openai").unwrap(), "m", &helper()),
             Err(CodexError::MissingBaseUrl(_))
         ));
+    }
+
+    #[test]
+    fn gateway_profile_points_at_broker_with_token_helper() {
+        let home = tempfile::tempdir().unwrap();
+        let nim = providers::get("nvidia_nim").unwrap();
+        let plan = plan_connect_gateway(home.path(), nim, "meta/llama-3.3-70b-instruct", &helper(), "codex_cli:nvidia_nim", "http://127.0.0.1:47821").unwrap();
+        config_engine::apply(&plan).unwrap();
+        let doc: toml_edit::DocumentMut = std::fs::read_to_string(&plan.file).unwrap().parse().unwrap();
+        let p = &doc["model_providers"]["prismflow_nvidia_nim"];
+        assert_eq!(p["base_url"].as_str(), Some("http://127.0.0.1:47821/v1"));
+        assert_eq!(p["wire_api"].as_str(), Some("responses"));
+        let args: Vec<_> = p["auth"]["args"].as_array().unwrap().iter().map(|v| v.as_str().unwrap().to_string()).collect();
+        assert_eq!(args, ["token", "print", "--connection", "codex_cli:nvidia_nim"]);
+        assert!(!plan.after.contains("pft_") && !plan.after.contains("nvapi-"));
     }
 
     #[test]

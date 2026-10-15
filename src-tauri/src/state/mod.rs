@@ -48,14 +48,29 @@ pub struct VerificationReport {
     pub status: ConnectionStatus,
 }
 
+/// How the app reaches the provider (COMPATIBILITY-MATRIX §C paths).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Route {
+    /// The app talks to the provider itself (DIRECT-CONFIG).
+    #[default]
+    Direct,
+    /// Through PrismFlow's broker + translation engine (GATEWAY-A / GATEWAY-O).
+    Gateway,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ConnectionRecord {
     pub id: String,
     pub provider_id: String,
     pub app_id: String,
     pub model: String,
-    /// Codex profile name (`codex -p <profile>`).
+    /// Profile name: `codex -p <profile>`, or the settings-file stem for
+    /// `claude --settings`.
     pub profile: String,
+    /// Absent in slice-1 records, which were all direct.
+    #[serde(default)]
+    pub route: Route,
     /// The PrismFlow-owned file this connection created.
     pub managed_file: PathBuf,
     pub created_at: u64,
@@ -146,11 +161,20 @@ mod tests {
             app_id: "codex_cli".into(),
             model: "openai/gpt-oss-20b".into(),
             profile: "prismflow-openrouter".into(),
+            route: Route::Direct,
             managed_file: PathBuf::from("/tmp/x.config.toml"),
             created_at: 1,
             status: ConnectionStatus::Unverified,
             last_report: None,
         }
+    }
+
+    #[test]
+    fn slice_1_records_load_as_direct() {
+        let json = r#"[{"id":"codex_cli:openrouter","provider_id":"openrouter","app_id":"codex_cli","model":"m",
+            "profile":"prismflow-openrouter","managed_file":"/tmp/x","created_at":1,"status":"Unverified","last_report":null}]"#;
+        let records: Vec<ConnectionRecord> = serde_json::from_str(json).unwrap();
+        assert_eq!(records[0].route, Route::Direct);
     }
 
     #[test]

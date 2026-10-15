@@ -1,6 +1,7 @@
 //! Application adapters (SPEC §4). Provider and application support stay
 //! independent: an adapter consumes a `ProviderDefinition`, never owns one.
 
+pub mod claude_code;
 pub mod codex;
 
 use std::path::PathBuf;
@@ -32,5 +33,5 @@ pub struct AppDetection {
 }
 
 pub fn detect_all() -> Vec<AppDetection> {
-    vec![codex::detect()]
+    vec![codex::detect(), claude_code::detect()]
 }

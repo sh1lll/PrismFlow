@@ -180,6 +180,12 @@ impl Broker {
         *self.inner.port.lock().unwrap_or_else(|e| e.into_inner())
     }
 
+    /// The URL written into agent configs. Stable across restarts because
+    /// the production port is fixed (plan D3).
+    pub fn url_for_config(&self) -> String {
+        self.url()
+    }
+
     pub fn url(&self) -> String {
         format!("http://127.0.0.1:{}", self.port())
     }

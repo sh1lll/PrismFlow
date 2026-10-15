@@ -2,7 +2,8 @@
 //! verified only when a real request has gone through the real integration
 //! path; writing a file or reaching an endpoint is never enough.
 
-use crate::adapters::codex;
+use crate::adapters::{claude_code, codex};
+use crate::gateway::{BrokerStatus, Phase};
 use crate::credentials::{account_key, CredentialStore};
 use crate::diagnostics::{now_secs, redact_known};
 use crate::discovery::{self, ProbeError};
@@ -19,6 +20,9 @@ pub struct VerifyEnv<'a> {
     pub client: reqwest::Client,
     pub store: &'a dyn CredentialStore,
     pub codex_bin: Option<PathBuf>,
+    pub claude_bin: Option<PathBuf>,
+    /// Broker status for gateway connections; None for direct ones.
+    pub gateway: Option<BrokerStatus>,
     /// Normally the provider's base URL; tests point it at a mock server.
     pub base_url: String,
     /// Working directory for agent runs (keeps project files out of scope).
@@ -46,16 +50,25 @@ fn status_for_probe(e: &ProbeError) -> ConnectionStatus {
 /// Classify a failed agent run from its (already redacted) output.
 pub fn classify_agent_failure(output: &str) -> ConnectionStatus {
     let o = output.to_lowercase();
-    if o.contains("error loading config") {
+    if o.contains("error loading config") || o.contains("invalid settings") {
         ConnectionStatus::ConfigurationInvalid
-    } else if o.contains("401") || o.contains("unauthorized") || o.contains("invalid api key") || o.contains("no credential stored") {
+    } else if o.contains("401")
+        || o.contains("unauthorized")
+        || o.contains("invalid api key")
+        || o.contains("authentication_error")
+        || o.contains("no credential stored")
+        || o.contains("no gateway token")
+    {
         ConnectionStatus::AuthenticationFailed
     } else if o.contains("model_not_found")
         || o.contains("not a valid model")
         || o.contains("no endpoints found")
+        || o.contains("not configured for target provider")
         || (o.contains("model") && o.contains("does not exist"))
     {
         ConnectionStatus::ModelUnavailable
+    } else if o.contains("connection refused") || o.contains("unable to connect") || o.contains("gateway engine") {
+        ConnectionStatus::ProviderUnavailable
     } else {
         ConnectionStatus::RequiresAttention
     }
@@ -119,6 +132,71 @@ pub fn saw_tool_execution(jsonl: &str) -> Option<bool> {
     parsed_any.then_some(false)
 }
 
+/// Run `claude -p` against the connection's settings file. Only `plan` mode:
+/// verification never grants write or bypass permissions (matrix §E).
+/// Inherited `ANTHROPIC_*` / `CLAUDE_CODE_*` variables are removed so the
+/// run sees exactly what the settings file configures.
+async fn run_claude(bin: &Path, settings: &Path, workdir: &Path, prompt: &str, timeout: Duration) -> Result<(bool, String), String> {
+    let mut cmd = tokio::process::Command::new(bin);
+    cmd.arg("-p")
+        .arg("--settings").arg(settings)
+        .args(["--permission-mode", "plan", "--output-format", "stream-json", "--verbose", "--no-session-persistence"])
+        .arg(prompt)
+        .current_dir(workdir)
+        .env("PATH", claude_code::child_path(bin))
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true);
+    for (k, _) in std::env::vars_os() {
+        let k = k.to_string_lossy();
+        if k.starts_with("ANTHROPIC_") || k.starts_with("CLAUDE_CODE_") {
+            cmd.env_remove(k.as_ref());
+        }
+    }
+    let child = cmd.spawn().map_err(|e| format!("could not start claude: {e}"))?;
+    match tokio::time::timeout(timeout, child.wait_with_output()).await {
+        Err(_) => Err(format!("claude did not finish within {}s", timeout.as_secs())),
+        Ok(Err(e)) => Err(format!("claude failed to run: {e}")),
+        Ok(Ok(out)) => Ok((
+            out.status.success(),
+            format!("{}\n{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr)),
+        )),
+    }
+}
+
+/// The final `result` event of a stream-json run: (is_error, text).
+pub fn claude_result(stream: &str) -> Option<(bool, String)> {
+    stream.lines().rev().find_map(|l| {
+        let v: serde_json::Value = serde_json::from_str(l).ok()?;
+        (v["type"] == "result").then(|| {
+            (v["is_error"].as_bool().unwrap_or(true), v["result"].as_str().unwrap_or_default().to_string())
+        })
+    })
+}
+
+/// True when the stream shows a `Read` tool_use whose tool_result carries
+/// the probe token; Some(false) when it parsed but no round-trip happened.
+pub fn claude_saw_tool_round_trip(stream: &str) -> Option<bool> {
+    let mut parsed_any = false;
+    let mut read_ids = Vec::new();
+    for line in stream.lines() {
+        let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else { continue };
+        parsed_any = true;
+        let Some(content) = v["message"]["content"].as_array() else { continue };
+        for c in content {
+            match c["type"].as_str() {
+                Some("tool_use") if c["name"] == "Read" => read_ids.push(c["id"].clone()),
+                Some("tool_result") if read_ids.contains(&c["tool_use_id"]) && c["content"].to_string().contains(TOOL_TOKEN) => {
+                    return Some(true)
+                }
+                _ => {}
+            }
+        }
+    }
+    parsed_any.then_some(false)
+}
+
 pub async fn verify(
     env: &VerifyEnv<'_>,
     provider: &ProviderDefinition,
@@ -137,7 +215,12 @@ async fn run_stages(
     run: &mut Run,
 ) -> ConnectionStatus {
     // Stage 1 — configuration validation.
-    let stage1 = check_config(&record.managed_file, env.codex_bin.as_deref());
+    let is_claude = record.app_id == claude_code::APP_ID;
+    let stage1 = if is_claude {
+        check_claude_config(&record.managed_file, env.claude_bin.as_deref())
+    } else {
+        check_config(&record.managed_file, env.codex_bin.as_deref())
+    };
     match stage1 {
         Ok(detail) => run.push(1, "Configuration", StageOutcome::Pass, detail),
         Err(detail) => {
@@ -205,6 +288,25 @@ async fn run_stages(
         }
     }
 
+    // Gateway connections also need the local broker + engine up.
+    if let Some(g) = &env.gateway {
+        if g.phase == Phase::Ready {
+            run.push(3, "Gateway", StageOutcome::Pass, format!(
+                "PrismFlow's gateway is ready at {} ({}, loopback only).", g.url, g.engine
+            ));
+        } else {
+            run.push(3, "Gateway", StageOutcome::Fail, format!(
+                "PrismFlow's gateway is {:?}. {}", g.phase,
+                g.detail.clone().unwrap_or_else(|| "Restart it from the Overview page.".into())
+            ));
+            return ConnectionStatus::RequiresAttention;
+        }
+    }
+
+    if is_claude {
+        return claude_agent_stages(env, record, run, &secrets).await;
+    }
+
     // Stage 5 — end-to-end request through Codex itself.
     let Some(bin) = env.codex_bin.as_deref() else {
         run.push(5, "End-to-end", StageOutcome::Fail, "Codex CLI is not installed.");
@@ -249,6 +351,92 @@ async fn run_stages(
             ConnectionStatus::PartiallyCompatible
         }
     }
+}
+
+async fn claude_agent_stages(env: &VerifyEnv<'_>, record: &ConnectionRecord, run: &mut Run, secrets: &[&str]) -> ConnectionStatus {
+    let Some(bin) = env.claude_bin.as_deref() else {
+        run.push(5, "End-to-end", StageOutcome::Fail, "Claude Code is not installed.");
+        return ConnectionStatus::RequiresAttention;
+    };
+    if let Err(e) = std::fs::create_dir_all(&env.workdir) {
+        run.push(5, "End-to-end", StageOutcome::Fail, format!("Cannot create {}: {e}", env.workdir.display()));
+        return ConnectionStatus::RequiresAttention;
+    }
+
+    // Stage 5 — a real Claude Code turn through the gateway.
+    let prompt = format!("Reply with exactly {E2E_TOKEN} and nothing else.");
+    match run_claude(bin, &record.managed_file, &env.workdir, &prompt, env.agent_timeout).await {
+        Ok((_, out)) => match claude_result(&out) {
+            Some((false, text)) if text.contains(E2E_TOKEN) => run.push(5, "End-to-end", StageOutcome::Pass,
+                format!("Claude Code answered through PrismFlow's gateway with {}.", record.model)),
+            _ => {
+                let shown = redact_known(&tail(&out, 6), secrets);
+                run.push(5, "End-to-end", StageOutcome::Fail, format!("Claude Code did not return the expected reply:\n{shown}"));
+                return classify_agent_failure(&shown);
+            }
+        },
+        Err(e) => {
+            run.push(5, "End-to-end", StageOutcome::Fail, e);
+            return ConnectionStatus::ProviderUnavailable;
+        }
+    }
+
+    // Stage 6 — a real tool call (Read is permitted in plan mode).
+    let probe = env.workdir.join("prismflow-probe.txt");
+    if let Err(e) = std::fs::write(&probe, format!("{TOOL_TOKEN}\n")) {
+        run.push(6, "Tool calling", StageOutcome::Fail, format!("Cannot write the probe file: {e}"));
+        return ConnectionStatus::PartiallyCompatible;
+    }
+    let prompt = format!(
+        "Use the Read tool to read {} and reply with its exact contents. PRISMFLOW_TOOL_PROBE",
+        probe.display()
+    );
+    match run_claude(bin, &record.managed_file, &env.workdir, &prompt, env.agent_timeout).await {
+        Ok((_, out)) => match claude_saw_tool_round_trip(&out) {
+            Some(true) => {
+                run.push(6, "Tool calling", StageOutcome::Pass, "Claude Code completed a Read tool call with this model.");
+                ConnectionStatus::ConnectedAndVerified
+            }
+            Some(false) => {
+                run.push(6, "Tool calling", StageOutcome::Fail,
+                    "The model answered but did not complete a tool call. Chat works; agent tasks may not. Prefer a tool-capable model.");
+                ConnectionStatus::PartiallyCompatible
+            }
+            None => {
+                run.push(6, "Tool calling", StageOutcome::Skipped,
+                    "Could not read Claude Code's event stream, so tool calling is unverified.");
+                ConnectionStatus::PartiallyCompatible
+            }
+        },
+        Err(e) => {
+            run.push(6, "Tool calling", StageOutcome::Fail, e);
+            ConnectionStatus::PartiallyCompatible
+        }
+    }
+}
+
+fn check_claude_config(file: &Path, claude_bin: Option<&Path>) -> Result<String, String> {
+    let content = std::fs::read_to_string(file)
+        .map_err(|_| format!("{} is missing. Reconnect to recreate it.", file.display()))?;
+    if !claude_code::is_ours(&content) {
+        return Err(format!("{} is no longer PrismFlow-managed (or is not valid JSON).", file.display()));
+    }
+    let v: serde_json::Value = serde_json::from_str(&content).map_err(|e| e.to_string())?;
+    let helper = v["apiKeyHelper"].as_str().unwrap_or_default();
+    // The helper command starts with the single-quoted binary path.
+    let bin = helper.strip_prefix('\'').and_then(|r| r.split_once("' ")).map(|(p, _)| p.replace(r"'\''", "'"));
+    match bin {
+        Some(b) if Path::new(&b).is_file() => {}
+        Some(b) => return Err(format!("The token helper {b} no longer exists (was PrismFlow moved?). Reconnect to repair.")),
+        None => return Err("The settings file has no PrismFlow token helper.".into()),
+    }
+    if v["env"]["ANTHROPIC_BASE_URL"].as_str().is_none_or(|u| !u.starts_with("http://127.0.0.1:")) {
+        return Err("The settings file does not point at PrismFlow's local gateway.".into());
+    }
+    if claude_bin.is_none() {
+        return Err("Claude Code is not installed.".into());
+    }
+    Ok("Settings file is valid, PrismFlow-managed, and its token helper exists.".into())
 }
 
 fn check_config(file: &Path, codex_bin: Option<&Path>) -> Result<String, String> {
@@ -338,6 +526,7 @@ esac"#;
             app_id: codex::APP_ID.into(),
             model: "a/model".into(),
             profile: codex::profile_name("openrouter"),
+            route: crate::state::Route::Direct,
             managed_file: plan.file,
             created_at: 0,
             status: ConnectionStatus::Unverified,
@@ -352,6 +541,8 @@ esac"#;
             client: discovery::client(),
             store: &f.store,
             codex_bin: codex_body.map(|b| fake_codex(bin_dir.path(), b)),
+            claude_bin: None,
+            gateway: None,
             base_url: f.server.uri(),
             workdir: std::env::temp_dir(),
             agent_timeout: Duration::from_secs(10),
@@ -424,6 +615,101 @@ esac"#;
         let r = run(&f, Some(GOOD_CODEX)).await;
         assert_eq!(r.status, ConnectionStatus::ConfigurationInvalid);
         assert_eq!(r.stages.len(), 1);
+    }
+
+    // ---- Claude Code (gateway route) -------------------------------------
+
+    const GOOD_CLAUDE: &str = r#"case "$*" in
+  *PRISMFLOW_TOOL_PROBE*)
+    echo '{"type":"system","subtype":"init"}'
+    echo '{"type":"assistant","message":{"content":[{"type":"tool_use","id":"t1","name":"Read","input":{"file_path":"p"}}]}}'
+    echo '{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"t1","content":"1 PRISMFLOW_TOOL_OK"}]}}'
+    echo '{"type":"result","subtype":"success","is_error":false,"result":"PRISMFLOW_TOOL_OK"}' ;;
+  *--permission-mode\ plan*)
+    echo '{"type":"result","subtype":"success","is_error":false,"result":"PRISMFLOW_OK"}' ;;
+  *) echo "verification must use plan mode: $*" >&2; exit 9 ;;
+esac"#;
+
+    fn gateway_status(phase: Phase) -> BrokerStatus {
+        BrokerStatus {
+            phase, url: "http://127.0.0.1:47821".into(), port: 47821,
+            engine: "@the-next-ai/ai-gateway 1.0.21".into(), node: Some("v22".into()),
+            detail: (phase != Phase::Ready).then(|| "Node.js 20 or newer is required".into()),
+            restarts: 0, requests: 0, rejected: 0, upstream_errors: 0, connections: 1, upstreams: vec!["nvidia_nim".into()],
+        }
+    }
+
+    async fn run_claude_fixture(claude_body: &str, phase: Phase) -> VerificationReport {
+        let home = tempfile::tempdir().unwrap();
+        let helper = fake_codex(home.path(), "echo helper");
+        let nim = providers::get("nvidia_nim").unwrap();
+        let plan = claude_code::plan_connect(home.path(), nim, "meta/llama-3.3-70b-instruct", &helper,
+            "claude_code:nvidia_nim", "http://127.0.0.1:47821").unwrap();
+        config_engine::apply(&plan).unwrap();
+        let server = MockServer::start().await;
+        Mock::given(method("GET")).and(path("/models"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({"data":[{"id":"meta/llama-3.3-70b-instruct"}]})))
+            .mount(&server).await;
+        let store = InMemoryStore::new();
+        store.set(&account_key("nvidia_nim", "default"), "nvapi-secretsecretsecret").unwrap();
+        let bin_dir = tempfile::tempdir().unwrap();
+        let claude = bin_dir.path().join("claude");
+        std::fs::write(&claude, format!("#!/bin/sh\n{claude_body}\n")).unwrap();
+        std::fs::set_permissions(&claude, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let record = ConnectionRecord {
+            id: "claude_code:nvidia_nim".into(), provider_id: "nvidia_nim".into(), app_id: claude_code::APP_ID.into(),
+            model: "meta/llama-3.3-70b-instruct".into(), profile: claude_code::profile_name("nvidia_nim"),
+            route: crate::state::Route::Gateway, managed_file: plan.file, created_at: 0,
+            status: ConnectionStatus::Unverified, last_report: None,
+        };
+        let work = tempfile::tempdir().unwrap();
+        let env = VerifyEnv {
+            client: discovery::client(), store: &store, codex_bin: None, claude_bin: Some(claude),
+            gateway: Some(gateway_status(phase)), base_url: server.uri(),
+            workdir: work.path().join("verify"), agent_timeout: Duration::from_secs(10),
+        };
+        verify(&env, nim, &record).await
+    }
+
+    #[tokio::test]
+    async fn claude_code_all_stages_pass_in_plan_mode() {
+        let r = run_claude_fixture(GOOD_CLAUDE, Phase::Ready).await;
+        assert_eq!(r.status, ConnectionStatus::ConnectedAndVerified, "{:#?}", r.stages);
+        assert!(r.stages.iter().any(|s| s.name == "Gateway" && s.outcome == StageOutcome::Pass));
+        assert!(r.stages.iter().all(|s| s.outcome != StageOutcome::Fail));
+    }
+
+    #[tokio::test]
+    async fn claude_code_stops_when_gateway_is_down() {
+        let r = run_claude_fixture(GOOD_CLAUDE, Phase::Failed).await;
+        assert_eq!(r.status, ConnectionStatus::RequiresAttention);
+        let last = r.stages.last().unwrap();
+        assert_eq!(last.name, "Gateway");
+        assert!(last.detail.contains("Node.js"));
+    }
+
+    #[tokio::test]
+    async fn claude_code_without_tool_round_trip_is_partial() {
+        let body = r#"echo '{"type":"result","subtype":"success","is_error":false,"result":"PRISMFLOW_OK"}'"#;
+        let r = run_claude_fixture(body, Phase::Ready).await;
+        assert_eq!(r.status, ConnectionStatus::PartiallyCompatible, "{:#?}", r.stages);
+    }
+
+    #[tokio::test]
+    async fn claude_code_auth_failure_is_classified_and_redacted() {
+        let body = r#"echo '{"type":"result","subtype":"success","is_error":true,"result":"API Error: 401 {"type":"error","error":{"type":"authentication_error","message":"PrismFlow broker: revoked local token nvapi-secretsecretsecret"}}"}'"#;
+        let r = run_claude_fixture(body, Phase::Ready).await;
+        assert_eq!(r.status, ConnectionStatus::AuthenticationFailed, "{:#?}", r.stages);
+        assert!(!r.stages.last().unwrap().detail.contains("secretsecret"));
+    }
+
+    #[test]
+    fn stream_parsers_need_matching_tool_ids() {
+        let ok = "{\"message\":{\"content\":[{\"type\":\"tool_use\",\"id\":\"a\",\"name\":\"Read\"}]}}\n{\"message\":{\"content\":[{\"type\":\"tool_result\",\"tool_use_id\":\"a\",\"content\":\"PRISMFLOW_TOOL_OK\"}]}}";
+        assert_eq!(claude_saw_tool_round_trip(ok), Some(true));
+        let forged = "{\"message\":{\"content\":[{\"type\":\"text\",\"text\":\"PRISMFLOW_TOOL_OK\"}]}}";
+        assert_eq!(claude_saw_tool_round_trip(forged), Some(false), "the model echoing the token is not a tool call");
+        assert_eq!(claude_result("{\"type\":\"result\",\"is_error\":false,\"result\":\"x\"}"), Some((false, "x".into())));
     }
 
     #[test]
