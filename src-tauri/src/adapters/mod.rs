@@ -8,6 +8,7 @@ pub mod jsonfile;
 pub mod vscode;
 pub mod claude_code;
 pub mod claude_desktop;
+pub mod editors;
 pub mod codex;
 pub mod processes;
 
@@ -72,6 +73,7 @@ pub struct AppDetection {
 
 pub fn detect_all() -> Vec<AppDetection> {
     let mut all = vec![codex::detect(), codex::detect_desktop(), claude_code::detect(), claude_desktop::detect(), jetbrains::detect(), vscode::detect(vscode::CLAUDE_APP_ID), vscode::detect(vscode::CHAT_APP_ID)];
+    all.extend(editors::ALL.iter().map(|id| editors::detect(id)));
     all.extend(agents::AGENTS.iter().map(agents::detect));
     all
 }

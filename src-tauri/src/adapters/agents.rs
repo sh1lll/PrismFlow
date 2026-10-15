@@ -23,6 +23,12 @@ pub enum Kind {
     Dsh,
     Grok,
     Muse,
+    Qwen,
+    Goose,
+    Crush,
+    Droid,
+    ContinueCli,
+    CopilotCli,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -47,6 +53,13 @@ pub const AGENTS: &[AgentSpec] = &[
     AgentSpec { id: "dsh", display_name: "DeepSeek Harness", binary: "dsh", kind: Kind::Dsh, verified_version: "0.2.0-rc.2", tools: true },
     AgentSpec { id: "grok", display_name: "Grok Build", binary: "grok", kind: Kind::Grok, verified_version: "1.0.52", tools: true },
     AgentSpec { id: "muse", display_name: "Muse Code", binary: "muse", kind: Kind::Muse, verified_version: "1.4.8", tools: true },
+    // Verified live 2026-10-15 through the broker (nonce read with a tool), except Copilot CLI (see its notes).
+    AgentSpec { id: "qwen", display_name: "Qwen Code", binary: "qwen", kind: Kind::Qwen, verified_version: "0.25.2", tools: true },
+    AgentSpec { id: "goose", display_name: "Goose", binary: "goose", kind: Kind::Goose, verified_version: "1.54.0", tools: true },
+    AgentSpec { id: "crush", display_name: "Crush", binary: "crush", kind: Kind::Crush, verified_version: "0.98.1", tools: true },
+    AgentSpec { id: "droid", display_name: "Factory Droid", binary: "droid", kind: Kind::Droid, verified_version: "0.242.1", tools: true },
+    AgentSpec { id: "continue_cli", display_name: "Continue CLI", binary: "cn", kind: Kind::ContinueCli, verified_version: "1.5.47", tools: true },
+    AgentSpec { id: "copilot_cli", display_name: "GitHub Copilot CLI", binary: "copilot", kind: Kind::CopilotCli, verified_version: "1.0.98", tools: true },
 ];
 
 pub fn spec(app_id: &str) -> Option<&'static AgentSpec> {
@@ -273,6 +286,67 @@ pub fn plan_files(
             ));
             script.push_str(&format!("exec {bin} {conn} \"$@\"\n"));
         }
+        Kind::Qwen => {
+            // OpenAI-compatible mode of Qwen Code (verified 0.25.2).
+            script.push_str(&format!("OPENAI_API_KEY=\"$({token_cmd})\"\nexport OPENAI_API_KEY\n"));
+            script.push_str(&format!("export OPENAI_BASE_URL={} OPENAI_MODEL={}\n", q(&base), q(model)));
+            script.push_str(&format!("exec {bin} --auth-type openai \"$@\"\n"));
+        }
+        Kind::Goose => {
+            // Goose's OpenAI provider, env only; no keyring, telemetry off (verified 1.54.0).
+            script.push_str(&format!("OPENAI_API_KEY=\"$({token_cmd})\"\nexport OPENAI_API_KEY\n"));
+            script.push_str(&format!("export GOOSE_PROVIDER=openai OPENAI_HOST={} OPENAI_BASE_PATH=v1/chat/completions GOOSE_MODEL={}\n", q(broker_url), q(model)));
+            script.push_str("export GOOSE_DISABLE_KEYRING=1 GOOSE_TELEMETRY_OFF=1\n");
+            script.push_str(&format!("if [ \"$1\" = --prismflow-oneshot ]; then shift; export GOOSE_MODE=auto; exec {bin} run --no-session --no-profile --with-builtin developer -t \"$@\"; fi\n"));
+            script.push_str(&format!("exec {bin} \"$@\"\n"));
+        }
+        Kind::Crush => {
+            // A config folder of its own: openai-compat provider, key from the environment (verified 0.98.1).
+            let cfg = serde_json::json!({
+                "options": { "disable_metrics": true, "disable_provider_auto_update": true, "disable_default_providers": true },
+                "providers": { "prismflow": { "name": "PrismFlow", "type": "openai-compat", "base_url": base, "api_key": "$PRISMFLOW_TOKEN",
+                    "models": [{ "id": model, "name": model, "context_window": 32768, "default_max_tokens": 4096 }] } },
+                "models": { "large": { "provider": "prismflow", "model": model }, "small": { "provider": "prismflow", "model": model } }
+            });
+            files.push((dir.join("crush-xdg/crush/crush.json"), serde_json::to_string_pretty(&cfg).unwrap()));
+            script.push_str(&format!("PRISMFLOW_TOKEN=\"$({token_cmd})\"\nexport PRISMFLOW_TOKEN\n"));
+            script.push_str(&format!("export XDG_CONFIG_HOME={} DO_NOT_TRACK=1 CRUSH_DISABLE_PROVIDER_AUTO_UPDATE=1\n", q(&dir.join("crush-xdg").display().to_string())));
+            script.push_str(&format!("if [ \"$1\" = --prismflow-oneshot ]; then shift; exec {bin} run -q -m {} \"$@\"; fi\n", q(&format!("prismflow/{model}"))));
+            script.push_str(&format!("exec {bin} \"$@\"\n"));
+        }
+        Kind::Droid => {
+            // Droid takes a per-process settings file; its key field must hold the
+            // value, so the script writes the local token there at launch (0600).
+            let settings = dir.join("droid-settings.json");
+            script.push_str(&format!("TOKEN=\"$({token_cmd})\"\n"));
+            script.push_str("umask 077\n");
+            script.push_str(&format!(
+                "printf '{{\"customModels\":[{{\"model\":%s,\"displayName\":\"PrismFlow\",\"baseUrl\":%s,\"apiKey\":\"%s\",\"provider\":\"generic-chat-completion-api\",\"maxOutputTokens\":4096}}]}}' {} {} \"$TOKEN\" > {}\n",
+                q(&serde_json::to_string(model).unwrap()), q(&serde_json::to_string(&base).unwrap()), q(&settings.display().to_string())
+            ));
+            script.push_str("export FACTORY_DISABLE_KEYRING=1 FACTORY_DROID_AUTO_UPDATE_ENABLED=false FACTORY_OTEL_ENABLED=false\n");
+            let s = q(&settings.display().to_string());
+            script.push_str(&format!("if [ \"$1\" = --prismflow-oneshot ]; then shift; export FACTORY_AIRGAP_ENABLED=1; exec {bin} exec --settings {s} -m custom:PrismFlow-0 \"$@\"; fi\n"));
+            script.push_str(&format!("if [ \"$1\" = exec ]; then shift; exec {bin} exec --settings {s} \"$@\"; fi\n"));
+            script.push_str(&format!("exec {bin} --settings {s} \"$@\"\n"));
+        }
+        Kind::ContinueCli => {
+            // Continue's config with the key from the environment (verified cn 1.5.47).
+            let yaml = format!(
+                "name: PrismFlow\nversion: 1.0.0\nschema: v1\nmodels:\n  - name: {m}\n    provider: openai\n    model: {m}\n    apiBase: {b}\n    apiKey: ${{{{ secrets.PRISMFLOW_TOKEN }}}}\n    roles: [chat, edit, apply]\n    capabilities: [tool_use]\n    defaultCompletionOptions: {{ contextLength: 32768, maxTokens: 4096 }}\n",
+                m = serde_json::to_string(model).unwrap(), b = serde_json::to_string(&base).unwrap()
+            );
+            files.push((dir.join("continue-config.yaml"), yaml));
+            script.push_str(&format!("PRISMFLOW_TOKEN=\"$({token_cmd})\"\nexport PRISMFLOW_TOKEN\n"));
+            script.push_str(&format!("export CONTINUE_GLOBAL_DIR={} CONTINUE_CLI_ENABLE_TELEMETRY=0 CONTINUE_METRICS_ENABLED=0\n", q(&dir.join("continue-home").display().to_string())));
+            script.push_str(&format!("exec {bin} --config {} \"$@\"\n", q(&dir.join("continue-config.yaml").display().to_string())));
+        }
+        Kind::CopilotCli => {
+            // Copilot CLI's documented bring-your-own-key mode; no GitHub sign-in needed.
+            script.push_str(&format!("COPILOT_PROVIDER_API_KEY=\"$({token_cmd})\"\nexport COPILOT_PROVIDER_API_KEY\n"));
+            script.push_str(&format!("export COPILOT_PROVIDER_BASE_URL={} COPILOT_PROVIDER_TYPE=openai COPILOT_MODEL={} COPILOT_OFFLINE=true\n", q(&base), q(model)));
+            script.push_str(&format!("exec {bin} \"$@\"\n"));
+        }
     }
     files.insert(0, (launch_script(dir), script));
     files
@@ -289,6 +363,10 @@ pub fn oneshot_args(spec: &AgentSpec, prompt: &str) -> Vec<String> {
         Kind::OpenCode => vec!["run".into(), p],
         Kind::Dsh => vec!["--prismflow-oneshot".into(), p],
         Kind::Grok => vec!["--always-approve".into(), "-p".into(), p],
+        Kind::Qwen => vec!["--bare".into(), "--yolo".into(), "-p".into(), p],
+        Kind::Goose | Kind::Crush | Kind::Droid => vec!["--prismflow-oneshot".into(), p],
+        Kind::ContinueCli => vec!["-p".into(), p],
+        Kind::CopilotCli => vec!["--allow-all-tools".into(), "-p".into(), p],
         Kind::Muse => vec!["exec".into(), "--trust-workspace".into(), "--approval-mode".into(), "never".into(), "--approval-judge".into(), "off".into(),
             "--disable-web-tools".into(), "--disable-reminders".into(), p],
     }

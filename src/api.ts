@@ -35,13 +35,13 @@ export interface UrlCheck {
   warnings: string[];
 }
 
-export type AppId = "codex_cli" | "codex_desktop" | "claude_code" | "claude_desktop" | "jetbrains" | "vscode_claude" | "vscode_chat" | "aider" | "cline" | "pi" | "hermes" | "opencode" | "dsh" | "grok" | "muse";
-export const APP_IDS: AppId[] = ["codex_cli", "codex_desktop", "claude_code", "claude_desktop", "jetbrains", "vscode_claude", "vscode_chat", "aider", "cline", "pi", "hermes", "opencode", "dsh", "grok", "muse"];
-export const TERMINAL_AGENTS: AppId[] = ["aider", "cline", "pi", "hermes", "opencode", "dsh", "grok", "muse"];
+export type AppId = "codex_cli" | "codex_desktop" | "claude_code" | "claude_desktop" | "jetbrains" | "vscode_claude" | "vscode_chat" | "aider" | "cline" | "pi" | "hermes" | "opencode" | "dsh" | "grok" | "muse" | "qwen" | "goose" | "crush" | "droid" | "continue_cli" | "copilot_cli" | "roo_code" | "kilo_code" | "zed" | "continue_ide";
+export const APP_IDS: AppId[] = ["codex_cli", "codex_desktop", "claude_code", "claude_desktop", "jetbrains", "vscode_claude", "vscode_chat", "aider", "cline", "pi", "hermes", "roo_code", "kilo_code", "zed", "continue_ide", "opencode", "dsh", "grok", "muse", "qwen", "goose", "crush", "droid", "continue_cli", "copilot_cli"];
+export const TERMINAL_AGENTS: AppId[] = ["aider", "cline", "pi", "hermes", "opencode", "dsh", "grok", "muse", "qwen", "goose", "crush", "droid", "continue_cli", "copilot_cli"];
 export type Route = "direct" | "gateway";
 
 export const APP_NAME: Record<string, string> = {
-  codex_cli: "Codex CLI", codex_desktop: "Codex app & VS Code", claude_code: "Claude Code CLI", claude_desktop: "Claude Desktop", jetbrains: "JetBrains IDEs", vscode_claude: "Claude Code for VS Code", vscode_chat: "VS Code Chat", aider: "Aider", cline: "Cline CLI", pi: "Pi", hermes: "Hermes Agent", playground: "Try a model", opencode: "OpenCode", dsh: "DeepSeek Harness", grok: "Grok Build", muse: "Muse Code",
+  codex_cli: "Codex CLI", codex_desktop: "Codex app & VS Code", claude_code: "Claude Code CLI", claude_desktop: "Claude Desktop", jetbrains: "JetBrains IDEs", vscode_claude: "Claude Code for VS Code", vscode_chat: "VS Code Chat", aider: "Aider", cline: "Cline CLI", pi: "Pi", hermes: "Hermes Agent", playground: "Try a model", opencode: "OpenCode", dsh: "DeepSeek Harness", grok: "Grok Build", muse: "Muse Code", qwen: "Qwen Code", goose: "Goose", crush: "Crush", droid: "Factory Droid", continue_cli: "Continue CLI", copilot_cli: "GitHub Copilot CLI", roo_code: "Roo Code", kilo_code: "Kilo Code", zed: "Zed", continue_ide: "Continue (VS Code / JetBrains)",
 };
 
 export const ROUTE_LABEL: Record<Route, string> = {
@@ -244,6 +244,7 @@ export const api = {
   guidedSetup: (id: string) => invoke<{ gateway_url: string; auth_scheme: string; token: string; model: string; steps: string[] }>("guided_setup", { id }),
   companionState: () => invoke<CompanionView>("companion_state"),
   keychainWaiting: () => invoke<boolean>("keychain_waiting"),
+  editorGuide: (id: string) => invoke<string[]>("editor_guide", { id }),
   setProviderUrl: (providerId: string, url: string) => invoke<string>("set_provider_url", { providerId, url }),
   ollama: () => invoke<any>("ollama_view"),
   ollamaPull: (name: string) => invoke<void>("ollama_pull", { name }),

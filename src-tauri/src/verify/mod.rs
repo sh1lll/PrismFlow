@@ -264,6 +264,8 @@ async fn run_stages(
             .filter(|d| d.join("settings.json").is_file())
             .map(|_| "VS Code points the Claude Code extension at PrismFlow.".to_string())
             .ok_or_else(|| format!("{} no longer points the Claude Code extension at PrismFlow.", crate::adapters::vscode::settings_file().display()))
+    } else if crate::adapters::editors::ALL.contains(&record.app_id.as_str()) {
+        crate::adapters::editors::check(&record.app_id, &record.id)
     } else if record.app_id == crate::adapters::vscode::CHAT_APP_ID {
         crate::adapters::vscode::chat_model(&record.id)
             .map(|_| "VS Code Chat has the PrismFlow model.".to_string())
@@ -384,7 +386,17 @@ async fn run_stages(
         return claude_agent_stages(env, provider, &r, run, &secrets).await;
     }
     if record.app_id == crate::adapters::vscode::CHAT_APP_ID {
-        return vscode_chat_stages(env, record, run, &secrets).await;
+        return vscode_chat_stages(env, record, run, &secrets, None).await;
+    }
+    if crate::adapters::editors::ALL.contains(&record.app_id.as_str()) {
+        // The editor sends ordinary requests with this key; send the same.
+        let Some(gw) = env.gateway.as_ref().filter(|g| !g.url.is_empty()) else {
+            run.push(5, "End-to-end", StageOutcome::Fail, "PrismFlow's background service isn't running.");
+            return ConnectionStatus::RequiresAttention;
+        };
+        let token = env.store.get(&crate::gateway::tokens::account(&record.id)).unwrap_or_default();
+        let model = serde_json::json!({ "id": record.model, "url": format!("{}/v1/messages", gw.url), "requestHeaders": { "x-api-key": token } });
+        return vscode_chat_stages(env, record, run, &secrets, Some(model)).await;
     }
 
     // Stage 5 — end-to-end request through Codex itself.
@@ -700,9 +712,9 @@ async fn terminal_agent_stages(
 }
 
 /// VS Code Chat: send the requests VS Code sends, to the URL with the key it has.
-async fn vscode_chat_stages(env: &VerifyEnv<'_>, record: &ConnectionRecord, run: &mut Run, secrets: &[&str]) -> ConnectionStatus {
+async fn vscode_chat_stages(env: &VerifyEnv<'_>, record: &ConnectionRecord, run: &mut Run, secrets: &[&str], given: Option<serde_json::Value>) -> ConnectionStatus {
     use crate::adapters::vscode;
-    let Some(model) = vscode::chat_model(&record.id) else {
+    let Some(model) = given.or_else(|| vscode::chat_model(&record.id)) else {
         run.push(5, "End-to-end", StageOutcome::Fail, "The PrismFlow model is missing from VS Code Chat. Connect again.");
         return ConnectionStatus::ConfigurationInvalid;
     };

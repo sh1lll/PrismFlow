@@ -218,12 +218,13 @@ function ConnectionCard({ c, providers, onChange }: { c: Connection; providers: 
         </details>
       )}
       {c.app_id === "claude_desktop" && <GuidedSetup id={c.id} />}
+      {(c.app_id === "zed" || c.app_id === "continue_ide") && <EditorGuide id={c.id} />}
       {c.route === "gateway" && <RoutingPanel c={c} providers={providers} onSaved={onChange} />}
       <div className="row mt">
         <button className="primary" disabled={busy !== ""} onClick={() => run("verify", () => api.verify(c.id))}>
           {busy === "verify" ? "Testing… (can take a few minutes)" : "Test"}
         </button>
-        {!["jetbrains", "vscode_claude", "vscode_chat"].includes(c.app_id) && <button className="ghost" disabled={busy !== ""} onClick={() => run("launch", () => api.launch(c.id), `Opened ${app}.`)}>{desktop ? "Open app" : "Open in Terminal"}</button>}
+        {!["jetbrains", "vscode_claude", "vscode_chat", "roo_code", "kilo_code", "zed", "continue_ide"].includes(c.app_id) && <button className="ghost" disabled={busy !== ""} onClick={() => run("launch", () => api.launch(c.id), `Opened ${app}.`)}>{desktop ? "Open app" : "Open in Terminal"}</button>}
         <button className="danger" disabled={busy !== ""}
           onClick={() => { if (confirm(`Disconnect ${app}? PrismFlow removes only its own settings.`)) run("disconnect", () => api.disconnect(c.id)); }}>
           Disconnect
@@ -283,6 +284,18 @@ function GuidedSetup({ id }: { id: string }) {
         </div>
       )}
       {error && <div className="err small mt">{error}</div>}
+    </details>
+  );
+}
+
+/** Zed / Continue: the bit you add by hand (includes this connection's local key). */
+function EditorGuide({ id }: { id: string }) {
+  const [lines, setLines] = useState<string[] | null>(null);
+  return (
+    <details className="mt" onToggle={(e) => { if ((e.target as HTMLDetailsElement).open && !lines) api.editorGuide(id).then(setLines).catch(() => setLines([])); }}>
+      <summary className="small">Finish in the app</summary>
+      {(lines ?? []).map((l, i) => l.includes("\n") || l.startsWith("pft_") ? <pre key={i} className="selectable">{l}</pre> : <div key={i} className="small mt-s">{l}</div>)}
+      <div className="small muted mt-s">This key only works on this computer and stops working when you disconnect.</div>
     </details>
   );
 }

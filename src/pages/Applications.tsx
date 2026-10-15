@@ -47,6 +47,14 @@ export default function Applications() {
           )}
         </div>
       ))}
+      <details className="card">
+        <summary className="small">Apps that can't use PrismFlow</summary>
+        <div className="small mt-s"><b>Cursor</b> <span className="muted">sends your requests through Cursor's own servers, which can't reach your computer.</span></div>
+        <div className="small mt-s"><b>Warp</b> <span className="muted">refuses AI addresses on your own computer.</span></div>
+        <div className="small mt-s"><b>Windsurf</b> <span className="muted">has no setting for your own AI address.</span></div>
+        <div className="small mt-s"><b>Gemini CLI</b> <span className="muted">only speaks Google's own format, which PrismFlow doesn't offer yet.</span></div>
+        <div className="small muted mt-s">You can still share MCP servers with Cursor and Windsurf on the Tools page.</div>
+      </details>
     </div>
   );
 }

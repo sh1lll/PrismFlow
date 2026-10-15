@@ -233,6 +233,12 @@ async fn set_provider_url(svc: State<'_, Arc<Service>>, provider_id: String, url
 }
 
 #[tauri::command]
+async fn editor_guide(svc: State<'_, Arc<Service>>, id: String) -> Cmd<Vec<String>> {
+    let s = svc.inner().clone();
+    blocking(move || s.editor_guide(&id)).await?
+}
+
+#[tauri::command]
 fn autostart_get(app: tauri::AppHandle) -> bool {
     use tauri_plugin_autostart::ManagerExt;
     app.autolaunch().is_enabled().unwrap_or(false)
@@ -810,6 +816,7 @@ pub fn run() {
         .manage(BotState { bots: bots::Bots::default(), dir: dir.clone() })
         .invoke_handler(tauri::generate_handler![
             keychain_waiting,
+            editor_guide,
             set_provider_url,
             ollama_view,
             ollama_pull,

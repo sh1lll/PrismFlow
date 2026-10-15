@@ -139,6 +139,27 @@ impl Drop for RecordOnEnd {
     }
 }
 
+/// Some apps send a tool with no parameter schema (Qwen Code's `get_goal`);
+/// Ollama and others reject that, so PrismFlow fills in an empty one.
+/// Returns true when something changed.
+pub(crate) fn fill_tool_schemas(j: &mut serde_json::Value) -> bool {
+    let mut changed = false;
+    let Some(tools) = j.get_mut("tools").and_then(|t| t.as_array_mut()) else { return false };
+    for t in tools {
+        // Chat: {type, function: {parameters}}; Responses: {type, parameters}.
+        let slot = if t.get("function").is_some() { &mut t["function"] } else if t["type"] == "function" { t } else { continue };
+        let params = &mut slot["parameters"];
+        if !params.is_object() {
+            *params = json!({ "type": "object", "properties": {} });
+            changed = true;
+        } else if !params["properties"].is_object() && params["type"] == "object" {
+            params["properties"] = json!({});
+            changed = true;
+        }
+    }
+    changed
+}
+
 pub(crate) fn host_allowed(host: &str, port: u16) -> bool {
     host == format!("127.0.0.1:{port}") || host == format!("localhost:{port}")
 }
@@ -232,11 +253,13 @@ async fn proxy(State(inner): State<Arc<Inner>>, req: Request) -> Response {
     );
     let (tier, chain) = binding.routing.plan(&primary, requested.as_deref());
     let effort = binding.routing.effort_for(tier);
+    let mut fixed = false;
     if let Some(j) = json.as_mut() {
         crate::routing::apply_effort(j, front, effort);
+        fixed = fill_tool_schemas(j);
     }
     let body = match &json {
-        Some(j) if effort != crate::routing::Effort::FromClient => Bytes::from(serde_json::to_vec(j).unwrap_or_default()),
+        Some(j) if fixed || effort != crate::routing::Effort::FromClient => Bytes::from(serde_json::to_vec(j).unwrap_or_default()),
         _ => body,
     };
 
@@ -392,6 +415,19 @@ async fn proxy(State(inner): State<Arc<Inner>>, req: Request) -> Response {
 #[cfg(test)]
 mod unit {
     use super::*;
+
+    #[test]
+    fn tools_without_a_schema_get_an_empty_one() {
+        let mut chat = json!({"tools": [{"type": "function", "function": {"name": "get_goal"}}, {"type": "function", "function": {"name": "x", "parameters": {"type": "object", "properties": {"a": {}}}}}]});
+        assert!(fill_tool_schemas(&mut chat));
+        assert_eq!(chat["tools"][0]["function"]["parameters"], json!({"type": "object", "properties": {}}));
+        assert_eq!(chat["tools"][1]["function"]["parameters"]["properties"]["a"], json!({}));
+        let mut resp = json!({"tools": [{"type": "function", "name": "g", "parameters": {"type": "object"}}]});
+        assert!(fill_tool_schemas(&mut resp));
+        assert_eq!(resp["tools"][0]["parameters"]["properties"], json!({}));
+        let mut fine = json!({"tools": [{"type": "web_search_20250305", "name": "web_search"}]});
+        assert!(!fill_tool_schemas(&mut fine), "server tools untouched");
+    }
 
     #[test]
     fn host_check_accepts_only_loopback_names_with_our_port() {

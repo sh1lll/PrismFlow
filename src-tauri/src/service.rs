@@ -1,7 +1,7 @@
 //! Application service: the operations the UI invokes, independent of Tauri
 //! so they are testable with an in-memory credential store and temp dirs.
 
-use crate::adapters::{self, agents, claude_code, claude_desktop, codex, jetbrains, vscode, AppDetection};
+use crate::adapters::{self, agents, claude_code, claude_desktop, codex, editors, jetbrains, vscode, AppDetection};
 use crate::config_engine;
 use crate::credentials::{account_key, CredentialError, CredentialStore};
 use crate::diagnostics::{now_secs, DiagnosticsLog, Event, Level};
@@ -90,6 +90,7 @@ type R<T> = Result<T, String>;
 /// Every application PrismFlow can connect.
 fn app_ids() -> Vec<&'static str> {
     let mut v = vec![codex::APP_ID, codex::DESKTOP_APP_ID, claude_code::APP_ID, claude_desktop::APP_ID, jetbrains::APP_ID, vscode::CLAUDE_APP_ID, vscode::CHAT_APP_ID];
+    v.extend(editors::ALL);
     v.extend(agents::AGENTS.iter().map(|a| a.id));
     v
 }
@@ -119,6 +120,7 @@ pub fn route_for(app_id: &str, p: &ProviderDefinition) -> Option<Route> {
         claude_code::APP_ID => Some(Route::Gateway),
         claude_desktop::APP_ID => Some(Route::Gateway),
         jetbrains::APP_ID | vscode::CLAUDE_APP_ID | vscode::CHAT_APP_ID => Some(Route::Gateway),
+        a if editors::ALL.contains(&a) => Some(Route::Gateway),
         a if agents::spec(a).is_some() && agents::SUPPORTED_HERE => Some(Route::Gateway),
         _ => None,
     }
@@ -131,6 +133,9 @@ pub fn connection_id(app_id: &str, provider_id: &str) -> String {
 pub fn app_name(app_id: &str) -> &'static str {
     if let Some(a) = agents::spec(app_id) {
         return a.display_name;
+    }
+    if editors::ALL.contains(&app_id) {
+        return editors::name(app_id);
     }
     match app_id {
         claude_code::APP_ID => "Claude Code",
@@ -576,7 +581,7 @@ impl Service {
         let p = provider(provider_id)?;
         let model = validate_model_id(model)?;
         let route = route_for(app_id, p).ok_or_else(|| match app_id {
-            a if a == codex::APP_ID || a == codex::DESKTOP_APP_ID || a == claude_code::APP_ID || a == claude_desktop::APP_ID || a == jetbrains::APP_ID || a == vscode::CLAUDE_APP_ID || a == vscode::CHAT_APP_ID || agents::spec(a).is_some() => format!(
+            a if a == codex::APP_ID || a == codex::DESKTOP_APP_ID || a == claude_code::APP_ID || a == claude_desktop::APP_ID || a == jetbrains::APP_ID || a == vscode::CLAUDE_APP_ID || a == vscode::CHAT_APP_ID || editors::ALL.contains(&a) || agents::spec(a).is_some() => format!(
                 "{} needs a base URL; custom providers are not supported in this build.", p.display_name
             ),
             other => format!("Unknown application '{other}'."),
@@ -596,6 +601,15 @@ impl Service {
                 "The key is fetched from PrismFlow when an agent runs; it isn't stored in the file".into(),
             ];
             return Ok((p, route, config_engine::EditPlan { file: jp.file, before: jp.before, after: jp.after, summary }));
+        }
+        if editors::ALL.contains(&app_id) {
+            let ep = editors::plan(app_id, &agents::agent_dir(self.state.dir(), &id), &id, &format!("{url}/v1"), model, None)?;
+            let summary = if app_id == editors::CONTINUE_IDE || app_id == editors::ZED {
+                editors::guide(app_id, &format!("{url}/v1"), model, "(shown after you connect)")
+            } else {
+                vec![format!("Set up {} in {}", editors::name(app_id), ep.file.display()), "Your other settings stay as they are".into()]
+            };
+            return Ok((p, route, config_engine::EditPlan { file: ep.file, before: ep.before, after: ep.after, summary }));
         }
         if app_id == vscode::CLAUDE_APP_ID || app_id == vscode::CHAT_APP_ID {
             let vp = self.vscode_plan(app_id, p, model, &id, &url, None)?;
@@ -675,7 +689,7 @@ impl Service {
     fn profile_for(&self, app_id: &str, provider_id: &str) -> String {
         if agents::spec(app_id).is_some() {
             connection_id(app_id, provider_id).replace(':', "-")
-        } else if app_id == codex::DESKTOP_APP_ID || app_id == claude_desktop::APP_ID || app_id == jetbrains::APP_ID || app_id == vscode::CLAUDE_APP_ID || app_id == vscode::CHAT_APP_ID {
+        } else if app_id == codex::DESKTOP_APP_ID || app_id == claude_desktop::APP_ID || app_id == jetbrains::APP_ID || app_id == vscode::CLAUDE_APP_ID || app_id == vscode::CHAT_APP_ID || editors::ALL.contains(&app_id) {
             String::new() // desktop apps have no PrismFlow profile
         } else if app_id == claude_code::APP_ID {
             claude_code::profile_name(provider_id)
@@ -691,7 +705,7 @@ impl Service {
         if app_id == codex::DESKTOP_APP_ID {
             return format!("open -b {}", codex::DESKTOP_BUNDLE_ID);
         }
-        if app_id == jetbrains::APP_ID || app_id == vscode::CLAUDE_APP_ID || app_id == vscode::CHAT_APP_ID {
+        if app_id == jetbrains::APP_ID || app_id == vscode::CLAUDE_APP_ID || app_id == vscode::CHAT_APP_ID || editors::ALL.contains(&app_id) {
             return String::new();
         }
         if agents::spec(app_id).is_some() {
@@ -811,13 +825,19 @@ impl Service {
                 self.diag.record(Level::Warn, "connect.claude_desktop", &format!("Automatic setup skipped: {e}"));
             }
         }
+        if editors::ALL.contains(&app_id) {
+            let token = tokens::ensure(self.store.as_ref(), &id).map_err(|e| format!("Couldn't save a key for this app: {e}"))?;
+            let ep = editors::plan(app_id, &agents::agent_dir(self.state.dir(), &id), &id, &format!("{}/v1", self.broker.url_for_config()), validate_model_id(model)?, Some(&token))?;
+            agents::write(&ep.owned).map_err(|e| format!("Nothing usable was written: {e}"))?;
+            plan = config_engine::EditPlan { file: ep.file, before: ep.before, after: ep.after, summary: plan.summary };
+        }
         if app_id == vscode::CLAUDE_APP_ID || app_id == vscode::CHAT_APP_ID {
             let token = tokens::ensure(self.store.as_ref(), &id).map_err(|e| format!("Couldn't save a key for this app: {e}"))?;
             let vp = self.vscode_plan(app_id, p, validate_model_id(model)?, &id, &self.broker.url_for_config(), Some(&token))?;
             agents::write(&vp.owned).map_err(|e| format!("Nothing usable was written: {e}"))?;
             plan = config_engine::EditPlan { file: vp.file, before: vp.before, after: vp.after, summary: plan.summary };
         }
-        let applied = if agents::spec(app_id).is_some() || app_id == claude_desktop::APP_ID {
+        let applied = if agents::spec(app_id).is_some() || app_id == claude_desktop::APP_ID || app_id == editors::CONTINUE_IDE {
             config_engine::AppliedEdit { file: plan.file.clone(), backup_path: None }
         } else { config_engine::apply(&plan).map_err(|e| {
             let msg = format!("Writing {} failed; nothing was changed: {e}", plan.file.display());
@@ -1073,6 +1093,13 @@ impl Service {
         Ok(v["choices"][0]["message"]["content"].as_str().unwrap_or("").to_string())
     }
 
+    /// What to add by hand for Zed / Continue (includes this connection's local key).
+    pub fn editor_guide(&self, id: &str) -> R<Vec<String>> {
+        let record = self.state.get(id).map_err(|e| e.to_string())?.ok_or("Unknown connection.")?;
+        let token = tokens::ensure(self.store.as_ref(), id).map_err(|e| format!("Couldn't read the saved key: {e}"))?;
+        Ok(editors::guide(&record.app_id, &format!("{}/v1", self.broker.url_for_config()), &record.model, &token))
+    }
+
     pub fn gateway_status(&self) -> BrokerStatus {
         self.broker.status()
     }
@@ -1148,6 +1175,11 @@ impl Service {
             })
         } else if record.app_id == vscode::CHAT_APP_ID {
             vscode::disconnect_chat(&record.id).map(|()| None)
+        } else if editors::ALL.contains(&record.app_id.as_str()) {
+            editors::disconnect(&record.app_id, &record.id).map(|()| {
+                let _ = std::fs::remove_dir_all(agents::agent_dir(self.state.dir(), &record.id));
+                None
+            })
         } else if record.app_id == jetbrains::APP_ID {
             jetbrains::disconnect(&record.id).map(|()| {
                 let _ = std::fs::remove_dir_all(agents::agent_dir(self.state.dir(), &record.id));
@@ -1186,7 +1218,7 @@ impl Service {
     pub fn running_sessions(&self, id: &str) -> R<Vec<u32>> {
         let record = self.state.get(id).map_err(|e| e.to_string())?.ok_or("Unknown connection.")?;
         let procs = adapters::processes::list();
-        Ok(if record.app_id == claude_desktop::APP_ID || record.app_id == codex::DESKTOP_APP_ID || record.app_id == jetbrains::APP_ID || record.app_id == vscode::CLAUDE_APP_ID || record.app_id == vscode::CHAT_APP_ID {
+        Ok(if record.app_id == claude_desktop::APP_ID || record.app_id == codex::DESKTOP_APP_ID || record.app_id == jetbrains::APP_ID || record.app_id == vscode::CLAUDE_APP_ID || record.app_id == vscode::CHAT_APP_ID || editors::ALL.contains(&record.app_id.as_str()) {
             Vec::new() // desktop apps: restart is shown in the UI instead
         } else if agents::spec(&record.app_id).is_some() {
             let dir = agents::agent_dir(self.state.dir(), &record.id).display().to_string();
@@ -1351,6 +1383,9 @@ impl Service {
         }
         if record.app_id == vscode::CLAUDE_APP_ID || record.app_id == vscode::CHAT_APP_ID {
             return Err("Open VS Code. PrismFlow is set up there.".into());
+        }
+        if editors::ALL.contains(&record.app_id.as_str()) {
+            return Err(format!("Open {}. PrismFlow is set up there.", editors::name(&record.app_id)));
         }
         if record.app_id == codex::DESKTOP_APP_ID {
             open_app(codex::DESKTOP_BUNDLE_ID)?;
