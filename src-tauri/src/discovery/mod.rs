@@ -52,6 +52,10 @@ pub fn client() -> reqwest::Client {
 }
 
 fn join(base_url: &str, path: &str) -> String {
+    // Some catalogs live on another path or host (GitHub Models).
+    if path.starts_with("https://") {
+        return path.to_string();
+    }
     format!("{}{}", base_url.trim_end_matches('/'), path)
 }
 
@@ -109,9 +113,11 @@ pub async fn list_models_as(
     style: AuthStyle,
 ) -> Result<Vec<ModelInfo>, ProbeError> {
     let body = get(client, &join(base_url, path), key, style).await?;
+    // OpenAI shape `{"data": [...]}`, or a bare array (GitHub Models catalog).
     let data = body
         .get("data")
         .and_then(|d| d.as_array())
+        .or_else(|| body.as_array())
         .ok_or_else(|| ProbeError::BadResponse("no `data` array in model list".into()))?;
     let mut models: Vec<ModelInfo> = data
         .iter()
@@ -120,13 +126,16 @@ pub async fn list_models_as(
             let reports_tools = m
                 .get("supported_parameters")
                 .and_then(|p| p.as_array())
-                .map(|p| p.iter().any(|v| v.as_str() == Some("tools")));
+                .map(|p| p.iter().any(|v| v.as_str() == Some("tools")))
+                .or_else(|| m.get("capabilities").and_then(|c| c.as_array())
+                    .map(|c| c.iter().any(|v| v.as_str() == Some("tool-calling"))));
             Some(ModelInfo {
                 id,
                 name: m.get("name").and_then(|n| n.as_str()).map(String::from),
                 context_length: m
                     .get("context_length")
                     .or_else(|| m.get("context_window"))
+                    .or_else(|| m.get("limits").and_then(|l| l.get("max_input_tokens")))
                     .and_then(|c| c.as_u64()),
                 reports_tools,
             })
@@ -221,6 +230,28 @@ mod tests {
         let m = list_models_as(&client(), &server.uri(), "/v1/models", Some("sk-ant-good"), AuthStyle::Anthropic).await.unwrap();
         assert_eq!(m[0].id, "claude-x");
         assert!(check_credential_as(&client(), &server.uri(), "/v1/models", "sk-ant-bad", AuthStyle::Anthropic).await.is_err());
+    }
+
+    #[test]
+    fn absolute_https_list_paths_are_used_as_is() {
+        assert_eq!(join("https://models.github.ai/inference", "https://models.github.ai/catalog/models"), "https://models.github.ai/catalog/models");
+        assert_eq!(join("https://api.x/v1/", "/models"), "https://api.x/v1/models");
+    }
+
+    #[tokio::test]
+    async fn bare_array_catalog_with_capabilities_and_limits() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET")).and(path("/catalog/models"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([
+                {"id": "openai/gpt-4.1", "name": "GPT-4.1", "capabilities": ["streaming", "tool-calling"], "limits": {"max_input_tokens": 1048576}},
+                {"id": "x/no-tools", "capabilities": ["streaming"]}
+            ])))
+            .mount(&server).await;
+        let m = list_models(&client(), &server.uri(), "/catalog/models", None).await.unwrap();
+        assert_eq!(m[0].id, "openai/gpt-4.1");
+        assert_eq!(m[0].context_length, Some(1048576));
+        assert_eq!(m[0].reports_tools, Some(true));
+        assert_eq!(m[1].reports_tools, Some(false));
     }
 
     #[tokio::test]

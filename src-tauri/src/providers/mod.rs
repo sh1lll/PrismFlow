@@ -30,6 +30,19 @@ pub enum AuthStyle {
     Anthropic,
 }
 
+/// Where the provider's credential comes from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CredentialSource {
+    /// A key the user pastes; stored in the system secure store.
+    #[default]
+    Keychain,
+    /// The GitHub CLI's own sign-in (`gh auth token`, read at use).
+    GhCli,
+    /// The sign-in Codex made with OpenAI (`codex login`), read at use.
+    CodexLogin,
+}
+
 /// A provider definition. Only verified facts live here (SPEC §3.3):
 /// identity, base URL, protocol family, docs. Capabilities are discovered
 /// and verified at runtime, never asserted statically.
@@ -54,6 +67,7 @@ pub struct ProviderDefinition {
     pub custom: bool,
     /// Date the facts were last checked (SPEC §21.3); empty for custom.
     pub verified_at: &'static str,
+    pub credential_source: CredentialSource,
 }
 
 #[derive(Deserialize)]
@@ -82,6 +96,8 @@ struct CatalogEntry {
     requires_key: bool,
     #[serde(default)]
     verified_at: String,
+    #[serde(default)]
+    credential_source: CredentialSource,
 }
 
 fn yes() -> bool {
@@ -112,6 +128,7 @@ impl CatalogEntry {
             requires_key: self.requires_key,
             custom,
             verified_at: leak(self.verified_at),
+            credential_source: self.credential_source,
         }
     }
 }
@@ -188,6 +205,7 @@ impl CustomProvider {
             local: is_loopback_host(&host),
             requires_key: self.requires_key,
             verified_at: String::new(),
+            credential_source: CredentialSource::Keychain,
         }
         .into_def(true)
     }
@@ -323,7 +341,7 @@ mod tests {
             assert!(!p.protocols.is_empty());
             assert!(!p.verified_at.is_empty(), "{} lacks verified_at", p.id);
             assert!(p.docs_url.is_empty() || p.docs_url.starts_with("https://"));
-            assert!(p.model_list_path.is_some());
+            assert!(p.model_list_path.is_some() || p.credential_source == CredentialSource::CodexLogin);
         }
         assert!(!catalog_version().is_empty());
     }

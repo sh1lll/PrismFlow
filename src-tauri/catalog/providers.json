@@ -3,34 +3,407 @@
   "catalog_version": "2026.10.14",
   "_note": "Verified facts only (SPEC §3.3). Every entry's base_url answered GET {base_url}{model_list_path} on verified_at: 200 with an OpenAI-style list, or 401/403 without a key. Protocols list only what PrismFlow has evidence for. Capabilities are never stored here.",
   "providers": [
-    { "id": "openrouter", "display_name": "OpenRouter", "base_url": "https://openrouter.ai/api/v1", "protocols": ["OpenAiChat", "OpenAiResponses"], "model_list_path": "/models", "auth_check_path": "/key", "docs_url": "https://openrouter.ai/docs", "keys_url": "https://openrouter.ai/keys", "verified_at": "2026-10-14" },
-    { "id": "nvidia_nim", "display_name": "NVIDIA NIM", "base_url": "https://integrate.api.nvidia.com/v1", "protocols": ["OpenAiChat"], "model_list_path": "/models", "docs_url": "https://build.nvidia.com", "keys_url": "https://build.nvidia.com/settings/api-keys", "verified_at": "2026-10-14" },
-    { "id": "huggingface", "display_name": "Hugging Face Inference Providers", "base_url": "https://router.huggingface.co/v1", "protocols": ["OpenAiChat", "OpenAiResponses"], "model_list_path": "/models", "docs_url": "https://huggingface.co/docs/inference-providers", "keys_url": "https://huggingface.co/settings/tokens", "verified_at": "2026-10-14" },
-    { "id": "openai", "display_name": "OpenAI API", "base_url": "https://api.openai.com/v1", "protocols": ["OpenAiChat", "OpenAiResponses"], "model_list_path": "/models", "auth_check_path": "/models", "docs_url": "https://platform.openai.com/docs", "keys_url": "https://platform.openai.com/api-keys", "verified_at": "2026-10-14" },
-    { "id": "anthropic", "display_name": "Anthropic API", "base_url": "https://api.anthropic.com", "protocols": ["AnthropicMessages"], "model_list_path": "/v1/models", "auth_check_path": "/v1/models", "auth_style": "anthropic", "docs_url": "https://docs.anthropic.com", "keys_url": "https://console.anthropic.com/settings/keys", "verified_at": "2026-10-14" },
-    { "id": "groq", "display_name": "Groq", "base_url": "https://api.groq.com/openai/v1", "protocols": ["OpenAiChat"], "model_list_path": "/models", "auth_check_path": "/models", "docs_url": "https://console.groq.com/docs", "keys_url": "https://console.groq.com/keys", "verified_at": "2026-10-14" },
-    { "id": "together", "display_name": "Together AI", "base_url": "https://api.together.xyz/v1", "protocols": ["OpenAiChat"], "model_list_path": "/models", "auth_check_path": "/models", "docs_url": "https://docs.together.ai", "keys_url": "https://api.together.ai/settings/api-keys", "verified_at": "2026-10-14" },
-    { "id": "fireworks", "display_name": "Fireworks AI", "base_url": "https://api.fireworks.ai/inference/v1", "protocols": ["OpenAiChat"], "model_list_path": "/models", "auth_check_path": "/models", "docs_url": "https://docs.fireworks.ai", "keys_url": "https://fireworks.ai/account/api-keys", "verified_at": "2026-10-14" },
-    { "id": "deepseek", "display_name": "DeepSeek", "base_url": "https://api.deepseek.com/v1", "protocols": ["OpenAiChat"], "model_list_path": "/models", "auth_check_path": "/models", "docs_url": "https://api-docs.deepseek.com", "keys_url": "https://platform.deepseek.com/api_keys", "verified_at": "2026-10-14" },
-    { "id": "mistral", "display_name": "Mistral", "base_url": "https://api.mistral.ai/v1", "protocols": ["OpenAiChat"], "model_list_path": "/models", "auth_check_path": "/models", "docs_url": "https://docs.mistral.ai", "keys_url": "https://console.mistral.ai/api-keys", "verified_at": "2026-10-14" },
-    { "id": "cerebras", "display_name": "Cerebras", "base_url": "https://api.cerebras.ai/v1", "protocols": ["OpenAiChat"], "model_list_path": "/models", "auth_check_path": "/models", "docs_url": "https://inference-docs.cerebras.ai", "keys_url": "https://cloud.cerebras.ai", "verified_at": "2026-10-14" },
-    { "id": "deepinfra", "display_name": "DeepInfra", "base_url": "https://api.deepinfra.com/v1/openai", "protocols": ["OpenAiChat"], "model_list_path": "/models", "docs_url": "https://deepinfra.com/docs", "keys_url": "https://deepinfra.com/dash/api_keys", "verified_at": "2026-10-14" },
-    { "id": "xai", "display_name": "xAI (Grok)", "base_url": "https://api.x.ai/v1", "protocols": ["OpenAiChat"], "model_list_path": "/models", "auth_check_path": "/models", "docs_url": "https://docs.x.ai", "keys_url": "https://console.x.ai", "verified_at": "2026-10-14" },
-    { "id": "moonshot", "display_name": "Moonshot (Kimi API)", "base_url": "https://api.moonshot.ai/v1", "protocols": ["OpenAiChat"], "model_list_path": "/models", "auth_check_path": "/models", "docs_url": "https://platform.moonshot.ai/docs", "keys_url": "https://platform.moonshot.ai/console/api-keys", "verified_at": "2026-10-14" },
-    { "id": "zai", "display_name": "Z.ai", "base_url": "https://api.z.ai/api/paas/v4", "protocols": ["OpenAiChat"], "model_list_path": "/models", "auth_check_path": "/models", "docs_url": "https://docs.z.ai", "keys_url": "https://z.ai/manage-apikey/apikey-list", "verified_at": "2026-10-14" },
-    { "id": "sambanova", "display_name": "SambaNova", "base_url": "https://api.sambanova.ai/v1", "protocols": ["OpenAiChat"], "model_list_path": "/models", "docs_url": "https://docs.sambanova.ai", "keys_url": "https://cloud.sambanova.ai/apis", "verified_at": "2026-10-14" },
-    { "id": "novita", "display_name": "Novita AI", "base_url": "https://api.novita.ai/openai/v1", "protocols": ["OpenAiChat"], "model_list_path": "/models", "docs_url": "https://novita.ai/docs", "keys_url": "https://novita.ai/settings/key-management", "verified_at": "2026-10-14" },
-    { "id": "siliconflow", "display_name": "SiliconFlow", "base_url": "https://api.siliconflow.com/v1", "protocols": ["OpenAiChat"], "model_list_path": "/models", "auth_check_path": "/models", "docs_url": "https://docs.siliconflow.com", "keys_url": "https://cloud.siliconflow.com/account/ak", "verified_at": "2026-10-14" },
-    { "id": "cohere", "display_name": "Cohere", "base_url": "https://api.cohere.ai/compatibility/v1", "protocols": ["OpenAiChat"], "model_list_path": "/models", "auth_check_path": "/models", "docs_url": "https://docs.cohere.com", "keys_url": "https://dashboard.cohere.com/api-keys", "verified_at": "2026-10-14" },
-    { "id": "minimax", "display_name": "MiniMax", "base_url": "https://api.minimax.io/v1", "protocols": ["OpenAiChat"], "model_list_path": "/models", "auth_check_path": "/models", "docs_url": "https://platform.minimax.io/docs", "keys_url": "https://platform.minimax.io/user-center/basic-information/interface-key", "verified_at": "2026-10-14" },
-    { "id": "ollama_cloud", "display_name": "Ollama Cloud", "base_url": "https://ollama.com/v1", "protocols": ["OpenAiChat"], "model_list_path": "/models", "docs_url": "https://docs.ollama.com", "keys_url": "https://ollama.com/settings/keys", "verified_at": "2026-10-14" },
-    { "id": "vercel", "display_name": "Vercel AI Gateway", "base_url": "https://ai-gateway.vercel.sh/v1", "protocols": ["OpenAiChat"], "model_list_path": "/models", "docs_url": "https://vercel.com/docs/ai-gateway", "keys_url": "https://vercel.com/dashboard", "verified_at": "2026-10-14" },
-    { "id": "chutes", "display_name": "Chutes", "base_url": "https://llm.chutes.ai/v1", "protocols": ["OpenAiChat"], "model_list_path": "/models", "docs_url": "https://chutes.ai/docs", "keys_url": "https://chutes.ai", "verified_at": "2026-10-14" },
-    { "id": "featherless", "display_name": "Featherless AI", "base_url": "https://api.featherless.ai/v1", "protocols": ["OpenAiChat"], "model_list_path": "/models", "docs_url": "https://featherless.ai/docs", "keys_url": "https://featherless.ai/account/api-keys", "verified_at": "2026-10-14" },
-    { "id": "scaleway", "display_name": "Scaleway Generative APIs", "base_url": "https://api.scaleway.ai/v1", "protocols": ["OpenAiChat"], "model_list_path": "/models", "auth_check_path": "/models", "docs_url": "https://www.scaleway.com/en/docs/generative-apis/", "keys_url": "https://console.scaleway.com/iam/api-keys", "verified_at": "2026-10-14" },
-    { "id": "llm7", "display_name": "LLM7.io", "base_url": "https://api.llm7.io/v1", "protocols": ["OpenAiChat"], "model_list_path": "/models", "docs_url": "https://llm7.io", "keys_url": "https://dash.llm7.io", "verified_at": "2026-10-14" },
-    { "id": "ollama", "display_name": "Ollama (local)", "base_url": "http://127.0.0.1:11434/v1", "protocols": ["OpenAiChat"], "model_list_path": "/models", "docs_url": "https://docs.ollama.com", "local": true, "requires_key": false, "verified_at": "2026-10-14", "_evidence": "documented default; probed live by Stage 3 on the user's machine" },
-    { "id": "lmstudio", "display_name": "LM Studio (local)", "base_url": "http://127.0.0.1:1234/v1", "protocols": ["OpenAiChat"], "model_list_path": "/models", "docs_url": "https://lmstudio.ai/docs", "local": true, "requires_key": false, "verified_at": "2026-10-14", "_evidence": "documented default; probed live by Stage 3 on the user's machine" },
-    { "id": "llamacpp", "display_name": "llama.cpp server (local)", "base_url": "http://127.0.0.1:8080/v1", "protocols": ["OpenAiChat"], "model_list_path": "/models", "docs_url": "https://github.com/ggml-org/llama.cpp", "local": true, "requires_key": false, "verified_at": "2026-10-14", "_evidence": "documented default; probed live by Stage 3 on the user's machine" }
+    {
+      "id": "openrouter",
+      "display_name": "OpenRouter",
+      "base_url": "https://openrouter.ai/api/v1",
+      "protocols": [
+        "OpenAiChat",
+        "OpenAiResponses"
+      ],
+      "model_list_path": "/models",
+      "auth_check_path": "/key",
+      "docs_url": "https://openrouter.ai/docs",
+      "keys_url": "https://openrouter.ai/keys",
+      "verified_at": "2026-10-14"
+    },
+    {
+      "id": "nvidia_nim",
+      "display_name": "NVIDIA NIM",
+      "base_url": "https://integrate.api.nvidia.com/v1",
+      "protocols": [
+        "OpenAiChat"
+      ],
+      "model_list_path": "/models",
+      "docs_url": "https://build.nvidia.com",
+      "keys_url": "https://build.nvidia.com/settings/api-keys",
+      "verified_at": "2026-10-14"
+    },
+    {
+      "id": "huggingface",
+      "display_name": "Hugging Face Inference Providers",
+      "base_url": "https://router.huggingface.co/v1",
+      "protocols": [
+        "OpenAiChat",
+        "OpenAiResponses"
+      ],
+      "model_list_path": "/models",
+      "docs_url": "https://huggingface.co/docs/inference-providers",
+      "keys_url": "https://huggingface.co/settings/tokens",
+      "verified_at": "2026-10-14"
+    },
+    {
+      "id": "openai",
+      "display_name": "OpenAI API",
+      "base_url": "https://api.openai.com/v1",
+      "protocols": [
+        "OpenAiChat",
+        "OpenAiResponses"
+      ],
+      "model_list_path": "/models",
+      "auth_check_path": "/models",
+      "docs_url": "https://platform.openai.com/docs",
+      "keys_url": "https://platform.openai.com/api-keys",
+      "verified_at": "2026-10-14"
+    },
+    {
+      "id": "anthropic",
+      "display_name": "Anthropic API",
+      "base_url": "https://api.anthropic.com",
+      "protocols": [
+        "AnthropicMessages"
+      ],
+      "model_list_path": "/v1/models",
+      "auth_check_path": "/v1/models",
+      "auth_style": "anthropic",
+      "docs_url": "https://docs.anthropic.com",
+      "keys_url": "https://console.anthropic.com/settings/keys",
+      "verified_at": "2026-10-14"
+    },
+    {
+      "id": "github_models",
+      "display_name": "GitHub Models (your GitHub CLI sign-in)",
+      "base_url": "https://models.github.ai/inference",
+      "protocols": [
+        "OpenAiChat"
+      ],
+      "model_list_path": "https://models.github.ai/catalog/models",
+      "credential_source": "gh_cli",
+      "docs_url": "https://docs.github.com/en/github-models",
+      "keys_url": "",
+      "verified_at": "2026-10-15",
+      "_evidence": "inference and catalog hosts answer; authenticated shape per GitHub docs, live check NEEDS_OWNER"
+    },
+    {
+      "id": "chatgpt",
+      "display_name": "ChatGPT (your Codex sign-in)",
+      "base_url": "https://chatgpt.com/backend-api/codex",
+      "protocols": [
+        "OpenAiResponses"
+      ],
+      "model_list_path": null,
+      "credential_source": "codex_login",
+      "docs_url": "https://developers.openai.com/codex/auth",
+      "keys_url": "",
+      "verified_at": "2026-10-15",
+      "_evidence": "endpoint and OAuth handling from the pinned engine's built-in Codex OAuth support; live check NEEDS_OWNER"
+    },
+    {
+      "id": "groq",
+      "display_name": "Groq",
+      "base_url": "https://api.groq.com/openai/v1",
+      "protocols": [
+        "OpenAiChat"
+      ],
+      "model_list_path": "/models",
+      "auth_check_path": "/models",
+      "docs_url": "https://console.groq.com/docs",
+      "keys_url": "https://console.groq.com/keys",
+      "verified_at": "2026-10-14"
+    },
+    {
+      "id": "together",
+      "display_name": "Together AI",
+      "base_url": "https://api.together.xyz/v1",
+      "protocols": [
+        "OpenAiChat"
+      ],
+      "model_list_path": "/models",
+      "auth_check_path": "/models",
+      "docs_url": "https://docs.together.ai",
+      "keys_url": "https://api.together.ai/settings/api-keys",
+      "verified_at": "2026-10-14"
+    },
+    {
+      "id": "fireworks",
+      "display_name": "Fireworks AI",
+      "base_url": "https://api.fireworks.ai/inference/v1",
+      "protocols": [
+        "OpenAiChat"
+      ],
+      "model_list_path": "/models",
+      "auth_check_path": "/models",
+      "docs_url": "https://docs.fireworks.ai",
+      "keys_url": "https://fireworks.ai/account/api-keys",
+      "verified_at": "2026-10-14"
+    },
+    {
+      "id": "deepseek",
+      "display_name": "DeepSeek",
+      "base_url": "https://api.deepseek.com/v1",
+      "protocols": [
+        "OpenAiChat"
+      ],
+      "model_list_path": "/models",
+      "auth_check_path": "/models",
+      "docs_url": "https://api-docs.deepseek.com",
+      "keys_url": "https://platform.deepseek.com/api_keys",
+      "verified_at": "2026-10-14"
+    },
+    {
+      "id": "mistral",
+      "display_name": "Mistral",
+      "base_url": "https://api.mistral.ai/v1",
+      "protocols": [
+        "OpenAiChat"
+      ],
+      "model_list_path": "/models",
+      "auth_check_path": "/models",
+      "docs_url": "https://docs.mistral.ai",
+      "keys_url": "https://console.mistral.ai/api-keys",
+      "verified_at": "2026-10-14"
+    },
+    {
+      "id": "cerebras",
+      "display_name": "Cerebras",
+      "base_url": "https://api.cerebras.ai/v1",
+      "protocols": [
+        "OpenAiChat"
+      ],
+      "model_list_path": "/models",
+      "auth_check_path": "/models",
+      "docs_url": "https://inference-docs.cerebras.ai",
+      "keys_url": "https://cloud.cerebras.ai",
+      "verified_at": "2026-10-14"
+    },
+    {
+      "id": "deepinfra",
+      "display_name": "DeepInfra",
+      "base_url": "https://api.deepinfra.com/v1/openai",
+      "protocols": [
+        "OpenAiChat"
+      ],
+      "model_list_path": "/models",
+      "docs_url": "https://deepinfra.com/docs",
+      "keys_url": "https://deepinfra.com/dash/api_keys",
+      "verified_at": "2026-10-14"
+    },
+    {
+      "id": "xai",
+      "display_name": "xAI (Grok)",
+      "base_url": "https://api.x.ai/v1",
+      "protocols": [
+        "OpenAiChat"
+      ],
+      "model_list_path": "/models",
+      "auth_check_path": "/models",
+      "docs_url": "https://docs.x.ai",
+      "keys_url": "https://console.x.ai",
+      "verified_at": "2026-10-14"
+    },
+    {
+      "id": "moonshot",
+      "display_name": "Moonshot (Kimi API)",
+      "base_url": "https://api.moonshot.ai/v1",
+      "protocols": [
+        "OpenAiChat"
+      ],
+      "model_list_path": "/models",
+      "auth_check_path": "/models",
+      "docs_url": "https://platform.moonshot.ai/docs",
+      "keys_url": "https://platform.moonshot.ai/console/api-keys",
+      "verified_at": "2026-10-14"
+    },
+    {
+      "id": "zai",
+      "display_name": "Z.ai",
+      "base_url": "https://api.z.ai/api/paas/v4",
+      "protocols": [
+        "OpenAiChat"
+      ],
+      "model_list_path": "/models",
+      "auth_check_path": "/models",
+      "docs_url": "https://docs.z.ai",
+      "keys_url": "https://z.ai/manage-apikey/apikey-list",
+      "verified_at": "2026-10-14"
+    },
+    {
+      "id": "sambanova",
+      "display_name": "SambaNova",
+      "base_url": "https://api.sambanova.ai/v1",
+      "protocols": [
+        "OpenAiChat"
+      ],
+      "model_list_path": "/models",
+      "docs_url": "https://docs.sambanova.ai",
+      "keys_url": "https://cloud.sambanova.ai/apis",
+      "verified_at": "2026-10-14"
+    },
+    {
+      "id": "novita",
+      "display_name": "Novita AI",
+      "base_url": "https://api.novita.ai/openai/v1",
+      "protocols": [
+        "OpenAiChat"
+      ],
+      "model_list_path": "/models",
+      "docs_url": "https://novita.ai/docs",
+      "keys_url": "https://novita.ai/settings/key-management",
+      "verified_at": "2026-10-14"
+    },
+    {
+      "id": "siliconflow",
+      "display_name": "SiliconFlow",
+      "base_url": "https://api.siliconflow.com/v1",
+      "protocols": [
+        "OpenAiChat"
+      ],
+      "model_list_path": "/models",
+      "auth_check_path": "/models",
+      "docs_url": "https://docs.siliconflow.com",
+      "keys_url": "https://cloud.siliconflow.com/account/ak",
+      "verified_at": "2026-10-14"
+    },
+    {
+      "id": "cohere",
+      "display_name": "Cohere",
+      "base_url": "https://api.cohere.ai/compatibility/v1",
+      "protocols": [
+        "OpenAiChat"
+      ],
+      "model_list_path": "/models",
+      "auth_check_path": "/models",
+      "docs_url": "https://docs.cohere.com",
+      "keys_url": "https://dashboard.cohere.com/api-keys",
+      "verified_at": "2026-10-14"
+    },
+    {
+      "id": "minimax",
+      "display_name": "MiniMax",
+      "base_url": "https://api.minimax.io/v1",
+      "protocols": [
+        "OpenAiChat"
+      ],
+      "model_list_path": "/models",
+      "auth_check_path": "/models",
+      "docs_url": "https://platform.minimax.io/docs",
+      "keys_url": "https://platform.minimax.io/user-center/basic-information/interface-key",
+      "verified_at": "2026-10-14"
+    },
+    {
+      "id": "ollama_cloud",
+      "display_name": "Ollama Cloud",
+      "base_url": "https://ollama.com/v1",
+      "protocols": [
+        "OpenAiChat"
+      ],
+      "model_list_path": "/models",
+      "docs_url": "https://docs.ollama.com",
+      "keys_url": "https://ollama.com/settings/keys",
+      "verified_at": "2026-10-14"
+    },
+    {
+      "id": "vercel",
+      "display_name": "Vercel AI Gateway",
+      "base_url": "https://ai-gateway.vercel.sh/v1",
+      "protocols": [
+        "OpenAiChat"
+      ],
+      "model_list_path": "/models",
+      "docs_url": "https://vercel.com/docs/ai-gateway",
+      "keys_url": "https://vercel.com/dashboard",
+      "verified_at": "2026-10-14"
+    },
+    {
+      "id": "chutes",
+      "display_name": "Chutes",
+      "base_url": "https://llm.chutes.ai/v1",
+      "protocols": [
+        "OpenAiChat"
+      ],
+      "model_list_path": "/models",
+      "docs_url": "https://chutes.ai/docs",
+      "keys_url": "https://chutes.ai",
+      "verified_at": "2026-10-14"
+    },
+    {
+      "id": "featherless",
+      "display_name": "Featherless AI",
+      "base_url": "https://api.featherless.ai/v1",
+      "protocols": [
+        "OpenAiChat"
+      ],
+      "model_list_path": "/models",
+      "docs_url": "https://featherless.ai/docs",
+      "keys_url": "https://featherless.ai/account/api-keys",
+      "verified_at": "2026-10-14"
+    },
+    {
+      "id": "scaleway",
+      "display_name": "Scaleway Generative APIs",
+      "base_url": "https://api.scaleway.ai/v1",
+      "protocols": [
+        "OpenAiChat"
+      ],
+      "model_list_path": "/models",
+      "auth_check_path": "/models",
+      "docs_url": "https://www.scaleway.com/en/docs/generative-apis/",
+      "keys_url": "https://console.scaleway.com/iam/api-keys",
+      "verified_at": "2026-10-14"
+    },
+    {
+      "id": "llm7",
+      "display_name": "LLM7.io",
+      "base_url": "https://api.llm7.io/v1",
+      "protocols": [
+        "OpenAiChat"
+      ],
+      "model_list_path": "/models",
+      "docs_url": "https://llm7.io",
+      "keys_url": "https://dash.llm7.io",
+      "verified_at": "2026-10-14"
+    },
+    {
+      "id": "ollama",
+      "display_name": "Ollama (local)",
+      "base_url": "http://127.0.0.1:11434/v1",
+      "protocols": [
+        "OpenAiChat"
+      ],
+      "model_list_path": "/models",
+      "docs_url": "https://docs.ollama.com",
+      "local": true,
+      "requires_key": false,
+      "verified_at": "2026-10-14",
+      "_evidence": "documented default; probed live by Stage 3 on the user's machine"
+    },
+    {
+      "id": "lmstudio",
+      "display_name": "LM Studio (local)",
+      "base_url": "http://127.0.0.1:1234/v1",
+      "protocols": [
+        "OpenAiChat"
+      ],
+      "model_list_path": "/models",
+      "docs_url": "https://lmstudio.ai/docs",
+      "local": true,
+      "requires_key": false,
+      "verified_at": "2026-10-14",
+      "_evidence": "documented default; probed live by Stage 3 on the user's machine"
+    },
+    {
+      "id": "llamacpp",
+      "display_name": "llama.cpp server (local)",
+      "base_url": "http://127.0.0.1:8080/v1",
+      "protocols": [
+        "OpenAiChat"
+      ],
+      "model_list_path": "/models",
+      "docs_url": "https://github.com/ggml-org/llama.cpp",
+      "local": true,
+      "requires_key": false,
+      "verified_at": "2026-10-14",
+      "_evidence": "documented default; probed live by Stage 3 on the user's machine"
+    }
   ]
 }
