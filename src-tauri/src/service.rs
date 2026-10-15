@@ -109,7 +109,7 @@ pub fn route_for(app_id: &str, p: &ProviderDefinition) -> Option<Route> {
         codex::DESKTOP_APP_ID => Some(Route::Gateway),
         claude_code::APP_ID => Some(Route::Gateway),
         claude_desktop::APP_ID => Some(Route::Gateway),
-        a if agents::spec(a).is_some() => Some(Route::Gateway),
+        a if agents::spec(a).is_some() && agents::SUPPORTED_HERE => Some(Route::Gateway),
         _ => None,
     }
 }
@@ -138,7 +138,12 @@ fn validate_model_id(model: &str) -> R<&str> {
     Ok(m)
 }
 
+/// Quote a word for the shell that runs the launch line: POSIX single
+/// quotes, or double quotes for cmd.exe (which has no escape for `"`).
 fn quote(s: &str) -> String {
+    if cfg!(windows) {
+        return format!("\"{}\"", s.replace('"', ""));
+    }
     format!("'{}'", s.replace('\'', r"'\''"))
 }
 
@@ -946,12 +951,12 @@ impl Service {
     pub fn launch(&self, id: &str) -> R<()> {
         let record = self.state.get(id).map_err(|e| e.to_string())?.ok_or("Unknown connection.")?;
         if record.app_id == claude_desktop::APP_ID {
-            std::process::Command::new("open").args(["-b", claude_desktop::BUNDLE_ID]).status().map_err(|e| e.to_string())?;
+            open_app(claude_desktop::BUNDLE_ID)?;
             self.diag.record(Level::Info, "launch", "Opened Claude Desktop.");
             return Ok(());
         }
         if record.app_id == codex::DESKTOP_APP_ID {
-            std::process::Command::new("open").args(["-b", codex::DESKTOP_BUNDLE_ID]).status().map_err(|e| e.to_string())?;
+            open_app(codex::DESKTOP_BUNDLE_ID)?;
             self.diag.record(Level::Info, "launch", "Opened the Codex app.");
             return Ok(());
         }
@@ -970,6 +975,17 @@ impl Service {
 }
 
 #[cfg(target_os = "macos")]
+fn open_app(bundle_id: &str) -> R<()> {
+    let ok = std::process::Command::new("open").args(["-b", bundle_id]).status().map_err(|e| e.to_string())?.success();
+    if ok { Ok(()) } else { Err("The app could not be opened.".into()) }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn open_app(_bundle_id: &str) -> R<()> {
+    Err("Opening desktop apps from PrismFlow is macOS-only in this build; open the app yourself.".into())
+}
+
+#[cfg(target_os = "macos")]
 fn open_terminal(line: &str) -> R<()> {
     let script = line.replace('\\', "\\\\").replace('"', "\\\"");
     let status = std::process::Command::new("osascript")
@@ -980,9 +996,33 @@ fn open_terminal(line: &str) -> R<()> {
     if status.success() { Ok(()) } else { Err("Terminal refused the launch request.".into()) }
 }
 
-#[cfg(not(target_os = "macos"))]
-fn open_terminal(_line: &str) -> R<()> {
-    Err("Launching a terminal is only implemented on macOS in this build; run the command shown instead.".into())
+/// Linux: the first available terminal emulator runs the line in a shell
+/// that stays open afterwards.
+#[cfg(all(unix, not(target_os = "macos")))]
+fn open_terminal(line: &str) -> R<()> {
+    let keep = format!("{line}; exec \"${{SHELL:-/bin/sh}}\"");
+    let candidates: [(&str, Vec<&str>); 5] = [
+        ("x-terminal-emulator", vec!["-e", "sh", "-c"]),
+        ("gnome-terminal", vec!["--", "sh", "-c"]),
+        ("konsole", vec!["-e", "sh", "-c"]),
+        ("xfce4-terminal", vec!["-x", "sh", "-c"]),
+        ("xterm", vec!["-e", "sh", "-c"]),
+    ];
+    for (term, args) in candidates {
+        if crate::adapters::find_exe(term).is_some() {
+            std::process::Command::new(term).args(&args).arg(&keep).spawn().map_err(|e| format!("Could not open {term}: {e}"))?;
+            return Ok(());
+        }
+    }
+    Err("No terminal emulator found; run the command shown instead.".into())
+}
+
+/// Windows: a new console window that stays open (`cmd /k`).
+#[cfg(windows)]
+fn open_terminal(line: &str) -> R<()> {
+    std::process::Command::new("cmd").args(["/c", "start", "PrismFlow", "cmd", "/k", line]).spawn()
+        .map_err(|e| format!("Could not open a console: {e}"))?;
+    Ok(())
 }
 
 #[cfg(test)]

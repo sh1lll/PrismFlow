@@ -166,6 +166,7 @@ async fn real_claude_code_and_codex_through_the_gateway() {
     let helper = dir.path().join("prismflow-helper");
     let me = std::env::current_exe().unwrap();
     std::fs::write(&helper, format!("#!/bin/sh\nexec '{}' helper \"$@\"\n", me.display())).unwrap();
+    #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
         std::fs::set_permissions(&helper, std::fs::Permissions::from_mode(0o755)).unwrap();
@@ -238,6 +239,7 @@ async fn live_local_ollama(model: &str) {
     let helper = dir.path().join("prismflow-helper");
     let me = std::env::current_exe().unwrap();
     std::fs::write(&helper, format!("#!/bin/sh\nexec '{}' helper \"$@\"\n", me.display())).unwrap();
+    #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
         std::fs::set_permissions(&helper, std::fs::Permissions::from_mode(0o755)).unwrap();

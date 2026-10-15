@@ -44,7 +44,7 @@ pub fn find_binary() -> Option<PathBuf> {
         .map(|p| std::env::split_paths(&p).collect())
         .unwrap_or_default();
     candidates.extend(extra_bin_dirs());
-    candidates.into_iter().map(|d| d.join("codex")).find(|p| p.is_file())
+    candidates.iter().find_map(|d| super::exe_in(d, "codex"))
 }
 
 pub fn codex_home() -> PathBuf {

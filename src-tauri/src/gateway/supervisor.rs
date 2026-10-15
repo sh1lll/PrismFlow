@@ -88,7 +88,7 @@ pub fn find_node() -> Option<PathBuf> {
     let mut dirs: Vec<PathBuf> =
         std::env::var_os("PATH").map(|p| std::env::split_paths(&p).collect()).unwrap_or_default();
     dirs.extend(crate::adapters::extra_bin_dirs());
-    dirs.into_iter().map(|d| d.join("node")).find(|p| p.is_file())
+    dirs.iter().find_map(|d| crate::adapters::exe_in(d, "node"))
 }
 
 /// `"v22.23.1"` → 22.
@@ -273,7 +273,18 @@ pub fn spawn(rt: &GatewayRuntime, specs: &[UpstreamSpec], settings: &super::Runt
     let mut cmd = Command::new(&rt.node);
     cmd.arg("--require").arg(rt.preload()).arg(rt.entry());
     cmd.current_dir(work_dir).env_clear();
-    cmd.env("PATH", "/usr/bin:/bin");
+    if cfg!(windows) {
+        // Node on Windows needs the system directories and these variables.
+        for var in ["SystemRoot", "windir", "SystemDrive", "TEMP", "TMP", "USERPROFILE", "APPDATA", "LOCALAPPDATA"] {
+            if let Some(v) = std::env::var_os(var) {
+                cmd.env(var, v);
+            }
+        }
+        let root = std::env::var("SystemRoot").unwrap_or_else(|_| r"C:\Windows".into());
+        cmd.env("PATH", format!(r"{root}\System32;{root}"));
+    } else {
+        cmd.env("PATH", "/usr/bin:/bin");
+    }
     if let Some(home) = dirs::home_dir() {
         cmd.env("HOME", home);
     }

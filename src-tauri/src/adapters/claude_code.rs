@@ -62,7 +62,7 @@ pub fn find_binary() -> Option<PathBuf> {
     if let Some(home) = dirs::home_dir() {
         candidates.push(home.join(".claude").join("local"));
     }
-    candidates.into_iter().map(|d| d.join("claude")).find(|p| p.is_file())
+    candidates.iter().find_map(|d| super::exe_in(d, "claude"))
 }
 
 /// PATH for Claude Code child processes (its npm form needs `node`).

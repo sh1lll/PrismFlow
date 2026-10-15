@@ -7,7 +7,7 @@
 //! the script fetches the connection's revocable gateway token at launch
 //! (or the agent runs the token helper itself, for Pi).
 
-use super::{extra_bin_dirs, AppDetection};
+use super::AppDetection;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -49,12 +49,21 @@ pub fn find_binary(spec: &AgentSpec) -> Option<PathBuf> {
     if let Some(p) = std::env::var_os(env) {
         return Some(PathBuf::from(p));
     }
-    let mut dirs: Vec<PathBuf> = std::env::var_os("PATH").map(|p| std::env::split_paths(&p).collect()).unwrap_or_default();
-    dirs.extend(extra_bin_dirs());
-    dirs.into_iter().map(|d| d.join(spec.binary)).find(|p| p.is_file())
+    super::find_exe(spec.binary)
 }
 
+/// Launch scripts are POSIX shell; Windows support for terminal agents is
+/// not built yet (stated in the UI rather than half-working).
+pub const SUPPORTED_HERE: bool = cfg!(unix);
+
 pub fn detect(spec: &AgentSpec) -> AppDetection {
+    if !SUPPORTED_HERE {
+        return AppDetection {
+            app_id: spec.id.into(), display_name: spec.display_name.into(), installed: false, path: None,
+            version: None, version_verified: false,
+            notes: vec![format!("{} through PrismFlow is not available on Windows yet.", spec.display_name)],
+        };
+    }
     let mut d = AppDetection {
         app_id: spec.id.into(),
         display_name: spec.display_name.into(),

@@ -1,0 +1,54 @@
+# Signed, updatable releases on a version tag. Requires the repository
+# secrets listed in docs/RELEASE.md; scripts/release.sh refuses without them.
+name: release
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-14
+            node_platform: darwin-arm64
+          - os: ubuntu-24.04
+            node_platform: linux-x64
+          - os: windows-2022
+            node_platform: win-x64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Linux system libraries
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libdbus-1-dev pkg-config
+      - run: npm ci
+      - name: Build and sign
+        shell: bash
+        env:
+          PRISMFLOW_NODE_PLATFORM: ${{ matrix.node_platform }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          PRISMFLOW_UPDATER_PUBKEY: ${{ secrets.PRISMFLOW_UPDATER_PUBKEY }}
+          PRISMFLOW_UPDATE_ENDPOINT: ${{ secrets.PRISMFLOW_UPDATE_ENDPOINT }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: scripts/release.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: prismflow-${{ matrix.os }}
+          path: src-tauri/target/release/bundle/

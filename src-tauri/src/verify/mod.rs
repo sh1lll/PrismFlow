@@ -681,7 +681,8 @@ fn check_config(file: &Path, codex_bin: Option<&Path>) -> Result<String, String>
     Ok("Profile file is valid, PrismFlow-managed, and its credential helper exists.".into())
 }
 
-#[cfg(test)]
+// The fixtures are POSIX shell scripts standing in for the agent CLIs.
+#[cfg(all(test, unix))]
 mod tests {
     use super::*;
     use crate::config_engine;
