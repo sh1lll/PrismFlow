@@ -37,3 +37,8 @@ tempfile = "3"
 [[test]]
 name = "real_agents"
 harness = false
+
+# SPEC §21.4 performance budgets; runs only with PRISMFLOW_PERF=1.
+[[test]]
+name = "perf"
+harness = false

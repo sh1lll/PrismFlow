@@ -566,3 +566,81 @@ async fn engine_starts_and_serves_with_concurrency_limits_enabled() {
     assert_eq!(r.status(), 200);
     broker.stop().await;
 }
+
+// ---- Recorded-traffic corpus (tests/fixtures/recorded) -------------------
+
+fn recorded(name: &str) -> String {
+    std::fs::read_to_string(format!("{}/tests/fixtures/recorded/{name}", env!("CARGO_MANIFEST_DIR"))).unwrap()
+}
+
+async fn replay_harness(stream_body: String, json_body: String) -> (Harness, MockServer) {
+    let upstream = MockServer::start().await;
+    Mock::given(method("POST")).and(path("/v1/chat/completions")).and(body_string_contains("\"stream\":true"))
+        .respond_with(ResponseTemplate::new(200).insert_header("content-type", "text/event-stream").set_body_string(stream_body))
+        .with_priority(1).mount(&upstream).await;
+    Mock::given(method("POST")).and(path("/v1/chat/completions"))
+        .respond_with(ResponseTemplate::new(200).insert_header("content-type", "application/json").set_body_string(json_body))
+        .with_priority(2).mount(&upstream).await;
+    let dir = tempfile::tempdir().unwrap();
+    let diag_path = dir.path().join("diagnostics.jsonl");
+    let broker = Broker::new(0, dir.path().to_path_buf(), None);
+    let token = tokens::generate();
+    let spec = UpstreamSpec {
+        provider_id: "ollama".into(), engine_type: "openai_chat_completions", base_url: format!("{}/v1", upstream.uri()),
+        models: vec!["qwen3:4b-instruct-2507-q4_K_M".into()], key: "no-key-required".into(),
+    };
+    let binding = Binding { connection_id: "claude_code:ollama".into(), provider_id: "ollama".into(),
+        model: "qwen3:4b-instruct-2507-q4_K_M".into(), ..Default::default() };
+    broker.start(vec![spec], vec![(token.clone(), binding)]).await.expect("broker starts");
+    let h = Harness { broker, token, _dir: dir, diag_path, _upstream: MockServer::start().await };
+    (h, upstream)
+}
+
+/// Concatenate Anthropic `text_delta` texts from an SSE body.
+fn anthropic_text(sse: &str) -> String {
+    sse.lines()
+        .filter_map(|l| l.strip_prefix("data: "))
+        .filter_map(|d| serde_json::from_str::<serde_json::Value>(d).ok())
+        .filter(|v| v["delta"]["type"] == "text_delta")
+        .map(|v| v["delta"]["text"].as_str().unwrap_or_default().to_string())
+        .collect()
+}
+
+#[tokio::test]
+async fn recorded_ollama_text_survives_messages_and_responses_fronts() {
+    let (h, _up) = replay_harness(recorded("ollama-chat-text.sse"), recorded("ollama-chat-text.json")).await;
+    let sse = h.post("/v1/messages", messages_body(true, false)).header("x-api-key", &h.token).send().await.unwrap().text().await.unwrap();
+    assert_eq!(anthropic_text(&sse).trim(), "PRISMFLOW_OK", "{sse}");
+    assert!(sse.contains("\"stop_reason\":\"end_turn\""), "{sse}");
+
+    let v: serde_json::Value = h.post("/v1/messages", messages_body(false, false)).header("x-api-key", &h.token)
+        .send().await.unwrap().json().await.unwrap();
+    assert_eq!(v["content"][0]["text"].as_str().unwrap().trim(), "PRISMFLOW_OK", "{v}");
+
+    let r = h.post("/v1/responses", serde_json::json!({"model": "m", "stream": true, "input": "hi"}))
+        .header("authorization", format!("Bearer {}", h.token)).send().await.unwrap().text().await.unwrap();
+    assert!(r.contains("PRISMFLOW_OK") && r.contains("response.completed"), "{r}");
+    h.broker.stop().await;
+}
+
+#[tokio::test]
+async fn recorded_ollama_single_chunk_tool_call_is_translated_intact() {
+    let (h, _up) = replay_harness(recorded("ollama-chat-tool.sse"), recorded("ollama-chat-text.json")).await;
+    let sse = h.post("/v1/messages", messages_body(true, true)).header("x-api-key", &h.token).send().await.unwrap().text().await.unwrap();
+    for needle in ["\"type\":\"tool_use\"", "\"name\":\"read_file\"", "\"stop_reason\":\"tool_use\""] {
+        assert!(sse.contains(needle), "missing {needle} in:\n{sse}");
+    }
+    // The arguments arrive whole in one upstream chunk; they must not be lost or duplicated.
+    let args: String = sse.lines().filter_map(|l| l.strip_prefix("data: "))
+        .filter_map(|d| serde_json::from_str::<serde_json::Value>(d).ok())
+        .filter(|v| v["delta"]["type"] == "input_json_delta")
+        .map(|v| v["delta"]["partial_json"].as_str().unwrap_or_default().to_string()).collect();
+    let parsed: serde_json::Value = serde_json::from_str(&args).unwrap_or_else(|e| panic!("bad args {args:?}: {e}\n{sse}"));
+    assert_eq!(parsed["path"], "notes.txt");
+
+    let tools = serde_json::json!({"model": "m", "stream": true, "input": "read notes.txt",
+        "tools": [{"type": "function", "name": "read_file", "parameters": {"type": "object", "properties": {"path": {"type": "string"}}}}]});
+    let r = h.post("/v1/responses", tools).header("authorization", format!("Bearer {}", h.token)).send().await.unwrap().text().await.unwrap();
+    assert!(r.contains("\"type\":\"function_call\"") && r.contains("notes.txt"), "{r}");
+    h.broker.stop().await;
+}

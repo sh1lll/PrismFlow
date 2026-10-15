@@ -1,0 +1,1 @@
+{"id":"chatcmpl-184","object":"chat.completion","created":1792043810,"model":"qwen3:4b-instruct-2507-q4_K_M","system_fingerprint":"fp_ollama","choices":[{"index":0,"message":{"role":"assistant","content":"PRISMFLOW_OK"},"finish_reason":"stop"}],"usage":{"prompt_tokens":17,"completion_tokens":6,"total_tokens":23}}
