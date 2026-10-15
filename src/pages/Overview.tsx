@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import type { Page } from "../App";
-import { api, APP_NAME, AppDetection, Connection, DiagEvent, Provider, ROUTE_LABEL, STATUS_LABEL, errText, launchHint, statusTone, when } from "../api";
+import { api, APP_NAME, AppDetection, Connection, DiagEvent, Provider, STATUS_LABEL, errText, providerName, statusTone, when } from "../api";
 import GatewayCard from "./GatewayCard";
 
 export default function Overview({ go }: { go: (p: Page) => void }) {
@@ -21,7 +21,8 @@ export default function Overview({ go }: { go: (p: Page) => void }) {
       .catch((e) => setLoadError(errText(e)));
   }, []);
 
-  const keyed = providers.filter((p) => p.has_credential);
+  const ready = providers.filter((p) => p.has_credential);
+  const installed = apps.filter((a) => a.installed);
 
   return (
     <div>
@@ -29,49 +30,30 @@ export default function Overview({ go }: { go: (p: Page) => void }) {
       {loadError && <div className="card err">{loadError}</div>}
 
       <div className="card">
-        <div className="section-title">Connections</div>
+        <div className="section-title">Your connections</div>
         {connections.length === 0 ? (
           <div className="muted">
-            No connections yet.{" "}
-            {keyed.length === 0 ? (
-              <>Start by <a onClick={() => go("Providers")}>adding a provider key</a>.</>
-            ) : (
-              <><a onClick={() => go("Connections")}>Connect Codex or Claude Code</a> to a model.</>
-            )}
+            {ready.length === 0
+              ? <>Nothing connected yet. <a onClick={() => go("Providers")}>Add an AI provider</a> to start.</>
+              : <>Nothing connected yet. <a onClick={() => go("Connections")}>Connect an app</a>.</>}
           </div>
         ) : (
           connections.map((c) => (
             <div key={c.id} className="row spread line">
-              <div>
-                <b>{c.model}</b> <span className="muted">via {c.provider_id} → {APP_NAME[c.app_id]} · {ROUTE_LABEL[c.route]} (<code>{launchHint(c)}</code>)</span>
-              </div>
+              <span><b>{APP_NAME[c.app_id]}</b> <span className="muted">→ {c.model} ({providerName(providers, c.provider_id)})</span></span>
               <span className={`badge ${statusTone(c.status)}`}>{STATUS_LABEL[c.status]}</span>
             </div>
           ))
         )}
       </div>
 
-      <div className="grid2">
-        <div className="card">
-          <div className="section-title">Provider keys</div>
-          {keyed.length === 0 ? <div className="muted">None stored.</div> : keyed.map((p) => <div key={p.id}>{p.display_name}</div>)}
-          <div className="muted small">Keys live only in your system's secure store.</div>
-        </div>
-        {apps.length === 0 ? (
-          <div className="card muted">Detecting applications…</div>
-        ) : (
-          apps.map((a) => (
-            <div key={a.app_id} className="card">
-              <div className="section-title">{a.display_name}</div>
-              {a.installed ? (
-                <div>
-                  {a.version} <span className={a.version_verified ? "ok" : "warn"}>{a.version_verified ? "· verified version" : "· unverified version"}</span>
-                </div>
-              ) : (
-                <div className="warn">Not installed</div>
-              )}
-            </div>
-          ))
+      <div className="card">
+        <div className="section-title">Apps on this computer</div>
+        {apps.length === 0 ? <div className="muted">Looking…</div> : (
+          <div className="chips">
+            {installed.map((a) => <span key={a.app_id} className="chip">{a.display_name}</span>)}
+            {installed.length === 0 && <span className="muted">None of the supported apps were found.</span>}
+          </div>
         )}
       </div>
 
@@ -79,13 +61,9 @@ export default function Overview({ go }: { go: (p: Page) => void }) {
 
       {errors.length > 0 && (
         <div className="card">
-          <div className="section-title">Recent failures</div>
-          {errors.map((e, i) => (
-            <div key={i} className="line">
-              <span className="muted small">{when(e.ts)}</span> {e.message}
-            </div>
-          ))}
-          <a onClick={() => go("Diagnostics")}>Open diagnostics</a>
+          <div className="section-title">Recent problems</div>
+          {errors.map((e, i) => <div key={i} className="line small"><span className="muted">{when(e.ts)}</span> {e.message}</div>)}
+          <a onClick={() => go("Diagnostics")}>See all</a>
         </div>
       )}
     </div>

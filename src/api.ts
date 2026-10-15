@@ -43,7 +43,7 @@ export const APP_NAME: Record<string, string> = {
 
 export const ROUTE_LABEL: Record<Route, string> = {
   direct: "Direct",
-  gateway: "Via PrismFlow gateway",
+  gateway: "Through PrismFlow",
 };
 
 export type GatewayPhase = "stopped" | "starting" | "ready" | "restarting" | "failed";
@@ -205,6 +205,11 @@ export const api = {
   restartGateway: () => invoke<GatewayStatus>("restart_gateway"),
 };
 
+/** A provider's display name, falling back to its id. */
+export function providerName(providers: Provider[], id: string): string {
+  return providers.find((p) => p.id === id)?.display_name ?? id;
+}
+
 /** The command a user runs to start the app with a connection. */
 export function launchHint(c: Connection): string {
   if (TERMINAL_AGENTS.includes(c.app_id as AppId)) return c.managed_file;
@@ -214,17 +219,17 @@ export function launchHint(c: Connection): string {
 }
 
 export const STATUS_LABEL: Record<ConnectionStatus, string> = {
-  NotConfigured: "Not configured",
-  NeedsCredentials: "Needs credentials",
-  ConfigurationInvalid: "Configuration invalid",
-  AuthenticationFailed: "Authentication failed",
-  ProviderUnavailable: "Provider unavailable",
-  ModelUnavailable: "Model unavailable",
-  PartiallyCompatible: "Partially compatible",
-  ConnectedAndVerified: "Connected and verified",
+  NotConfigured: "Not set up",
+  NeedsCredentials: "Needs a key",
+  ConfigurationInvalid: "Setup is broken",
+  AuthenticationFailed: "Key rejected",
+  ProviderUnavailable: "Can't reach the provider",
+  ModelUnavailable: "Model not available",
+  PartiallyCompatible: "Chat works, tools don't",
+  ConnectedAndVerified: "Working",
   Disconnected: "Disconnected",
-  RequiresAttention: "Requires attention",
-  Unverified: "Configured — not verified",
+  RequiresAttention: "Needs attention",
+  Unverified: "Not tested yet",
 };
 
 export function statusTone(s: ConnectionStatus): "ok" | "warn" | "err" | "muted" {

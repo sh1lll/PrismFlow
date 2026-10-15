@@ -1,25 +1,44 @@
 import RoutingPanel from "./RoutingPanel";
 import { useEffect, useMemo, useState } from "react";
 import {
-  api, APP_IDS, APP_NAME, AppId, Connection, ConnectPreview, ModelInfo, Provider, ROUTE_LABEL, STATUS_LABEL, StageResult,
-  errText, launchHint, statusTone, when,
+  api, APP_IDS, APP_NAME, AppId, Connection, ConnectPreview, ModelInfo, Provider, STATUS_LABEL, StageResult,
+  errText, launchHint, providerName, statusTone, when,
 } from "../api";
 
-const OUTCOME_TONE: Record<string, string> = { Pass: "ok", Warn: "warn", Fail: "err", Skipped: "muted" };
+const OUTCOME: Record<string, { label: string; tone: string }> = {
+  Pass: { label: "OK", tone: "ok" },
+  Warn: { label: "Check", tone: "warn" },
+  Fail: { label: "Failed", tone: "err" },
+  Skipped: { label: "Skipped", tone: "muted" },
+};
+
+/** Plain names for the test steps. */
+const STEP: Record<string, string> = {
+  Configuration: "Setup",
+  Credential: "Key",
+  Endpoint: "Provider reachable",
+  Model: "Model",
+  Gateway: "PrismFlow service",
+  "End-to-end": "Reply",
+  "Tool calling": "Tools",
+  "In Claude Desktop": "In Claude Desktop",
+};
 
 function Stages({ stages }: { stages: StageResult[] }) {
   return (
     <div className="stages">
       {stages.map((s, i) => (
         <div key={i} className="stage">
-          <span className={`badge ${OUTCOME_TONE[s.outcome]}`}>{s.outcome}</span>{" "}
-          <b>{s.stage}. {s.name}</b>
+          <span className={`badge ${OUTCOME[s.outcome].tone}`}>{OUTCOME[s.outcome].label}</span> <b>{STEP[s.name] ?? s.name}</b>
           <div className="small pre-wrap muted">{s.detail}</div>
         </div>
       ))}
     </div>
   );
 }
+
+/** Embedding and similar models can't chat, so they are no use to a coding app. */
+const notForChat = (id: string) => /embed|rerank|whisper|tts|moderation/i.test(id);
 
 function NewConnection({ providers, onDone }: { providers: Provider[]; onDone: () => void }) {
   const [appId, setAppId] = useState<AppId>("codex_cli");
@@ -52,6 +71,7 @@ function NewConnection({ providers, onDone }: { providers: Provider[]; onDone: (
     if (!models) return [];
     const f = filter.toLowerCase();
     return models
+      .filter((m) => !notForChat(m.id))
       .filter((m) => !toolsOnly || m.reports_tools !== false)
       .filter((m) => !f || m.id.toLowerCase().includes(f) || (m.name ?? "").toLowerCase().includes(f))
       .slice(0, 200);
@@ -71,6 +91,8 @@ function NewConnection({ providers, onDone }: { providers: Provider[]; onDone: (
     try {
       await api.connect(appId, providerId, model);
       setPreview(null);
+      setModel("");
+      setModels(null);
       onDone();
     } catch (e) { setError(errText(e)); }
     finally { setBusy(""); }
@@ -78,51 +100,36 @@ function NewConnection({ providers, onDone }: { providers: Provider[]; onDone: (
 
   return (
     <div className="card">
-      <div className="section-title">Connect an application to a model</div>
-      <label className="small muted">Application</label>
+      <div className="section-title">Connect an app</div>
+      <label className="small muted">App</label>
       <select value={appId} onChange={(e) => setAppId(e.target.value as AppId)}>
         {APP_IDS.map((a) => <option key={a} value={a}>{APP_NAME[a]}</option>)}
       </select>
-      <label className="small muted mt-block">Provider</label>
+      <label className="small muted mt-block">AI provider</label>
       <select value={providerId} onChange={(e) => setProviderId(e.target.value)}>
         {eligible.map((p) => (
-          <option key={p.id} value={p.id}>
-            {p.display_name} · {ROUTE_LABEL[p.routes[appId]!]}{p.has_credential || p.key_optional ? "" : " — no key yet"}
-          </option>
+          <option key={p.id} value={p.id}>{p.display_name}{p.has_credential || p.key_optional ? "" : " (needs a key)"}</option>
         ))}
       </select>
-      {provider && provider.routes[appId] === "gateway" && (
-        <div className="muted small mt">
-          {appId === "claude_code"
-            ? "Claude Code speaks the Anthropic Messages API; PrismFlow's local gateway translates it for this provider."
-            : appId === "codex_cli"
-              ? "This provider has no Responses API; PrismFlow's local gateway translates Codex's requests."
-              : `${APP_NAME[appId]} reaches every provider through PrismFlow's local gateway with a revocable local token.`}
-        </div>
-      )}
-      {provider && !provider.has_credential && !provider.key_optional && <div className="warn small mt">Add a {provider.display_name} key under Providers first.</div>}
+      {provider && !provider.has_credential && !provider.key_optional && <div className="warn small mt">Add a {provider.display_name} key on the Providers page first.</div>}
 
       <label className="small muted mt-block">Model</label>
       <div className="row">
-        <input placeholder="Model ID, e.g. openai/gpt-oss-120b" value={model} onChange={(e) => setModel(e.target.value)} />
-        <button className="ghost" disabled={busy !== ""} onClick={loadModels}>{busy === "models" ? "Loading…" : "Browse models"}</button>
+        <input placeholder="Type a model name, or browse" value={model} onChange={(e) => setModel(e.target.value)} />
+        <button className="ghost" disabled={busy !== ""} onClick={loadModels}>{busy === "models" ? "Loading…" : "Browse"}</button>
       </div>
 
       {models && (
         <div className="picker">
           <div className="row">
-            <input placeholder={`Filter ${models.length} models`} value={filter} onChange={(e) => setFilter(e.target.value)} />
-            <label className="small nowrap"><input type="checkbox" className="check" checked={toolsOnly} onChange={(e) => setToolsOnly(e.target.checked)} /> Tool-capable only</label>
+            <input placeholder="Search models" value={filter} onChange={(e) => setFilter(e.target.value)} />
+            <label className="small nowrap" title="Coding apps need models that can use tools"><input type="checkbox" className="check" checked={toolsOnly} onChange={(e) => setToolsOnly(e.target.checked)} /> Good for coding</label>
           </div>
-          <div className="small muted">Listed models are not guaranteed to work with your key; verification checks that. Tool support here is provider-reported.</div>
           <div className="model-list">
             {shown.map((m) => (
               <button key={m.id} className={m.id === model ? "model active" : "model"} onClick={() => setModel(m.id)}>
-                <span>{m.id}</span>
-                <span className="muted small">
-                  {m.context_length ? `${Math.round(m.context_length / 1000)}k ctx` : ""}
-                  {m.reports_tools === true ? " · tools" : m.reports_tools === false ? " · no tools" : ""}
-                </span>
+                <span>{m.name && m.name !== m.id ? m.name : m.id}</span>
+                <span className="muted small">{m.reports_tools === false ? "can't use tools" : ""}</span>
               </button>
             ))}
             {shown.length === 0 && <div className="muted small">No models match.</div>}
@@ -132,24 +139,22 @@ function NewConnection({ providers, onDone }: { providers: Provider[]; onDone: (
 
       <div className="row mt">
         <button className="primary" disabled={!model.trim() || busy !== "" || !(provider?.has_credential || provider?.key_optional)} onClick={doPreview}>
-          {busy === "preview" ? "Preparing…" : "Review changes"}
+          {busy === "preview" ? "Checking…" : "Next"}
         </button>
       </div>
       {error && <div className="err small mt pre-wrap">{error}</div>}
 
       {preview && (
         <div className="mt">
-          <div className="section-title">Review before connecting</div>
-          <div className="small">File: <code>{preview.file}</code></div>
-          <ul className="small">{preview.summary.map((s, i) => <li key={i}><code>{s}</code></li>)}</ul>
-          {preview.warnings.map((w, i) => <div key={i} className="warn small">• {w}</div>)}
+          <div className="section-title">Ready to connect</div>
+          {preview.warnings.map((w, i) => <div key={i} className="small mt-s">• {w}</div>)}
           <details className="mt">
-            <summary className="small">Show the file PrismFlow will write</summary>
-            {preview.before && <><div className="small muted">Current</div><pre>{preview.before}</pre></>}
-            <div className="small muted">After</div>
-            <pre>{preview.after}</pre>
+            <summary className="small">Details</summary>
+            <div className="small muted">How to start it: <code className="selectable">{preview.launch_command}</code></div>
+            {preview.file && <div className="small muted">File: <code className="selectable">{preview.file}</code></div>}
+            <ul className="small muted">{preview.summary.map((s, i) => <li key={i}>{s}</li>)}</ul>
+            {preview.after && <pre>{preview.after}</pre>}
           </details>
-          <div className="small mt">Use it with <code>{preview.launch_command}</code></div>
           <div className="row mt">
             <button className="primary" disabled={busy !== ""} onClick={doConnect}>{busy === "connect" ? "Connecting…" : "Connect"}</button>
             <button className="ghost" onClick={() => setPreview(null)}>Cancel</button>
@@ -165,6 +170,8 @@ function ConnectionCard({ c, providers, onChange }: { c: Connection; providers: 
   const [msg, setMsg] = useState<{ tone: string; text: string } | null>(null);
   const [running, setRunning] = useState<number[]>([]);
   useEffect(() => { api.runningSessions(c.id).then(setRunning).catch(() => setRunning([])); }, [c]);
+  const app = APP_NAME[c.app_id];
+  const desktop = c.app_id.endsWith("_desktop");
 
   async function run(label: string, f: () => Promise<unknown>, ok?: string) {
     setBusy(label);
@@ -180,26 +187,14 @@ function ConnectionCard({ c, providers, onChange }: { c: Connection; providers: 
   return (
     <div className="card">
       <div className="row spread">
-        <div>
-          <b>{c.model}</b> <span className="muted">via {c.provider_id} → {APP_NAME[c.app_id]}</span>{" "}
-          <span className="badge muted">{ROUTE_LABEL[c.route]}</span>
-        </div>
+        <span><b>{app}</b> <span className="muted">→ {c.model} ({providerName(providers, c.provider_id)})</span></span>
         <span className={`badge ${statusTone(c.status)}`}>{STATUS_LABEL[c.status]}</span>
       </div>
-      <div className="small muted">
-        <code>{launchHint(c)}</code> · {c.managed_file}
-      </div>
-      {c.status === "Unverified" && (
-        <div className="warn small mt">Written but not verified. Run verification before relying on it.</div>
-      )}
-      {running.length > 0 && (
-        <div className="warn small mt">
-          {running.length} session{running.length > 1 ? "s are" : " is"} running on this profile (pid {running.join(", ")}). Any started before your last change still use the old settings; restart to apply it.
-        </div>
-      )}
+      {c.status === "Unverified" && <div className="small muted mt-s">Press Test to check that it works.</div>}
+      {running.length > 0 && <div className="warn small mt-s">Restart {app} to use the new settings.</div>}
       {c.last_report && (
         <details className="mt" open={c.status !== "ConnectedAndVerified"}>
-          <summary className="small">Last verification · {when(c.last_report.finished_at)}</summary>
+          <summary className="small">Last test · {when(c.last_report.finished_at)}</summary>
           <Stages stages={c.last_report.stages} />
         </details>
       )}
@@ -207,22 +202,21 @@ function ConnectionCard({ c, providers, onChange }: { c: Connection; providers: 
       {c.route === "gateway" && <RoutingPanel c={c} providers={providers} onSaved={onChange} />}
       <div className="row mt">
         <button className="primary" disabled={busy !== ""} onClick={() => run("verify", () => api.verify(c.id))}>
-          {busy === "verify" ? "Verifying… (up to a few minutes)" : "Verify"}
+          {busy === "verify" ? "Testing… (can take a few minutes)" : "Test"}
         </button>
-        <button className="ghost" disabled={busy !== ""} onClick={() => run("launch", () => api.launch(c.id), `Opened ${APP_NAME[c.app_id]}.`)}>{c.app_id.endsWith("_desktop") ? "Open app" : "Launch in Terminal"}</button>
-        <button
-          className="danger"
-          disabled={busy !== ""}
-          onClick={() => {
-            if (confirm(`Disconnect? PrismFlow deletes ${c.managed_file} (a backup is kept)${c.route === "gateway" ? " and revokes this connection's local token" : ""}. Your own ${APP_NAME[c.app_id]} config is untouched.`)) {
-              run("disconnect", () => api.disconnect(c.id));
-            }
-          }}
-        >
+        <button className="ghost" disabled={busy !== ""} onClick={() => run("launch", () => api.launch(c.id), `Opened ${app}.`)}>{desktop ? "Open app" : "Open in Terminal"}</button>
+        <button className="danger" disabled={busy !== ""}
+          onClick={() => { if (confirm(`Disconnect ${app}? PrismFlow removes only its own settings.`)) run("disconnect", () => api.disconnect(c.id)); }}>
           Disconnect
         </button>
       </div>
       {msg && <div className={`small mt pre-wrap ${msg.tone}`}>{msg.text}</div>}
+      <details className="mt">
+        <summary className="small">Details</summary>
+        <div className="small muted">How to start it yourself: <code className="selectable">{launchHint(c)}</code></div>
+        {c.managed_file && <div className="small muted">PrismFlow's file: <code className="selectable">{c.managed_file}</code></div>}
+        <div className="small muted">{c.route === "gateway" ? "Goes through PrismFlow (keep PrismFlow open)." : "Talks to the provider directly."}</div>
+      </details>
     </div>
   );
 }
@@ -243,7 +237,7 @@ export default function Connections() {
       {error && <div className="card err">{error}</div>}
       {connections?.map((c) => <ConnectionCard key={c.id} c={c} providers={providers ?? []} onChange={load} />)}
       {providers && <NewConnection providers={providers} onDone={load} />}
-      <p className="muted small">Connecting the same app and provider again switches its model; PrismFlow's file is updated in place.</p>
+      <p className="muted small">To switch models, connect the same app and provider again.</p>
     </div>
   );
 }
@@ -253,22 +247,20 @@ function GuidedSetup({ id }: { id: string }) {
   const [error, setError] = useState("");
   const [copied, setCopied] = useState(false);
   return (
-    <details className="mt">
-      <summary className="small">Set up in Claude Desktop</summary>
+    <details className="mt" open>
+      <summary className="small">Finish setup in Claude Desktop</summary>
       {!info ? (
-        <div className="mt">
-          <div className="small muted">This shows the local token once so you can paste it into Claude Desktop. It works only on this computer, through PrismFlow's gateway, and Disconnect revokes it.</div>
-          <button className="ghost mt" onClick={() => api.guidedSetup(id).then(setInfo).catch((e) => setError(errText(e)))}>Show setup values</button>
-        </div>
+        <button className="ghost mt" onClick={() => api.guidedSetup(id).then(setInfo).catch((e) => setError(errText(e)))}>Show what to enter</button>
       ) : (
         <div className="mt small">
           <ol>{info.steps.map((s, i) => <li key={i}>{s}</li>)}</ol>
-          <div>Gateway base URL: <code className="selectable">{info.gateway_url}</code></div>
+          <div>Address: <code className="selectable">{info.gateway_url}</code></div>
           <div>Model: <code className="selectable">{info.model}</code></div>
           <div className="row mt-s">
-            <span>API key ({info.auth_scheme}):</span>
-            <button className="ghost" onClick={() => navigator.clipboard.writeText(info.token).then(() => setCopied(true))}>{copied ? "Copied" : "Copy token"}</button>
+            <span>Key:</span>
+            <button className="ghost" onClick={() => navigator.clipboard.writeText(info.token).then(() => setCopied(true))}>{copied ? "Copied" : "Copy"}</button>
           </div>
+          <div className="muted">This key only works on this computer. Disconnect cancels it.</div>
         </div>
       )}
       {error && <div className="err small mt">{error}</div>}

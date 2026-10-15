@@ -2,64 +2,65 @@ import { useState } from "react";
 import { api, AppId, Connection, Effort, ModelRef, Provider, Routing, Tier, errText } from "../api";
 
 const TIERS: { tier: Tier; label: string }[] = [
+  { tier: "opus", label: "Hard tasks (Opus)" },
+  { tier: "sonnet", label: "Everyday tasks (Sonnet)" },
+  { tier: "haiku", label: "Quick tasks (Haiku)" },
   { tier: "fable", label: "Fable" },
-  { tier: "opus", label: "Opus" },
-  { tier: "sonnet", label: "Sonnet" },
-  { tier: "haiku", label: "Haiku (also background tasks)" },
-  { tier: "subagent", label: "Subagents" },
+  { tier: "subagent", label: "Helpers (subagents)" },
 ];
 
 const EFFORTS: { e: Effort; label: string }[] = [
-  { e: "from_client", label: "From client" },
+  { e: "from_client", label: "Let the app decide" },
   { e: "off", label: "Off" },
   { e: "low", label: "Low" },
   { e: "medium", label: "Medium" },
   { e: "high", label: "High" },
-  { e: "xhigh", label: "X-High" },
-  { e: "max", label: "Max" },
+  { e: "xhigh", label: "Very high" },
+  { e: "max", label: "Maximum" },
 ];
 
-/** "provider::model" text ⇄ ModelRef. "::" because model IDs themselves contain "/". */
-function parseRef(text: string): ModelRef | null {
-  const i = text.indexOf("::");
-  if (i <= 0) return null;
-  const provider_id = text.slice(0, i).trim();
-  const model = text.slice(i + 2).trim();
-  return provider_id && model ? { provider_id, model } : null;
+function RefPicker({ value, onChange, providers, placeholder }: {
+  value: ModelRef | undefined; onChange: (r: ModelRef | undefined) => void; providers: Provider[]; placeholder: string;
+}) {
+  const pid = value?.provider_id ?? "";
+  return (
+    <div className="row">
+      <select value={pid} onChange={(e) => onChange(e.target.value ? { provider_id: e.target.value, model: value?.model ?? "" } : undefined)}>
+        <option value="">{placeholder}</option>
+        {providers.map((p) => <option key={p.id} value={p.id}>{p.display_name}</option>)}
+      </select>
+      {pid && <input placeholder="Model name" value={value?.model ?? ""} onChange={(e) => onChange({ provider_id: pid, model: e.target.value })} />}
+    </div>
+  );
 }
-const showRef = (r?: ModelRef) => (r ? `${r.provider_id}::${r.model}` : "");
 
 export default function RoutingPanel({ c, providers, onSaved }: { c: Connection; providers: Provider[]; onSaved: () => void }) {
   const [r, setR] = useState<Routing>(c.routing);
-  const [tierText, setTierText] = useState<Record<string, string>>(
-    Object.fromEntries(TIERS.map(({ tier }) => [tier, showRef(c.routing.tiers[tier])])),
-  );
-  const [fallbackText, setFallbackText] = useState(c.routing.fallbacks.map(showRef).join("\n"));
   const [msg, setMsg] = useState<{ tone: string; text: string } | null>(null);
   const [busy, setBusy] = useState(false);
   const claude = c.app_id === "claude_code";
   const usable = providers.filter((p) => (p.has_credential || p.key_optional) && p.routes[c.app_id as AppId]);
 
+  const setTier = (t: Tier, ref: ModelRef | undefined) => {
+    const tiers = { ...r.tiers };
+    if (ref) tiers[t] = ref; else delete tiers[t];
+    setR({ ...r, tiers });
+  };
+  const setFallback = (i: number, ref: ModelRef | undefined) => {
+    const f = [...r.fallbacks];
+    if (ref) f[i] = ref; else f.splice(i, 1);
+    setR({ ...r, fallbacks: f });
+  };
+
   async function save() {
     setMsg(null);
-    const tiers: Routing["tiers"] = {};
-    for (const { tier, label } of TIERS) {
-      const t = tierText[tier]?.trim();
-      if (!t) continue;
-      const ref = parseRef(t);
-      if (!ref) return setMsg({ tone: "err", text: `${label}: write it as provider::model, e.g. groq::llama-3.3-70b-versatile` });
-      tiers[tier] = ref;
-    }
-    const fallbacks: ModelRef[] = [];
-    for (const line of fallbackText.split("\n").map((l) => l.trim()).filter(Boolean)) {
-      const ref = parseRef(line);
-      if (!ref) return setMsg({ tone: "err", text: `Fallback "${line}": write it as provider::model` });
-      fallbacks.push(ref);
-    }
+    const clean = (x: ModelRef) => x.provider_id && x.model.trim();
+    const tiers = Object.fromEntries(Object.entries(r.tiers).filter(([, v]) => v && clean(v)));
+    const fallbacks = r.fallbacks.filter(clean);
     setBusy(true);
     try {
       await api.setRouting(c.id, { ...r, tiers: claude ? tiers : {}, fallbacks });
-      setMsg({ tone: "ok", text: "Saved. Verify the connection again to confirm the new routes." });
+      setMsg({ tone: "ok", text: "Saved. Press Test to check it." });
       onSaved();
     } catch (e) {
       setMsg({ tone: "err", text: errText(e) });
@@ -70,47 +71,46 @@ export default function RoutingPanel({ c, providers, onSaved }: { c: Connection;
 
   return (
     <details className="mt">
-      <summary className="small">Routing: models per tier, reasoning, fallbacks</summary>
-      <div className="small muted mt">
-        Models are written as <code>provider::model</code>. Providers you can use here: {usable.map((p) => p.id).join(", ") || "none with a key yet"}.
-      </div>
+      <summary className="small">More options</summary>
 
       {claude && (
         <div className="mt">
-          <div className="section-title small">Per-tier models (empty = {c.model})</div>
+          <div className="section-title small">Use a different model for…</div>
           {TIERS.map(({ tier, label }) => (
-            <div key={tier} className="row mt-s">
-              <span className="small tier-label">{label}</span>
-              <input value={tierText[tier] ?? ""} placeholder={`${c.provider_id}::${c.model}`}
-                onChange={(e) => setTierText({ ...tierText, [tier]: e.target.value })} />
-              <select value={r.tier_reasoning[tier] ?? "inherit"} onChange={(e) => setR({ ...r, tier_reasoning: { ...r.tier_reasoning, [tier]: e.target.value as Effort } })}>
-                <option value="inherit">Reasoning: inherit</option>
-                {EFFORTS.map(({ e, label }) => <option key={e} value={e}>Reasoning: {label}</option>)}
-              </select>
+            <div key={tier} className="mt-s">
+              <div className="small">{label}</div>
+              <RefPicker value={r.tiers[tier]} onChange={(ref) => setTier(tier, ref)} providers={usable} placeholder={`Same as main (${c.model})`} />
             </div>
           ))}
         </div>
       )}
 
       <div className="mt">
-        <label className="small muted">Reasoning policy</label>
+        <label className="small">Thinking effort</label>
         <select value={r.reasoning} onChange={(e) => setR({ ...r, reasoning: e.target.value as Effort })}>
           {EFFORTS.map(({ e, label }) => <option key={e} value={e}>{label}</option>)}
         </select>
-        <div className="small muted">From client keeps the agent's own setting. Providers translate only the controls their API supports.</div>
       </div>
 
       <div className="mt">
-        <label className="small muted">Fallback models, tried in order when the chosen one fails before any output (one per line)</label>
-        <textarea rows={3} value={fallbackText} onChange={(e) => setFallbackText(e.target.value)} placeholder="groq::llama-3.3-70b-versatile" />
-        <label className="small mt-block">
-          <input type="checkbox" className="check" checked={r.fallback_consent} onChange={(e) => setR({ ...r, fallback_consent: e.target.checked })} />
-          I understand one request may reach, and be billed by, several providers before it succeeds.
-        </label>
+        <div className="small">Backup models</div>
+        <div className="small muted">If the main model fails, these are tried in order.</div>
+        {r.fallbacks.map((f, i) => (
+          <div key={i} className="mt-s"><RefPicker value={f} onChange={(ref) => setFallback(i, ref)} providers={usable} placeholder="Remove" /></div>
+        ))}
+        {r.fallbacks.length < 5 && (
+          <button className="ghost mt-s" onClick={() => setR({ ...r, fallbacks: [...r.fallbacks, { provider_id: usable[0]?.id ?? "", model: "" }] })}>Add a backup</button>
+        )}
+        {r.fallbacks.length > 0 && (
+          <label className="small mt-block">
+            <input type="checkbox" className="check" checked={r.fallback_consent} onChange={(e) => setR({ ...r, fallback_consent: e.target.checked })} />
+            I understand a failed request may be charged by more than one provider.
+          </label>
+        )}
       </div>
 
       <div className="row mt">
-        <button className="primary" disabled={busy} onClick={save}>{busy ? "Saving…" : "Save routing"}</button>
+        <button className="primary" disabled={busy} onClick={save}>{busy ? "Saving…" : "Save"}</button>
       </div>
       {msg && <div className={`small mt pre-wrap ${msg.tone}`}>{msg.text}</div>}
     </details>

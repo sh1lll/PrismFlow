@@ -88,3 +88,5 @@ select { background: #0d0d12; border: 1px solid var(--line); color: var(--text);
 .msg-files { color: var(--accent); }
 .composer { display: flex; flex-direction: column; gap: 6px; border-top: 1px solid var(--line); padding-top: 10px; }
 @media (max-width: 900px) { .sessions { grid-template-columns: 1fr; } }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip { border: 1px solid var(--line); border-radius: 999px; padding: 3px 10px; font-size: 13px; }
