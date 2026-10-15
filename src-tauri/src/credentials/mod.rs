@@ -1,5 +1,6 @@
 pub mod keychain;
 pub mod memory;
+pub mod oauth;
 pub mod signin;
 
 use thiserror::Error;

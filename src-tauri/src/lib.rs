@@ -50,6 +50,19 @@ async fn set_credential(svc: State<'_, Arc<Service>>, provider_id: String, secre
     Ok(())
 }
 
+/// "Sign in with OpenRouter" (official OAuth): the new key is saved like a pasted one.
+#[tauri::command]
+async fn openrouter_sign_in(svc: State<'_, Arc<Service>>) -> Cmd<()> {
+    use credentials::oauth;
+    let key = oauth::openrouter_sign_in(&svc.client, oauth::OPENROUTER_AUTH, oauth::OPENROUTER_EXCHANGE, oauth::open_in_browser).await?;
+    let s = svc.inner().clone();
+    blocking(move || s.set_credential("openrouter", &key)).await??;
+    if svc.provider_in_gateway("openrouter") {
+        svc.sync_gateway().await?;
+    }
+    Ok(())
+}
+
 #[tauri::command]
 async fn delete_credential(svc: State<'_, Arc<Service>>, provider_id: String) -> Cmd<()> {
     let svc = svc.inner().clone();
@@ -440,6 +453,7 @@ pub fn run() {
         .manage(sessions::Sessions::open(&dir))
         .invoke_handler(tauri::generate_handler![
             keychain_waiting,
+            openrouter_sign_in,
             list_providers,
             set_credential,
             delete_credential,

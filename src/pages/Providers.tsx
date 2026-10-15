@@ -48,6 +48,20 @@ function KeyEditor({ p, onChange, setMsg }: { p: Provider; onChange: () => void;
     }
   }
 
+  async function signIn() {
+    setBusy(true);
+    setMsg({ tone: "muted", text: "Finish signing in in your browser…" });
+    try {
+      await api.openrouterSignIn();
+      setMsg({ tone: "ok", text: "Signed in. Key saved." });
+      onChange();
+    } catch (e) {
+      setMsg({ tone: "err", text: errText(e) });
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return editing ? (
     <div className="row">
       <input type="password" autoComplete="off" placeholder="Paste your key" value={secret} onChange={(e) => setSecret(e.target.value)} />
@@ -56,7 +70,8 @@ function KeyEditor({ p, onChange, setMsg }: { p: Provider; onChange: () => void;
     </div>
   ) : (
     <div className="row">
-      <button className="ghost" onClick={() => setEditing(true)}>{p.has_credential ? "Change key" : p.key_optional ? "Add key (optional)" : "Add key"}</button>
+      {p.id === "openrouter" && !p.has_credential && <button className="primary" disabled={busy} onClick={signIn}>Sign in with OpenRouter</button>}
+      <button className="ghost" onClick={() => setEditing(true)}>{p.has_credential ? "Change key" : p.key_optional ? "Add key (optional)" : p.id === "openrouter" ? "Paste a key instead" : "Add key"}</button>
       {p.has_credential && <button className="danger" onClick={remove}>Remove key</button>}
     </div>
   );
