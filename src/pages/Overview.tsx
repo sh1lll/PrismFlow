@@ -26,7 +26,7 @@ export default function Overview({ go }: { go: (p: Page) => void }) {
 
   return (
     <div>
-      <h1>Overview</h1>
+      <div className="row spread"><h1>Overview</h1><button className="primary" onClick={() => go("Set up")}>Set up an app</button></div>
       {loadError && <div className="card err">{loadError}</div>}
 
       <div className="card">
@@ -34,8 +34,8 @@ export default function Overview({ go }: { go: (p: Page) => void }) {
         {connections.length === 0 ? (
           <div className="muted">
             {ready.length === 0
-              ? <>Nothing connected yet. <a onClick={() => go("Providers")}>Add an AI provider</a> to start.</>
-              : <>Nothing connected yet. <a onClick={() => go("Connections")}>Connect an app</a>.</>}
+              ? <>Nothing connected yet. <a onClick={() => go("Set up")}>Set up your first app</a> — it takes a minute.</>
+              : <>Nothing connected yet. <a onClick={() => go("Set up")}>Set up an app</a>.</>}
           </div>
         ) : (
           connections.map((c) => (

@@ -53,6 +53,11 @@ async fn usage_view(svc: State<'_, Arc<Service>>, since: String, limit: usize) -
 }
 
 #[tauri::command]
+async fn try_chat(svc: State<'_, Arc<Service>>, provider_id: String, model: String, messages: Vec<serde_json::Value>) -> Cmd<String> {
+    svc.try_chat(&provider_id, &model, messages).await
+}
+
+#[tauri::command]
 fn autostart_get(app: tauri::AppHandle) -> bool {
     use tauri_plugin_autostart::ManagerExt;
     app.autolaunch().is_enabled().unwrap_or(false)
@@ -630,6 +635,7 @@ pub fn run() {
         .manage(BotState { bots: bots::Bots::default(), dir: dir.clone() })
         .invoke_handler(tauri::generate_handler![
             keychain_waiting,
+            try_chat,
             usage_view,
             autostart_get,
             autostart_set,

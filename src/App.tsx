@@ -9,13 +9,25 @@ import Remote from "./pages/Remote";
 import Sessions from "./pages/Sessions";
 import Bots from "./pages/Bots";
 import Usage from "./pages/Usage";
+import TryChat from "./pages/TryChat";
+import Setup from "./pages/Setup";
 import { api } from "./api";
 
-export type Page = "Overview" | "Providers" | "Apps" | "Connections" | "Usage" | "Code sessions" | "Chat bots" | "Activity" | "Remote access" | "Settings";
-const PAGES: Page[] = ["Overview", "Providers", "Apps", "Connections", "Usage", "Code sessions", "Chat bots", "Activity", "Remote access", "Settings"];
+export type Page = "Overview" | "Providers" | "Apps" | "Set up" | "Connections" | "Try a model" | "Usage" | "Code sessions" | "Chat bots" | "Activity" | "Remote access" | "Settings";
+const PAGES: Page[] = ["Overview", "Providers", "Apps", "Connections", "Try a model", "Usage", "Code sessions", "Chat bots", "Activity", "Remote access", "Settings"];
 
 export default function App() {
   const [page, setPage] = useState<Page>("Overview");
+  // First run: nothing connected yet → start in the setup wizard (once).
+  useEffect(() => {
+    let seen = false;
+    try { seen = localStorage.getItem("prismflow.setupSeen") === "1"; } catch { /* storage unavailable */ }
+    if (seen) return;
+    api.connections().then((c) => {
+      if (c.length === 0) setPage("Set up");
+      try { localStorage.setItem("prismflow.setupSeen", "1"); } catch { /* ignore */ }
+    }).catch(() => {});
+  }, []);
   // Remote access must be visibly on at all times (ADR-013).
   const [remoteUrl, setRemoteUrl] = useState<string | null>(null);
   const refreshRemote = () => api.companionState().then((s) => setRemoteUrl(s.enabled ? s.url : null)).catch(() => setRemoteUrl(null));
@@ -53,6 +65,8 @@ export default function App() {
         {page === "Connections" && <Connections />}
         {page === "Code sessions" && <Sessions />}
         {page === "Usage" && <Usage />}
+        {page === "Try a model" && <TryChat />}
+        {page === "Set up" && <Setup onDone={() => setPage("Overview")} />}
         {page === "Chat bots" && <Bots />}
         {page === "Activity" && <Diagnostics />}
         {page === "Remote access" && <Remote onChange={refreshRemote} />}

@@ -96,3 +96,10 @@ table.log { width: 100%; border-collapse: collapse; }
 table.log td { padding: 5px 6px; border-bottom: 1px solid rgba(127,127,127,0.15); vertical-align: top; }
 table.log tr.err td { color: var(--err, #e5484d); }
 input.narrow { width: 90px; }
+.choices { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 6px; }
+.chat { min-height: 220px; display: flex; flex-direction: column; gap: 10px; }
+.msg-user { align-self: flex-end; background: rgba(124,108,240,0.18); padding: 8px 12px; border-radius: 12px; max-width: 80%; }
+.chat .msg-agent { align-self: flex-start; max-width: 90%; }
+.rowbtn.picked { outline: 2px solid var(--accent, #7c6cf0); }
+.steps { margin-bottom: 8px; }
+textarea { width: 100%; resize: vertical; font: inherit; }

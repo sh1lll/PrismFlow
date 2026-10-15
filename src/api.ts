@@ -38,7 +38,7 @@ export const TERMINAL_AGENTS: AppId[] = ["aider", "cline", "pi", "hermes", "open
 export type Route = "direct" | "gateway";
 
 export const APP_NAME: Record<string, string> = {
-  codex_cli: "Codex CLI", codex_desktop: "Codex app & VS Code", claude_code: "Claude Code CLI", claude_desktop: "Claude Desktop", jetbrains: "JetBrains IDEs", vscode_claude: "Claude Code for VS Code", vscode_chat: "VS Code Chat", aider: "Aider", cline: "Cline CLI", pi: "Pi", hermes: "Hermes Agent", opencode: "OpenCode", dsh: "DeepSeek Harness", grok: "Grok Build", muse: "Muse Code",
+  codex_cli: "Codex CLI", codex_desktop: "Codex app & VS Code", claude_code: "Claude Code CLI", claude_desktop: "Claude Desktop", jetbrains: "JetBrains IDEs", vscode_claude: "Claude Code for VS Code", vscode_chat: "VS Code Chat", aider: "Aider", cline: "Cline CLI", pi: "Pi", hermes: "Hermes Agent", playground: "Try a model", opencode: "OpenCode", dsh: "DeepSeek Harness", grok: "Grok Build", muse: "Muse Code",
 };
 
 export const ROUTE_LABEL: Record<Route, string> = {
@@ -220,6 +220,7 @@ export const api = {
   guidedSetup: (id: string) => invoke<{ gateway_url: string; auth_scheme: string; token: string; model: string; steps: string[] }>("guided_setup", { id }),
   companionState: () => invoke<CompanionView>("companion_state"),
   keychainWaiting: () => invoke<boolean>("keychain_waiting"),
+  tryChat: (providerId: string, model: string, messages: { role: string; content: string }[]) => invoke<string>("try_chat", { providerId, model, messages }),
   usage: (since: string, limit: number) => invoke<UsageView>("usage_view", { since, limit }),
   autostartGet: () => invoke<boolean>("autostart_get"),
   autostartSet: (on: boolean) => invoke<void>("autostart_set", { on }),

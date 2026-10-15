@@ -165,6 +165,9 @@ pub fn claude_launch_command(claude_bin: &str, settings: &str) -> String {
     format!("{} --settings {}", quote(claude_bin), quote(settings))
 }
 
+/// The "Try a model" chat's current target: (provider, model, in-memory token).
+static PLAYGROUND: std::sync::Mutex<Option<(String, String, String)>> = std::sync::Mutex::new(None);
+
 impl Service {
     fn key(&self, provider_id: &str) -> Option<String> {
         use providers::CredentialSource::*;
@@ -869,11 +872,15 @@ impl Service {
             .into_iter()
             .filter(|r| r.route == Route::Gateway)
             .collect();
-        if records.is_empty() {
+        let playground = PLAYGROUND.lock().unwrap_or_else(|e| e.into_inner()).clone();
+        if records.is_empty() && playground.is_none() {
             self.broker.stop().await;
             return Ok(self.broker.status());
         }
         let mut models: BTreeMap<String, Vec<String>> = BTreeMap::new();
+        if let Some((p, m, _)) = &playground {
+            models.entry(p.clone()).or_default().push(m.clone());
+        }
         for r in &records {
             let primary = crate::routing::ModelRef::new(&r.provider_id, &r.model);
             for target in r.routing.refs(&primary) {
@@ -918,6 +925,14 @@ impl Service {
                 routing: std::sync::Arc::new(routing),
             }));
         }
+        if let Some((p, m, token)) = &playground {
+            bindings.push((token.clone(), Binding {
+                connection_id: format!("playground:{p}"),
+                provider_id: p.clone(),
+                model: rename(&crate::routing::ModelRef::new(p, m)).model,
+                routing: Default::default(),
+            }));
+        }
         let mut specs = Vec::new();
         for (provider_id, models) in models {
             let p = provider(&provider_id)?;
@@ -959,6 +974,39 @@ impl Service {
             });
         }
         self.broker.start(specs, bindings).await.map_err(|e| e.to_string())
+    }
+
+    /// "Try a model": one chat turn with any provider + model, through the
+    /// gateway (so every provider and sign-in works the same way).
+    pub async fn try_chat(&self, provider_id: &str, model: &str, messages: Vec<serde_json::Value>) -> R<String> {
+        let p = provider(provider_id)?;
+        let model = validate_model_id(model)?;
+        if self.usable_key(p).is_none() {
+            return Err(format!("Add a {} key on the Providers page first.", p.display_name));
+        }
+        let changed = {
+            let mut g = PLAYGROUND.lock().unwrap_or_else(|e| e.into_inner());
+            let same = g.as_ref().is_some_and(|(pp, mm, _)| pp == provider_id && mm == model);
+            if !same {
+                *g = Some((provider_id.into(), model.into(), tokens::generate()));
+            }
+            !same
+        };
+        if changed || !self.broker.is_running().await {
+            self.sync_gateway().await?;
+        }
+        let token = PLAYGROUND.lock().unwrap_or_else(|e| e.into_inner()).as_ref().map(|x| x.2.clone()).unwrap_or_default();
+        let body = serde_json::json!({ "model": model, "messages": messages, "max_tokens": 2048, "stream": false });
+        let r = self.client.post(format!("{}/v1/chat/completions", self.broker.url())).bearer_auth(&token)
+            .json(&body).timeout(self.agent_timeout).send().await
+            .map_err(|_| "PrismFlow's background service didn't answer.".to_string())?;
+        let status = r.status().as_u16();
+        let text = r.text().await.unwrap_or_default();
+        if status >= 400 {
+            return Err(crate::usage::plain_error(status, &text));
+        }
+        let v: serde_json::Value = serde_json::from_str(&text).map_err(|_| "The reply couldn't be read.".to_string())?;
+        Ok(v["choices"][0]["message"]["content"].as_str().unwrap_or("").to_string())
     }
 
     pub fn gateway_status(&self) -> BrokerStatus {
@@ -1340,6 +1388,32 @@ mod tests {
 
     const CODEX: &str = codex::APP_ID;
     const CLAUDE: &str = claude_code::APP_ID;
+
+    /// Live: "Try a model" through the real gateway to the local Ollama, which
+    /// also creates the 32k-context variant. PRISMFLOW_LIVE_TRY=1 cargo test try_chat_live -- --ignored
+    #[tokio::test]
+    #[ignore]
+    async fn try_chat_live_with_local_ollama() {
+        if std::env::var("PRISMFLOW_LIVE_TRY").is_err() { return; }
+        let dir = tempfile::tempdir().unwrap();
+        let mut s = service(dir.path());
+        s.upstream_overrides.insert("ollama".into(), "http://127.0.0.1:11434/v1".into());
+        s.agent_timeout = Duration::from_secs(300);
+        let model = "qwen3:4b-instruct-2507-q4_K_M";
+        let reply = s.try_chat("ollama", model, vec![serde_json::json!({"role": "user", "content": "Reply with exactly PRISMFLOW_TRY_OK and nothing else."})]).await.unwrap();
+        eprintln!("reply: {reply}");
+        assert!(reply.contains("PRISMFLOW_TRY_OK"));
+        let mut logged = Vec::new();
+        for _ in 0..40 {
+            logged = s.broker.usage().recent(5);
+            if !logged.is_empty() { break; }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        eprintln!("logged: {:?}", logged.first().map(|r| (&r.model, r.input_tokens, r.output_tokens)));
+        assert!(logged.first().is_some_and(|r| r.model.ends_with("-pf32k")), "routed to the 32k variant");
+        s.broker.stop().await;
+        let _ = s.client.delete("http://127.0.0.1:11434/api/delete").json(&serde_json::json!({"model": format!("{model}-pf32k")})).send().await;
+    }
 
     #[tokio::test]
     async fn connect_requires_a_key_then_records_unverified() {
