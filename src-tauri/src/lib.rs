@@ -7,6 +7,8 @@ pub mod credentials;
 pub mod diagnostics;
 pub mod discovery;
 pub mod gateway;
+pub mod notify;
+pub mod tray;
 pub mod ollama;
 pub mod providers;
 pub mod routing;
@@ -31,6 +33,21 @@ async fn blocking<T: Send + 'static>(f: impl FnOnce() -> T + Send + 'static) -> 
 
 /// True while a Keychain request has waited more than a moment, which on
 /// macOS means its "allow access" window is open.
+#[tauri::command]
+fn autostart_get(app: tauri::AppHandle) -> bool {
+    use tauri_plugin_autostart::ManagerExt;
+    app.autolaunch().is_enabled().unwrap_or(false)
+}
+
+#[tauri::command]
+fn autostart_set(app: tauri::AppHandle, on: bool) -> Cmd<()> {
+    use tauri_plugin_autostart::ManagerExt;
+    let al = app.autolaunch();
+    let r = if on { al.enable() } else { al.disable() };
+    tray::refresh(&app);
+    r.map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 fn keychain_waiting() -> bool {
     credentials::keychain::waiting()
@@ -477,7 +494,17 @@ pub fn run() {
         service.diag.record(diagnostics::Level::Error, "provider.custom_load", &format!("Custom providers could not be loaded: {e}"));
     }
     service.diag.record(diagnostics::Level::Info, "app.start", concat!("PrismFlow ", env!("CARGO_PKG_VERSION"), " started."));
-    let builder = tauri::Builder::default();
+    let builder = tauri::Builder::default()
+        .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_autostart::init(tauri_plugin_autostart::MacosLauncher::LaunchAgent, Some(vec!["--background"])))
+        // Closing the window keeps PrismFlow (and the apps using it) running
+        // in the menu bar; Quit is in the menu.
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                api.prevent_close();
+                let _ = window.hide();
+            }
+        });
     #[cfg(feature = "updater")]
     let builder = builder.plugin(tauri_plugin_updater::Builder::new().build());
     let service = Arc::new(service);
@@ -496,6 +523,37 @@ pub fn run() {
             if let Ok(res) = app.path().resource_dir() {
                 gateway::supervisor::use_bundled_runtime(&res);
             }
+            if let Err(e) = tray::install(app.handle()) {
+                eprintln!("prismflow: menu bar icon unavailable: {e}");
+            }
+            // Started at login: stay in the menu bar until opened.
+            if std::env::args().any(|a| a == "--background") {
+                if let Some(w) = app.get_webview_window("main") {
+                    let _ = w.hide();
+                }
+            }
+            // Keep the menu current, and turn important events into notifications.
+            let watch = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                let svc = watch.state::<Arc<Service>>().inner().clone();
+                let mut seen = svc.diagnostics(1).first().map(|e| e.ts).unwrap_or(0);
+                loop {
+                    tokio::time::sleep(Duration::from_secs(5)).await;
+                    tray::refresh(&watch);
+                    let mut events = svc.diagnostics(50);
+                    events.retain(|e| e.ts > seen);
+                    if let Some(max) = events.iter().map(|e| e.ts).max() {
+                        seen = max;
+                    }
+                    for e in events {
+                        if let Some((title, body)) = notify::for_event(&e.code, &e.message) {
+                            if notify::due(&title) {
+                                notify::send(&watch, &title, &body);
+                            }
+                        }
+                    }
+                }
+            });
             let handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
                 let svc = handle.state::<Arc<Service>>().inner().clone();
@@ -553,6 +611,8 @@ pub fn run() {
         .manage(BotState { bots: bots::Bots::default(), dir: dir.clone() })
         .invoke_handler(tauri::generate_handler![
             keychain_waiting,
+            autostart_get,
+            autostart_set,
             bots_get,
             bots_save,
             bots_set_token,

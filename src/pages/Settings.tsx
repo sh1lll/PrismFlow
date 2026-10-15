@@ -26,6 +26,7 @@ export default function Settings() {
   return (
     <div>
       <h1>Settings</h1>
+      <StartUp />
       <div className="card">
         <div className="section-title">Limits</div>
         {!s ? <div className="muted">Loading…</div> : FIELDS.map((f) => (
@@ -93,6 +94,22 @@ function RemoveAll() {
         </div>
       )}
       {error && <div className="err small mt">{error}</div>}
+    </div>
+  );
+}
+
+function StartUp() {
+  const [on, setOn] = useState<boolean | null>(null);
+  useEffect(() => { api.autostartGet().then(setOn).catch(() => setOn(false)); }, []);
+  return (
+    <div className="card">
+      <div className="section-title">Start-up</div>
+      <div className="small muted">PrismFlow lives in the menu bar. Closing its window keeps your apps working; quit from the menu bar icon.</div>
+      <label className="small mt-block">
+        <input type="checkbox" className="check" disabled={on === null} checked={!!on}
+          onChange={(e) => { const v = e.target.checked; api.autostartSet(v).then(() => setOn(v)).catch(() => {}); }} />
+        Open PrismFlow when I log in (in the background)
+      </label>
     </div>
   );
 }
