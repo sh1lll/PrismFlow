@@ -1,7 +1,7 @@
 //! Application service: the operations the UI invokes, independent of Tauri
 //! so they are testable with an in-memory credential store and temp dirs.
 
-use crate::adapters::{self, claude_code, codex, AppDetection};
+use crate::adapters::{self, agents, claude_code, codex, AppDetection};
 use crate::config_engine;
 use crate::credentials::{account_key, CredentialError, CredentialStore};
 use crate::diagnostics::{now_secs, DiagnosticsLog, Event, Level};
@@ -82,7 +82,12 @@ pub struct Service {
 
 type R<T> = Result<T, String>;
 
-const APPS: &[&str] = &[codex::APP_ID, claude_code::APP_ID];
+/// Every application PrismFlow can connect.
+fn app_ids() -> Vec<&'static str> {
+    let mut v = vec![codex::APP_ID, claude_code::APP_ID];
+    v.extend(agents::AGENTS.iter().map(|a| a.id));
+    v
+}
 
 fn provider(id: &str) -> R<&'static ProviderDefinition> {
     providers::get(id).ok_or_else(|| format!("Unknown provider '{id}'."))
@@ -101,6 +106,7 @@ pub fn route_for(app_id: &str, p: &ProviderDefinition) -> Option<Route> {
         codex::APP_ID if codex_direct(p) && p.requires_key => Some(Route::Direct),
         codex::APP_ID => Some(Route::Gateway),
         claude_code::APP_ID => Some(Route::Gateway),
+        a if agents::spec(a).is_some() => Some(Route::Gateway),
         _ => None,
     }
 }
@@ -110,6 +116,9 @@ pub fn connection_id(app_id: &str, provider_id: &str) -> String {
 }
 
 fn app_name(app_id: &str) -> &'static str {
+    if let Some(a) = agents::spec(app_id) {
+        return a.display_name;
+    }
     if app_id == claude_code::APP_ID { "Claude Code" } else { "Codex" }
 }
 
@@ -157,7 +166,7 @@ impl Service {
                 has_credential: self.key(def.id).is_some(),
                 key_optional: !def.requires_key,
                 codex_direct: codex_direct(def),
-                routes: APPS.iter().map(|a| (*a, route_for(a, def))).collect(),
+                routes: app_ids().into_iter().map(|a| (a, route_for(a, def))).collect(),
             })
             .collect()
     }
@@ -366,13 +375,22 @@ impl Service {
         let p = provider(provider_id)?;
         let model = validate_model_id(model)?;
         let route = route_for(app_id, p).ok_or_else(|| match app_id {
-            codex::APP_ID | claude_code::APP_ID => format!(
+            a if a == codex::APP_ID || a == claude_code::APP_ID || agents::spec(a).is_some() => format!(
                 "{} needs a base URL; custom providers are not supported in this build.", p.display_name
             ),
             other => format!("Unknown application '{other}'."),
         })?;
         let id = connection_id(app_id, p.id);
         let url = self.broker.url_for_config();
+        if let Some(spec) = agents::spec(app_id) {
+            let files = self.agent_files(spec, p, model)?;
+            let (script, body) = files[0].clone();
+            let before = std::fs::read_to_string(&script).unwrap_or_default();
+            let mut summary = vec![format!("Create {} (launches {} through PrismFlow's gateway)", script.display(), spec.display_name)];
+            summary.extend(files[1..].iter().map(|(f, _)| format!("Create isolated config {}", f.display())));
+            summary.push(format!("Your own {} configuration is not read or changed", spec.display_name));
+            return Ok((p, route, config_engine::EditPlan { file: script, before, after: body, summary }));
+        }
         let plan = match (app_id, route) {
             (codex::APP_ID, Route::Direct) => codex::plan_connect(&self.codex_home, p, model, &self.helper, catalog).map_err(|e| e.to_string())?,
             (codex::APP_ID, Route::Gateway) => codex::plan_connect_gateway(&self.codex_home, p, model, &self.helper, &id, &url, catalog)
@@ -385,7 +403,26 @@ impl Service {
         Ok((p, route, plan))
     }
 
+    fn agent_files(&self, spec: &agents::AgentSpec, p: &ProviderDefinition, model: &str) -> R<Vec<(PathBuf, String)>> {
+        let bin = agents::find_binary(spec).ok_or_else(|| format!("{} is not installed.", spec.display_name))?;
+        let id = connection_id(spec.id, p.id);
+        Ok(agents::plan_files(spec, &agents::agent_dir(self.state.dir(), &id), &bin, &self.helper, &id, &self.broker.url_for_config(), model))
+    }
+
+    fn profile_for(&self, app_id: &str, provider_id: &str) -> String {
+        if agents::spec(app_id).is_some() {
+            connection_id(app_id, provider_id).replace(':', "-")
+        } else if app_id == claude_code::APP_ID {
+            claude_code::profile_name(provider_id)
+        } else {
+            codex::profile_name(provider_id)
+        }
+    }
+
     fn launch_line(&self, app_id: &str, profile: &str, file: &std::path::Path) -> String {
+        if agents::spec(app_id).is_some() {
+            return quote(&file.display().to_string());
+        }
         if app_id == claude_code::APP_ID {
             let bin = claude_code::find_binary().map(|b| b.display().to_string()).unwrap_or_else(|| "claude".into());
             claude_launch_command(&bin, &file.display().to_string())
@@ -397,11 +434,13 @@ impl Service {
 
     pub fn preview(&self, app_id: &str, provider_id: &str, model: &str) -> R<ConnectPreview> {
         let (p, route, plan) = self.plan(app_id, provider_id, model)?;
-        let profile = if app_id == claude_code::APP_ID { claude_code::profile_name(p.id) } else { codex::profile_name(p.id) };
+        let profile = self.profile_for(app_id, p.id);
         let mut warnings = vec![format!(
             "Requests from this {} profile are billed to your {} account.", app_name(app_id), p.display_name
         )];
-        if app_id == claude_code::APP_ID {
+        if let Some(a) = agents::spec(app_id) {
+            warnings.push(format!("Your own {} configuration is not modified; PrismFlow launches it with isolated settings from its own folder.", a.display_name));
+        } else if app_id == claude_code::APP_ID {
             warnings.push("Your own ~/.claude/settings.json is not modified; this connection applies only when Claude Code runs with the PrismFlow settings file.".into());
         } else {
             warnings.push("Your own ~/.codex/config.toml is not modified; this connection only applies when Codex runs with the PrismFlow profile.".into());
@@ -459,11 +498,16 @@ impl Service {
         if route == Route::Gateway {
             tokens::ensure(self.store.as_ref(), &id).map_err(|e| format!("Could not create a local token: {e}"))?;
         }
-        let applied = config_engine::apply(&plan).map_err(|e| {
+        if let Some(spec) = agents::spec(app_id) {
+            agents::write(&self.agent_files(spec, p, validate_model_id(model)?)?).map_err(|e| format!("Nothing usable was written: {e}"))?;
+        }
+        let applied = if agents::spec(app_id).is_some() {
+            config_engine::AppliedEdit { file: plan.file.clone(), backup_path: None }
+        } else { config_engine::apply(&plan).map_err(|e| {
             let msg = format!("Writing {} failed; nothing was changed: {e}", plan.file.display());
             self.diag.record(Level::Error, "connect.failed", &msg);
             msg
-        })?;
+        })? };
         // The engine backs up our own previous file next to it; move that
         // into the state dir so the app's config dir holds only the live file.
         if let Some(b) = applied.backup_path {
@@ -472,7 +516,7 @@ impl Service {
                 let _ = std::fs::remove_file(&b);
             }
         }
-        let profile = if app_id == claude_code::APP_ID { claude_code::profile_name(p.id) } else { codex::profile_name(p.id) };
+        let profile = self.profile_for(app_id, p.id);
         let record = ConnectionRecord {
             id: id.clone(),
             provider_id: p.id.into(),
@@ -638,7 +682,9 @@ impl Service {
 
     pub async fn disconnect(&self, id: &str) -> R<Option<String>> {
         let record = self.state.get(id).map_err(|e| e.to_string())?.ok_or("Unknown connection.")?;
-        let removed = if record.app_id == claude_code::APP_ID {
+        let removed = if agents::spec(&record.app_id).is_some() {
+            agents::remove(&agents::agent_dir(self.state.dir(), &record.id))
+        } else if record.app_id == claude_code::APP_ID {
             claude_code::disconnect(&record.managed_file, &self.state.backups_dir()).map_err(|e| e.to_string())
         } else {
             codex::disconnect(&record.managed_file, &self.state.backups_dir()).map_err(|e| e.to_string())
@@ -671,7 +717,10 @@ impl Service {
     pub fn running_sessions(&self, id: &str) -> R<Vec<u32>> {
         let record = self.state.get(id).map_err(|e| e.to_string())?.ok_or("Unknown connection.")?;
         let procs = adapters::processes::list();
-        Ok(if record.app_id == claude_code::APP_ID {
+        Ok(if agents::spec(&record.app_id).is_some() {
+            let dir = agents::agent_dir(self.state.dir(), &record.id).display().to_string();
+            procs.iter().filter(|p| p.command.contains(&dir)).map(|p| p.pid).collect()
+        } else if record.app_id == claude_code::APP_ID {
             adapters::processes::claude_sessions(&procs, &record.managed_file.display().to_string())
         } else {
             adapters::processes::codex_sessions(&procs, &record.profile)
@@ -734,7 +783,7 @@ impl Service {
             .into_iter()
             .map(|p| (account_key(p.id, "default"), format!("{} key", p.display_name)))
             .collect();
-        for app in APPS {
+        for app in app_ids() {
             for p in providers::registry() {
                 let id = connection_id(app, p.id);
                 accounts.push((tokens::account(&id), format!("gateway token for {id}")));
@@ -805,7 +854,9 @@ impl Service {
 
     pub fn launch(&self, id: &str) -> R<()> {
         let record = self.state.get(id).map_err(|e| e.to_string())?.ok_or("Unknown connection.")?;
-        if record.app_id == claude_code::APP_ID {
+        if let Some(a) = agents::spec(&record.app_id) {
+            agents::find_binary(a).ok_or_else(|| format!("{} is not installed.", a.display_name))?;
+        } else if record.app_id == claude_code::APP_ID {
             claude_code::find_binary().ok_or("Claude Code is not installed.")?;
         } else {
             codex::find_binary().ok_or("Codex CLI is not installed.")?;

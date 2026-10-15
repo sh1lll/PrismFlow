@@ -245,8 +245,11 @@ async fn run_stages(
     run: &mut Run,
 ) -> ConnectionStatus {
     // Stage 1 — configuration validation.
+    let agent = crate::adapters::agents::spec(&record.app_id);
     let is_claude = record.app_id == claude_code::APP_ID;
-    let stage1 = if is_claude {
+    let stage1 = if let Some(a) = agent {
+        check_agent_config(a, &record.managed_file)
+    } else if is_claude {
         check_claude_config(&record.managed_file, env.claude_bin.as_deref())
     } else {
         check_config(&record.managed_file, env.codex_bin.as_deref())
@@ -338,6 +341,9 @@ async fn run_stages(
 
     if is_claude {
         return claude_agent_stages(env, provider, record, run, &secrets).await;
+    }
+    if let Some(a) = agent {
+        return terminal_agent_stages(env, a, provider, record, run, &secrets).await;
     }
 
     // Stage 5 — end-to-end request through Codex itself.
@@ -472,6 +478,88 @@ fn check_claude_config(file: &Path, claude_bin: Option<&Path>) -> Result<String,
         return Err("Claude Code is not installed.".into());
     }
     Ok("Settings file is valid, PrismFlow-managed, and its token helper exists.".into())
+}
+
+fn check_agent_config(a: &crate::adapters::agents::AgentSpec, script: &Path) -> Result<String, String> {
+    let body = std::fs::read_to_string(script).map_err(|_| format!("{} is missing. Reconnect to recreate it.", script.display()))?;
+    if !body.contains(crate::adapters::agents::MARKER) {
+        return Err(format!("{} is no longer PrismFlow-managed.", script.display()));
+    }
+    if crate::adapters::agents::find_binary(a).is_none() {
+        return Err(format!("{} is not installed.", a.display_name));
+    }
+    Ok(format!("Launch script is valid and {} is installed.", a.display_name))
+}
+
+async fn run_script(script: &Path, args: &[String], workdir: &Path, timeout: Duration) -> Result<(bool, String), String> {
+    std::fs::create_dir_all(workdir).map_err(|e| e.to_string())?;
+    let mut cmd = tokio::process::Command::new("/bin/sh");
+    cmd.arg(script).args(args).current_dir(workdir)
+        .stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped()).kill_on_drop(true);
+    let child = cmd.spawn().map_err(|e| format!("could not start the agent: {e}"))?;
+    match tokio::time::timeout(timeout, child.wait_with_output()).await {
+        Err(_) => Err(format!("the agent did not finish within {}s", timeout.as_secs())),
+        Ok(Err(e)) => Err(format!("the agent failed to run: {e}")),
+        Ok(Ok(out)) => Ok((out.status.success(), format!("{}\n{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr)))),
+    }
+}
+
+/// Stages 5–6 for terminal agents. Stage 6 plants a random nonce in a file
+/// and asks the agent to read it: the model cannot produce the nonce
+/// without a real file-read tool call.
+async fn terminal_agent_stages(
+    env: &VerifyEnv<'_>,
+    a: &crate::adapters::agents::AgentSpec,
+    provider: &ProviderDefinition,
+    record: &ConnectionRecord,
+    run: &mut Run,
+    secrets: &[&str],
+) -> ConnectionStatus {
+    use crate::adapters::agents::oneshot_args;
+    let work = env.workdir.join(record.id.replace(':', "-"));
+    let prompt = format!("Reply with exactly {E2E_TOKEN} and nothing else.");
+    match run_script(&record.managed_file, &oneshot_args(a, &prompt), &work, env.agent_timeout).await {
+        Ok((_, out)) if out.contains(E2E_TOKEN) => run.push(5, "End-to-end", StageOutcome::Pass,
+            format!("{} answered through PrismFlow's gateway with {}.", a.display_name, record.model)),
+        Ok((_, out)) => {
+            let shown = redact_known(&tail(&out, 6), secrets);
+            let hint = remediation(&out, provider).map(|h| format!("{h}\n\n")).unwrap_or_default();
+            run.push(5, "End-to-end", StageOutcome::Fail, format!("{hint}{} did not return the expected reply:\n{shown}", a.display_name));
+            return classify_agent_failure(&shown);
+        }
+        Err(e) => {
+            run.push(5, "End-to-end", StageOutcome::Fail, e);
+            return ConnectionStatus::ProviderUnavailable;
+        }
+    }
+    if !a.tools {
+        run.push(6, "Tool calling", StageOutcome::Skipped,
+            format!("{} edits files through its own edit format, not tool calls; the end-to-end stage covers it.", a.display_name));
+        return ConnectionStatus::ConnectedAndVerified;
+    }
+    let nonce = format!("PF{}", uuid::Uuid::new_v4().simple());
+    if let Err(e) = std::fs::write(work.join("prismflow_probe.txt"), format!("{nonce}\n")) {
+        run.push(6, "Tool calling", StageOutcome::Fail, format!("Could not prepare the probe file: {e}"));
+        return ConnectionStatus::PartiallyCompatible;
+    }
+    let prompt = "Use your file-reading tool to read the file prismflow_probe.txt in the current directory, then reply with its exact contents and nothing else.";
+    let result = run_script(&record.managed_file, &oneshot_args(a, prompt), &work, env.agent_timeout).await;
+    let _ = std::fs::remove_file(work.join("prismflow_probe.txt"));
+    match result {
+        Ok((_, out)) if out.contains(&nonce) => {
+            run.push(6, "Tool calling", StageOutcome::Pass, format!("{} read a file through a tool call with this model.", a.display_name));
+            ConnectionStatus::ConnectedAndVerified
+        }
+        Ok(_) => {
+            run.push(6, "Tool calling", StageOutcome::Fail,
+                "The model answered but did not complete a file-read tool call. Chat works; agent tasks may not. Prefer a tool-capable model.");
+            ConnectionStatus::PartiallyCompatible
+        }
+        Err(e) => {
+            run.push(6, "Tool calling", StageOutcome::Fail, e);
+            ConnectionStatus::PartiallyCompatible
+        }
+    }
 }
 
 fn check_config(file: &Path, codex_bin: Option<&Path>) -> Result<String, String> {
