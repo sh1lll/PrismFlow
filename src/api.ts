@@ -127,6 +127,17 @@ export interface RuntimeSettings {
 export interface UninstallItem { what: string; outcome: "planned" | "done" | "failed"; detail: string }
 export interface UninstallReport { dry_run: boolean; complete: boolean; items: UninstallItem[] }
 
+export interface CompanionDevice { id: string; name: string; allow_actions: boolean; created_at: number; last_seen: number | null }
+export interface CompanionView {
+  enabled: boolean;
+  url: string | null;
+  fingerprint: string | null;
+  settings: { address: string; port: number; keep_on: boolean };
+  devices: CompanionDevice[];
+  suggested_address: string | null;
+}
+export interface PairingView { uri: string; qr_svg: string; code: string; url: string; fingerprint: string; expires_in_secs: number }
+
 export interface ConnectPreview {
   app_id: AppId;
   route: Route;
@@ -161,6 +172,12 @@ export const api = {
   checkUpdate: () => invoke<{ current: string; available: string | null; notes: string | null }>("check_update"),
   installUpdate: () => invoke<void>("install_update"),
   guidedSetup: (id: string) => invoke<{ gateway_url: string; auth_scheme: string; token: string; model: string; steps: string[] }>("guided_setup", { id }),
+  companionState: () => invoke<CompanionView>("companion_state"),
+  companionEnable: (address: string, port: number, keepOn: boolean) => invoke<CompanionView>("companion_enable", { address, port, keepOn }),
+  companionDisable: () => invoke<CompanionView>("companion_disable"),
+  companionPair: () => invoke<PairingView>("companion_pair"),
+  companionRevoke: (id: string) => invoke<CompanionView>("companion_revoke", { id }),
+  companionAllowActions: (id: string, allow: boolean) => invoke<CompanionView>("companion_allow_actions", { id, allow }),
   uninstall: (dryRun: boolean) => invoke<UninstallReport>("uninstall", { dryRun }),
   runningSessions: (id: string) => invoke<number[]>("running_sessions", { id }),
   launch: (id: string) => invoke<void>("launch_connection", { id }),

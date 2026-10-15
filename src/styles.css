@@ -72,3 +72,9 @@ textarea { background: #0d0d12; border: 1px solid var(--line); color: var(--text
 .tier-label { min-width: 170px; }
 select { background: #0d0d12; border: 1px solid var(--line); color: var(--text); border-radius: 8px; padding: 8px 10px; font-size: 14px; }
 .danger-zone { border-color: var(--err); }
+.remote-banner { background: #3a2a10; color: var(--warn); border: 1px solid var(--warn); border-radius: 10px; padding: 8px 12px; margin-bottom: 14px; font-size: 13px; }
+.remote-on { border-color: var(--warn); }
+.pair { display: flex; gap: 16px; align-items: flex-start; flex-wrap: wrap; }
+.qr { background: #fff; padding: 8px; border-radius: 8px; line-height: 0; }
+.qr svg { width: 200px; height: 200px; }
+.code { font: 600 16px ui-monospace, Menlo, monospace; letter-spacing: 0.04em; margin: 6px 0; word-break: break-all; }
