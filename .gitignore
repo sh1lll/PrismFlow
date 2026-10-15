@@ -13,3 +13,4 @@ src-tauri/gen/schemas/
 # Pinned gateway runtime (installed by scripts/fetch-gateway.sh)
 src-tauri/gateway/node_modules/
 src-tauri/perf-report.json
+src-tauri/runtime/

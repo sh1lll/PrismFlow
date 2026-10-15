@@ -49,6 +49,38 @@ fn engine_dir(package_dir: &Path) -> PathBuf {
     package_dir.join("node_modules").join("@the-next-ai").join("ai-gateway")
 }
 
+/// Point the runtime at bundled resources when they exist. Explicit
+/// `PRISMFLOW_*` overrides win (dev and tests).
+pub fn use_bundled_runtime(resource_dir: &Path) {
+    let (gw, node) = bundled_paths(resource_dir);
+    if let (Some(gw), None) = (gw, std::env::var_os("PRISMFLOW_GATEWAY_DIR")) {
+        std::env::set_var("PRISMFLOW_GATEWAY_DIR", gw);
+    }
+    if let (Some(node), None) = (node, std::env::var_os("PRISMFLOW_NODE_BIN")) {
+        // Only adopt a bundled runtime that actually starts; otherwise the
+        // system Node (if any) is still found and the failure is diagnosable.
+        let runs = std::process::Command::new(&node).arg("--version").output().is_ok_and(|o| o.status.success());
+        if runs {
+            std::env::set_var("PRISMFLOW_NODE_BIN", node);
+        }
+    }
+}
+
+/// Bundled engine dir and Node binary, each only if actually present.
+pub fn bundled_paths(resource_dir: &Path) -> (Option<PathBuf>, Option<PathBuf>) {
+    let gw = resource_dir.join("gateway");
+    let node = bundled_node(resource_dir);
+    (
+        engine_dir(&gw).join("package.json").is_file().then_some(gw),
+        node.is_file().then_some(node),
+    )
+}
+
+pub fn bundled_node(resource_dir: &Path) -> PathBuf {
+    let base = resource_dir.join("runtime").join("node");
+    if cfg!(windows) { base.join("node.exe") } else { base.join("bin").join("node") }
+}
+
 pub fn find_node() -> Option<PathBuf> {
     if let Some(p) = std::env::var_os("PRISMFLOW_NODE_BIN") {
         return Some(PathBuf::from(p));
@@ -68,6 +100,9 @@ impl GatewayRuntime {
     pub fn discover() -> Result<Self, String> {
         let package_dir = package_dir();
         let pkg_json = engine_dir(&package_dir).join("package.json");
+        if !pkg_json.is_file() && option_env!("PRISMFLOW_RELEASE").is_some() {
+            return Err("This PrismFlow build is missing its gateway engine. Reinstall PrismFlow.".into());
+        }
         let pkg: serde_json::Value = std::fs::read_to_string(&pkg_json)
             .ok()
             .and_then(|s| serde_json::from_str(&s).ok())
@@ -310,6 +345,34 @@ impl EngineChild {
 
     pub fn pid(&self) -> Option<u32> {
         self.child.id()
+    }
+}
+
+#[cfg(test)]
+mod bundle_tests {
+    use super::*;
+
+    #[test]
+    fn bundled_paths_only_when_present() {
+        let dir = tempfile::tempdir().unwrap();
+        assert_eq!(bundled_paths(dir.path()), (None, None));
+        let pkg = engine_dir(&dir.path().join("gateway"));
+        std::fs::create_dir_all(&pkg).unwrap();
+        std::fs::write(pkg.join("package.json"), "{}").unwrap();
+        let node = bundled_node(dir.path());
+        std::fs::create_dir_all(node.parent().unwrap()).unwrap();
+        std::fs::write(&node, "").unwrap();
+        assert_eq!(bundled_paths(dir.path()), (Some(dir.path().join("gateway")), Some(node)));
+    }
+
+    #[test]
+    fn bundled_node_path_per_platform() {
+        let p = bundled_node(Path::new("/r"));
+        if cfg!(windows) {
+            assert!(p.ends_with("runtime/node/node.exe"));
+        } else {
+            assert_eq!(p, PathBuf::from("/r/runtime/node/bin/node"));
+        }
     }
 }
 

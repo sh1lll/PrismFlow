@@ -1,0 +1,13 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "bundle": {
+    "resources": {
+      "gateway/package.json": "gateway/package.json",
+      "gateway/prismflow-preload.cjs": "gateway/prismflow-preload.cjs",
+      "gateway/THIRD_PARTY.md": "gateway/THIRD_PARTY.md",
+      "gateway/node_modules/": "gateway/node_modules/",
+      "runtime/node/": "runtime/node/"
+    },
+    "macOS": { "hardenedRuntime": true, "minimumSystemVersion": "12.0" }
+  }
+}

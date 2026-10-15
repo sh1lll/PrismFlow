@@ -124,6 +124,48 @@ async fn uninstall(svc: State<'_, Service>, dry_run: bool) -> Cmd<service::Unins
     svc.uninstall(dry_run).await
 }
 
+#[derive(serde::Serialize)]
+struct UpdateInfo {
+    current: String,
+    available: Option<String>,
+    notes: Option<String>,
+}
+
+#[cfg(feature = "updater")]
+#[tauri::command]
+async fn check_update(app: tauri::AppHandle) -> Cmd<UpdateInfo> {
+    use tauri_plugin_updater::UpdaterExt;
+    let update = app.updater().map_err(|e| e.to_string())?.check().await.map_err(|e| e.to_string())?;
+    Ok(UpdateInfo {
+        current: env!("CARGO_PKG_VERSION").into(),
+        available: update.as_ref().map(|u| u.version.clone()),
+        notes: update.and_then(|u| u.body),
+    })
+}
+
+#[cfg(feature = "updater")]
+#[tauri::command]
+async fn install_update(app: tauri::AppHandle) -> Cmd<()> {
+    use tauri_plugin_updater::UpdaterExt;
+    // Signature verification against the embedded pubkey happens inside the plugin.
+    let update = app.updater().map_err(|e| e.to_string())?.check().await.map_err(|e| e.to_string())?
+        .ok_or("PrismFlow is up to date.")?;
+    update.download_and_install(|_, _| {}, || {}).await.map_err(|e| e.to_string())?;
+    app.restart();
+}
+
+#[cfg(not(feature = "updater"))]
+#[tauri::command]
+async fn check_update() -> Cmd<UpdateInfo> {
+    Err("This build of PrismFlow has no updater (development build). Release builds check signed updates.".into())
+}
+
+#[cfg(not(feature = "updater"))]
+#[tauri::command]
+async fn install_update() -> Cmd<()> {
+    Err("This build of PrismFlow has no updater.".into())
+}
+
 #[tauri::command]
 fn list_connections(svc: State<'_, Service>) -> Cmd<Vec<state::ConnectionRecord>> {
     svc.connections()
@@ -165,7 +207,19 @@ pub fn run() {
         service.diag.record(diagnostics::Level::Error, "provider.custom_load", &format!("Custom providers could not be loaded: {e}"));
     }
     service.diag.record(diagnostics::Level::Info, "app.start", concat!("PrismFlow ", env!("CARGO_PKG_VERSION"), " started."));
-    tauri::Builder::default()
+    let builder = tauri::Builder::default();
+    #[cfg(feature = "updater")]
+    let builder = builder.plugin(tauri_plugin_updater::Builder::new().build());
+    builder
+        .setup(|app| {
+            use tauri::Manager;
+            // Release bundles ship the pinned engine and a Node runtime as
+            // resources (scripts/fetch-*.sh); prefer them over the system.
+            if let Ok(res) = app.path().resource_dir() {
+                gateway::supervisor::use_bundled_runtime(&res);
+            }
+            Ok(())
+        })
         .manage(service)
         .setup(|app| {
             // Gateway connections from earlier sessions need the broker back.
@@ -192,6 +246,8 @@ pub fn run() {
             list_connections,
             running_sessions,
             set_routing,
+            check_update,
+            install_update,
             uninstall,
             get_settings,
             set_settings,
