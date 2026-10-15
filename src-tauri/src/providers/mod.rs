@@ -362,6 +362,15 @@ mod tests {
         assert!(!catalog_version().is_empty());
     }
 
+    /// The owner's another tool provider list (2026-10-15): every entry
+    /// must stay available (Azure, Vertex and Cloudflare are presets in Add your own).
+    #[test]
+    fn other_list_is_covered() {
+        for id in ["nvidia_nim", "openrouter", "groq", "cline_pass", "chatgpt", "openai", "github_copilot", "xai", "alibaba_cloud", "qwencloud", "qwencloud_coding", "together", "deepinfra", "siliconflow", "nebius", "chutes", "featherless", "agnes", "zenmux", "wandb", "anthropic", "gemini", "deepseek", "mistral", "mistral_codestral", "opencode_zen", "opencode_go", "vercel", "bedrock", "huggingface", "cohere", "wafer", "moonshot", "kimi_code", "minimax", "cerebras", "sambanova", "kilo", "fireworks", "novita", "zai_coding", "zai", "tokenrouter", "nararoute", "poolside", "llm7", "scaleway", "lightning", "experiential", "cheaperinference", "orcarouter", "atlascloud", "xkiro", "opper", "ollama_cloud", "lmstudio", "llamacpp", "ollama"] {
+            assert!(get(id).is_some(), "{id} from another tool's list is missing");
+        }
+    }
+
     #[test]
     fn openrouter_entry_matches_verified_facts() {
         let p = get("openrouter").expect("openrouter must exist");
