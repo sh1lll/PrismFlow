@@ -324,3 +324,121 @@ async fn crashed_engine_is_restarted() {
     assert_eq!(r.status(), 200);
     h.broker.stop().await;
 }
+
+// ---- Anthropic Messages as the upstream (e.g. Codex → Anthropic) ---------
+
+const ANTHROPIC_KEY: &str = "sk-ant-upstreamsecret0123456789";
+const CLAUDE_MODEL: &str = "claude-test-model";
+
+fn anthropic_sse(events: &[serde_json::Value]) -> String {
+    events
+        .iter()
+        .map(|e| format!("event: {}\ndata: {e}\n\n", e["type"].as_str().unwrap()))
+        .collect()
+}
+
+fn anthropic_text_stream() -> String {
+    anthropic_sse(&[
+        serde_json::json!({"type": "message_start", "message": {"id": "msg_1", "type": "message", "role": "assistant", "model": CLAUDE_MODEL,
+            "content": [], "stop_reason": null, "usage": {"input_tokens": 3, "output_tokens": 0}}}),
+        serde_json::json!({"type": "content_block_start", "index": 0, "content_block": {"type": "text", "text": ""}}),
+        serde_json::json!({"type": "content_block_delta", "index": 0, "delta": {"type": "text_delta", "text": "PRISMFLOW_OK"}}),
+        serde_json::json!({"type": "content_block_stop", "index": 0}),
+        serde_json::json!({"type": "message_delta", "delta": {"stop_reason": "end_turn"}, "usage": {"output_tokens": 2}}),
+        serde_json::json!({"type": "message_stop"}),
+    ])
+}
+
+fn anthropic_tool_stream() -> String {
+    anthropic_sse(&[
+        serde_json::json!({"type": "message_start", "message": {"id": "msg_2", "type": "message", "role": "assistant", "model": CLAUDE_MODEL,
+            "content": [], "stop_reason": null, "usage": {"input_tokens": 3, "output_tokens": 0}}}),
+        serde_json::json!({"type": "content_block_start", "index": 0, "content_block": {"type": "tool_use", "id": "toolu_1", "name": "read_file", "input": {}}}),
+        serde_json::json!({"type": "content_block_delta", "index": 0, "delta": {"type": "input_json_delta", "partial_json": "{\"path\":"}}),
+        serde_json::json!({"type": "content_block_delta", "index": 0, "delta": {"type": "input_json_delta", "partial_json": "\"a.txt\"}"}}),
+        serde_json::json!({"type": "content_block_stop", "index": 0}),
+        serde_json::json!({"type": "message_delta", "delta": {"stop_reason": "tool_use"}, "usage": {"output_tokens": 9}}),
+        serde_json::json!({"type": "message_stop"}),
+    ])
+}
+
+/// Answers only with PrismFlow's Anthropic key in `x-api-key`; streams when
+/// asked to, otherwise returns a JSON message (the engine uses both modes).
+async fn anthropic_upstream() -> MockServer {
+    let server = MockServer::start().await;
+    let msg = |content: serde_json::Value, stop: &str| serde_json::json!({
+        "id": "msg_j", "type": "message", "role": "assistant", "model": CLAUDE_MODEL, "content": content,
+        "stop_reason": stop, "usage": {"input_tokens": 3, "output_tokens": 5}
+    });
+    let cases: Vec<(bool, bool, ResponseTemplate)> = vec![
+        (true, true, ResponseTemplate::new(200).insert_header("content-type", "text/event-stream").set_body_string(anthropic_tool_stream())),
+        (true, false, ResponseTemplate::new(200).insert_header("content-type", "text/event-stream").set_body_string(anthropic_text_stream())),
+        (false, true, ResponseTemplate::new(200).set_body_json(msg(serde_json::json!([{"type": "tool_use", "id": "toolu_1", "name": "read_file", "input": {"path": "a.txt"}}]), "tool_use"))),
+        (false, false, ResponseTemplate::new(200).set_body_json(msg(serde_json::json!([{"type": "text", "text": "PRISMFLOW_OK"}]), "end_turn"))),
+    ];
+    for (i, (stream, tools, resp)) in cases.into_iter().enumerate() {
+        let mut m = Mock::given(method("POST")).and(path("/v1/messages")).and(header("x-api-key", ANTHROPIC_KEY));
+        if stream {
+            m = m.and(body_string_contains("\"stream\":true"));
+        }
+        if tools {
+            m = m.and(body_string_contains("\"tools\""));
+        }
+        m.respond_with(resp).with_priority(i as u8 + 1).mount(&server).await;
+    }
+    server
+}
+
+async fn anthropic_harness() -> Harness {
+    if let Err(e) = GatewayRuntime::discover() {
+        panic!("gateway engine unavailable for tests: {e}");
+    }
+    let upstream = anthropic_upstream().await;
+    let dir = tempfile::tempdir().unwrap();
+    let diag_path = dir.path().join("diagnostics.jsonl");
+    let broker = Broker::new(0, dir.path().to_path_buf(), Some(Arc::new(DiagnosticsLog::new(diag_path.clone()))));
+    let token = tokens::generate();
+    let p = crate::providers::get("anthropic").unwrap();
+    let spec = UpstreamSpec {
+        provider_id: "anthropic".into(),
+        engine_type: supervisor::engine_type(p),
+        base_url: upstream.uri(),
+        models: vec![CLAUDE_MODEL.into()],
+        key: ANTHROPIC_KEY.into(),
+    };
+    let binding = Binding { connection_id: "codex_cli:anthropic".into(), provider_id: "anthropic".into() };
+    broker.start(vec![spec], vec![(token.clone(), binding)]).await.expect("broker starts");
+    Harness { broker, token, _dir: dir, diag_path, _upstream: upstream }
+}
+
+#[tokio::test]
+async fn responses_front_reaches_an_anthropic_upstream_with_text_and_tools() {
+    let h = anthropic_harness().await;
+    let r = h.post("/v1/responses", serde_json::json!({"model": CLAUDE_MODEL, "stream": true, "input": "hi"}))
+        .header("authorization", format!("Bearer {}", h.token)).send().await.unwrap();
+    assert_eq!(r.status(), 200);
+    let body = r.text().await.unwrap();
+    for needle in ["response.created", "response.output_text.delta", "PRISMFLOW_OK", "response.completed"] {
+        assert!(body.contains(needle), "missing {needle} in:\n{body}");
+    }
+    let tools = serde_json::json!({"model": CLAUDE_MODEL, "stream": true, "input": "read a.txt",
+        "tools": [{"type": "function", "name": "read_file", "parameters": {"type": "object", "properties": {"path": {"type": "string"}}}}]});
+    let body = h.post("/v1/responses", tools)
+        .header("authorization", format!("Bearer {}", h.token)).send().await.unwrap().text().await.unwrap();
+    for needle in ["\"type\":\"function_call\"", "\"name\":\"read_file\"", "a.txt", "response.completed"] {
+        assert!(body.contains(needle), "missing {needle} in:\n{body}");
+    }
+    h.broker.stop().await;
+}
+
+#[tokio::test]
+async fn messages_front_passes_through_to_an_anthropic_upstream() {
+    let h = anthropic_harness().await;
+    let mut b = messages_body(true, true);
+    b["model"] = CLAUDE_MODEL.into();
+    let body = h.post("/v1/messages", b).header("x-api-key", &h.token).send().await.unwrap().text().await.unwrap();
+    for needle in ["\"type\":\"tool_use\"", "\"name\":\"read_file\"", "\"stop_reason\":\"tool_use\""] {
+        assert!(body.contains(needle), "missing {needle} in:\n{body}");
+    }
+    h.broker.stop().await;
+}
