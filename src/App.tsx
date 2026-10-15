@@ -5,7 +5,7 @@ import Applications from "./pages/Applications";
 import Connections from "./pages/Connections";
 import Diagnostics from "./pages/Diagnostics";
 
-type Page = "Overview" | "Providers" | "Applications" | "Connections" | "Diagnostics";
+export type Page = "Overview" | "Providers" | "Applications" | "Connections" | "Diagnostics";
 const PAGES: Page[] = ["Overview", "Providers", "Applications", "Connections", "Diagnostics"];
 
 export default function App() {
@@ -21,7 +21,7 @@ export default function App() {
         ))}
       </nav>
       <main className="content">
-        {page === "Overview" && <Overview />}
+        {page === "Overview" && <Overview go={setPage} />}
         {page === "Providers" && <Providers />}
         {page === "Applications" && <Applications />}
         {page === "Connections" && <Connections />}

@@ -28,3 +28,38 @@ input, select { background: #0d0d12; border: 1px solid var(--line); color: var(-
 .row { display: flex; gap: 10px; align-items: center; }
 pre { background: #0d0d12; border: 1px solid var(--line); border-radius: 8px;
   padding: 10px; overflow-x: auto; font-size: 12px; }
+h2 { font-size: 15px; margin: 22px 0 10px; color: var(--muted); }
+a { color: var(--accent); cursor: pointer; text-decoration: none; }
+code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+button:disabled { opacity: 0.5; cursor: default; }
+button.ghost { background: none; border: 1px solid var(--line); color: var(--text);
+  border-radius: 8px; padding: 7px 12px; cursor: pointer; font-size: 14px; white-space: nowrap; }
+button.primary, button.danger { white-space: nowrap; }
+.spread { justify-content: space-between; }
+.line { padding: 6px 0; border-bottom: 1px solid var(--line); }
+.line:last-child { border-bottom: 0; }
+.small { font-size: 12.5px; }
+.mt { margin-top: 10px; }
+.mt-block { display: block; margin-top: 12px; }
+.nowrap { white-space: nowrap; }
+.selectable { user-select: text; }
+.pre-wrap { white-space: pre-wrap; word-break: break-word; }
+.section-title { font-weight: 600; margin-bottom: 8px; }
+.grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.grid2 .card { margin-bottom: 12px; }
+.badge { display: inline-block; font-size: 11.5px; padding: 2px 8px; border-radius: 999px;
+  border: 1px solid currentColor; white-space: nowrap; }
+.badge.ok { color: var(--ok); } .badge.warn { color: var(--warn); }
+.badge.err { color: var(--err); } .badge.muted { color: var(--muted); }
+input.check { width: auto; margin: 0 4px 0 0; vertical-align: middle; }
+.picker { margin-top: 10px; display: flex; flex-direction: column; gap: 6px; }
+.model-list { max-height: 260px; overflow-y: auto; border: 1px solid var(--line); border-radius: 8px; }
+.model { display: flex; justify-content: space-between; gap: 10px; width: 100%; text-align: left;
+  background: none; border: 0; border-bottom: 1px solid var(--line); color: var(--text);
+  padding: 7px 10px; cursor: pointer; font-size: 13px; }
+.model:hover { background: #1d1d25; }
+.model.active { background: #22263a; }
+.stages { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; }
+details summary { cursor: pointer; color: var(--muted); }
+ul { margin: 6px 0; padding-left: 0; list-style: none; }
+@media (max-width: 900px) { .grid2 { grid-template-columns: 1fr; } }
