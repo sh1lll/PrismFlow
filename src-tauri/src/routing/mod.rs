@@ -103,6 +103,9 @@ pub struct Routing {
     /// providers. Fallbacks are ignored without it.
     #[serde(default)]
     pub fallback_consent: bool,
+    /// Claude Code only: pass shell output through RTK before the model sees it.
+    #[serde(default)]
+    pub output_filter: bool,
 }
 
 impl Routing {

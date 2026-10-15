@@ -85,6 +85,13 @@ export default function RoutingPanel({ c, providers, onSaved }: { c: Connection;
         </div>
       )}
 
+      {claude && (
+        <label className="small mt-block">
+          <input type="checkbox" className="check" checked={!!r.output_filter} onChange={(e) => setR({ ...r, output_filter: e.target.checked })} />
+          Shorten command output with RTK (needs RTK installed)
+        </label>
+      )}
+
       <div className="mt">
         <label className="small">Thinking effort</label>
         <select value={r.reasoning} onChange={(e) => setR({ ...r, reasoning: e.target.value as Effort })}>

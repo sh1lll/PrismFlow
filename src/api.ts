@@ -120,6 +120,7 @@ export interface Routing {
   tier_reasoning: Partial<Record<Tier, Effort>>;
   fallbacks: ModelRef[];
   fallback_consent: boolean;
+  output_filter?: boolean;
 }
 export interface WebToolsSettings { enabled: boolean; backend: "none" | "searxng" | "brave"; searxng_url: string; allow_private: boolean }
 export interface RuntimeSettings {

@@ -183,7 +183,7 @@ pub fn plan_connect(
         env.insert((*k).into(), json!(format!("{} ({})", r.model, r.provider_id)));
     }
     env.insert("CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC".into(), json!("1"));
-    let doc = json!({
+    let mut doc = json!({
         MARKER_KEY: {
             "managed": true,
             "connection": connection_id,
@@ -195,8 +195,16 @@ pub fn plan_connect(
         "apiKeyHelper": helper_command(helper, connection_id),
         "env": env,
     });
+    let rtk = routing.output_filter.then(find_rtk).flatten();
+    if let Some(rtk) = &rtk {
+        doc["hooks"] = rtk_hook(rtk);
+        // RTK looks for its hook only in the global settings; without this it
+        // prints "No hook installed" into every command's output.
+        doc["env"]["RTK_SUPPRESS_HOOK_WARNING"] = json!("1");
+        doc["env"]["RTK_TELEMETRY_DISABLED"] = json!("1");
+    }
     let after = serde_json::to_string_pretty(&doc).expect("static JSON") + "\n";
-    let summary = vec![
+    let mut summary = vec![
         format!("Create {} (your own settings.json is not modified)", file.display()),
         format!("Route Claude Code to PrismFlow's gateway at {broker_url} for {}", provider.display_name),
         if routing.tiers.is_empty() {
@@ -208,6 +216,9 @@ pub fn plan_connect(
         "Fetch a revocable local token from the Keychain at runtime via apiKeyHelper".into(),
         "Ignore any ANTHROPIC_AUTH_TOKEN / ANTHROPIC_API_KEY in your shell for this profile only".into(),
     ];
+    if let Some(rtk) = &rtk {
+        summary.push(format!("Shrink shell command output with RTK ({})", rtk.display()));
+    }
     Ok(EditPlan { file, before, after, summary })
 }
 
@@ -231,6 +242,16 @@ pub fn disconnect(file: &Path, backup_dir: &Path) -> Result<Option<PathBuf>, Cla
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn rtk_hook_matches_what_rtk_init_registers() {
+        let h = super::rtk_hook(std::path::Path::new("/opt/homebrew/bin/rtk"));
+        assert_eq!(h["PreToolUse"][0]["matcher"], "Bash");
+        assert_eq!(h["PreToolUse"][0]["hooks"][0]["type"], "command");
+        assert_eq!(h["PreToolUse"][0]["hooks"][0]["command"], "'/opt/homebrew/bin/rtk' hook claude");
+        let odd = super::rtk_hook(std::path::Path::new("/Users/o'neil/bin/rtk"));
+        assert_eq!(odd["PreToolUse"][0]["hooks"][0]["command"], "'/Users/o'\\''neil/bin/rtk' hook claude");
+    }
+
     use super::*;
     use crate::{config_engine, providers};
     use std::fs;
@@ -305,4 +326,22 @@ mod tests {
     fn quoting_survives_hostile_paths() {
         assert_eq!(shell_quote("/it's/x"), r"'/it'\''s/x'");
     }
+}
+
+/// RTK (https://github.com/rtk-ai/rtk), installed by the user. Its hook
+/// rewrites `git status` to `rtk git status`, so `rtk` must also be on the
+/// shell's PATH: only the usual install places count.
+pub fn find_rtk() -> Option<PathBuf> {
+    if let Some(p) = std::env::var_os("PRISMFLOW_RTK_BIN") {
+        return Some(PathBuf::from(p));
+    }
+    super::find_exe("rtk")
+}
+
+/// Claude Code's PreToolUse hook for Bash, as `rtk init` registers it
+/// (verified with rtk 1.0.1: it only rewrites simple commands and never
+/// approves a command on the user's behalf).
+fn rtk_hook(rtk: &Path) -> serde_json::Value {
+    let cmd = format!("'{}' hook claude", rtk.display().to_string().replace('\'', "'\\''"));
+    json!({ "PreToolUse": [{ "matcher": "Bash", "hooks": [{ "type": "command", "command": cmd }] }] })
 }

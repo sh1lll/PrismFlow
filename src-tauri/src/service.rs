@@ -694,6 +694,14 @@ impl Service {
         if routing.fallbacks.len() > 5 {
             return Err("Use at most 5 fallback models.".into());
         }
+        if routing.output_filter {
+            if record.app_id != claude_code::APP_ID {
+                return Err("The output filter works with Claude Code only.".into());
+            }
+            if claude_code::find_rtk().is_none() {
+                return Err("RTK isn't installed. Install it from github.com/rtk-ai/rtk, then try again.".into());
+            }
+        }
         if !routing.fallbacks.is_empty() && !routing.fallback_consent {
             return Err("Fallbacks can send one request to several providers and bill each of them. Confirm that before saving.".into());
         }
