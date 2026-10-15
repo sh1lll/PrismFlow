@@ -118,7 +118,7 @@ pub fn connection_id(app_id: &str, provider_id: &str) -> String {
     format!("{app_id}:{provider_id}")
 }
 
-fn app_name(app_id: &str) -> &'static str {
+pub fn app_name(app_id: &str) -> &'static str {
     if let Some(a) = agents::spec(app_id) {
         return a.display_name;
     }

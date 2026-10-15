@@ -4,6 +4,7 @@
 //! a few actions if the user allows them per device). It never exposes keys,
 //! tokens or the gateway.
 
+pub mod backend;
 pub mod server;
 pub mod tls;
 
