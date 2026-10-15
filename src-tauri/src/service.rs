@@ -874,15 +874,7 @@ impl Service {
             return Ok(self.broker.status());
         }
         let mut models: BTreeMap<String, Vec<String>> = BTreeMap::new();
-        let mut bindings = Vec::new();
         for r in &records {
-            let token = tokens::ensure(self.store.as_ref(), &r.id).map_err(|e| format!("Couldn't read the saved key: {e}"))?;
-            bindings.push((token, Binding {
-                connection_id: r.id.clone(),
-                provider_id: r.provider_id.clone(),
-                model: r.model.clone(),
-                routing: std::sync::Arc::new(r.routing.clone()),
-            }));
             let primary = crate::routing::ModelRef::new(&r.provider_id, &r.model);
             for target in r.routing.refs(&primary) {
                 let m = models.entry(target.provider_id.clone()).or_default();
@@ -890,6 +882,41 @@ impl Service {
                     m.push(target.model.clone());
                 }
             }
+        }
+        // Local Ollama: use a large-context variant of each model (its default
+        // 4k context is too small for coding agents).
+        let mut renamed: std::collections::HashMap<(String, String), String> = Default::default();
+        if let Some(list) = models.get_mut("ollama") {
+            let root = crate::ollama::api_root(&self.upstream_url(provider("ollama")?));
+            for m in list.iter_mut() {
+                match crate::ollama::ensure_context(&self.client, &root, m, crate::ollama::AGENT_CONTEXT).await {
+                    Ok(v) if v != *m => {
+                        renamed.insert(("ollama".into(), m.clone()), v.clone());
+                        *m = v;
+                    }
+                    Ok(_) => {}
+                    Err(e) => self.diag.record(Level::Warn, "ollama.context", &format!("{m}: {e} Agents may run out of room on long prompts.")),
+                }
+            }
+        }
+        let rename = |r: &crate::routing::ModelRef| -> crate::routing::ModelRef {
+            match renamed.get(&(r.provider_id.clone(), r.model.clone())) {
+                Some(v) => crate::routing::ModelRef::new(&r.provider_id, v),
+                None => r.clone(),
+            }
+        };
+        let mut bindings = Vec::new();
+        for r in &records {
+            let token = tokens::ensure(self.store.as_ref(), &r.id).map_err(|e| format!("Couldn't read the saved key: {e}"))?;
+            let mut routing = r.routing.clone();
+            routing.tiers = routing.tiers.iter().map(|(t, m)| (*t, rename(m))).collect();
+            routing.fallbacks = routing.fallbacks.iter().map(&rename).collect();
+            bindings.push((token, Binding {
+                connection_id: r.id.clone(),
+                provider_id: r.provider_id.clone(),
+                model: rename(&crate::routing::ModelRef::new(&r.provider_id, &r.model)).model,
+                routing: std::sync::Arc::new(routing),
+            }));
         }
         let mut specs = Vec::new();
         for (provider_id, models) in models {

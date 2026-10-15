@@ -7,6 +7,7 @@ pub mod credentials;
 pub mod diagnostics;
 pub mod discovery;
 pub mod gateway;
+pub mod ollama;
 pub mod providers;
 pub mod routing;
 pub mod service;
