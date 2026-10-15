@@ -220,7 +220,7 @@ function ConnectionCard({ c, providers, onChange }: { c: Connection; providers: 
         <button className="primary" disabled={busy !== ""} onClick={() => run("verify", () => api.verify(c.id))}>
           {busy === "verify" ? "Testing… (can take a few minutes)" : "Test"}
         </button>
-        {c.app_id !== "jetbrains" && <button className="ghost" disabled={busy !== ""} onClick={() => run("launch", () => api.launch(c.id), `Opened ${app}.`)}>{desktop ? "Open app" : "Open in Terminal"}</button>}
+        {!["jetbrains", "vscode_claude", "vscode_chat"].includes(c.app_id) && <button className="ghost" disabled={busy !== ""} onClick={() => run("launch", () => api.launch(c.id), `Opened ${app}.`)}>{desktop ? "Open app" : "Open in Terminal"}</button>}
         <button className="danger" disabled={busy !== ""}
           onClick={() => { if (confirm(`Disconnect ${app}? PrismFlow removes only its own settings.`)) run("disconnect", () => api.disconnect(c.id)); }}>
           Disconnect

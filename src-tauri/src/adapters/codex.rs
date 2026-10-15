@@ -448,6 +448,7 @@ pub fn detect_desktop() -> AppDetection {
         notes: vec![
             "PrismFlow changes a few Codex settings and puts them back when you disconnect.".into(),
             "Restart the Codex app after connecting or disconnecting.".into(),
+            "Also used by the Codex extension for VS Code (it reads the same settings).".into(),
         ],
     };
     if let Some(p) = &app {

@@ -259,6 +259,15 @@ async fn run_stages(
         Ok("Gateway connection created. Claude Desktop's own settings hold the address and token you entered; PrismFlow does not read them.".to_string())
     } else if record.app_id == crate::adapters::jetbrains::APP_ID {
         check_jetbrains_config(&record.id)
+    } else if record.app_id == crate::adapters::vscode::CLAUDE_APP_ID {
+        crate::adapters::vscode::claude_config_dir(&record.id)
+            .filter(|d| d.join("settings.json").is_file())
+            .map(|_| "VS Code points the Claude Code extension at PrismFlow.".to_string())
+            .ok_or_else(|| format!("{} no longer points the Claude Code extension at PrismFlow.", crate::adapters::vscode::settings_file().display()))
+    } else if record.app_id == crate::adapters::vscode::CHAT_APP_ID {
+        crate::adapters::vscode::chat_model(&record.id)
+            .map(|_| "VS Code Chat has the PrismFlow model.".to_string())
+            .ok_or_else(|| format!("{} no longer has the PrismFlow model.", crate::adapters::vscode::chat_models_file().display()))
     } else if let Some(a) = agent {
         check_agent_config(a, &record.managed_file)
     } else if record.app_id == codex::DESKTOP_APP_ID {
@@ -367,6 +376,15 @@ async fn run_stages(
     }
     if record.app_id == crate::adapters::jetbrains::APP_ID {
         return jetbrains_stages(env, provider, record, run, &secrets).await;
+    }
+    if record.app_id == crate::adapters::vscode::CLAUDE_APP_ID {
+        // The extension runs Claude Code with this settings folder; run it the same way.
+        let mut r = record.clone();
+        r.managed_file = crate::adapters::vscode::claude_config_dir(&record.id).unwrap_or_default().join("settings.json");
+        return claude_agent_stages(env, provider, &r, run, &secrets).await;
+    }
+    if record.app_id == crate::adapters::vscode::CHAT_APP_ID {
+        return vscode_chat_stages(env, record, run, &secrets).await;
     }
 
     // Stage 5 — end-to-end request through Codex itself.
@@ -653,6 +671,44 @@ async fn terminal_agent_stages(
         }
         Err(e) => {
             run.push(6, "Tool calling", StageOutcome::Fail, e);
+            ConnectionStatus::PartiallyCompatible
+        }
+    }
+}
+
+/// VS Code Chat: send the requests VS Code sends, to the URL with the key it has.
+async fn vscode_chat_stages(env: &VerifyEnv<'_>, record: &ConnectionRecord, run: &mut Run, secrets: &[&str]) -> ConnectionStatus {
+    use crate::adapters::vscode;
+    let Some(model) = vscode::chat_model(&record.id) else {
+        run.push(5, "End-to-end", StageOutcome::Fail, "The PrismFlow model is missing from VS Code Chat. Connect again.");
+        return ConnectionStatus::ConfigurationInvalid;
+    };
+    let ask = serde_json::json!([{ "role": "user", "content": format!("Reply with exactly {E2E_TOKEN} and nothing else.") }]);
+    match vscode::chat_request(&env.client, &model, ask, false).await {
+        Ok(v) if v.to_string().contains(E2E_TOKEN) => run.push(5, "End-to-end", StageOutcome::Pass, "The model answered."),
+        Ok(v) => {
+            run.push(5, "End-to-end", StageOutcome::Fail, format!("The model didn't answer as expected.\n\n{}", redact_known(&tail(&v.to_string(), 6), secrets)));
+            return ConnectionStatus::RequiresAttention;
+        }
+        Err(e) => {
+            let shown = redact_known(&e, secrets);
+            run.push(5, "End-to-end", StageOutcome::Fail, shown.clone());
+            return classify_agent_failure(&shown);
+        }
+    }
+    let ask = serde_json::json!([{ "role": "user", "content": "Use the read_file tool to read notes.txt." }]);
+    match vscode::chat_request(&env.client, &model, ask, true).await {
+        Ok(v) if v["content"].as_array().is_some_and(|c| c.iter().any(|b| b["type"] == "tool_use" && b["name"] == "read_file")) => {
+            run.push(6, "Tool calling", StageOutcome::Pass, "The model can use tools.");
+            ConnectionStatus::ConnectedAndVerified
+        }
+        Ok(_) => {
+            run.push(6, "Tool calling", StageOutcome::Fail,
+                "The model can chat but couldn't use tools, so agent mode may not work. Try a different model.");
+            ConnectionStatus::PartiallyCompatible
+        }
+        Err(e) => {
+            run.push(6, "Tool calling", StageOutcome::Fail, redact_known(&e, secrets));
             ConnectionStatus::PartiallyCompatible
         }
     }
