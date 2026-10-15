@@ -117,6 +117,7 @@ async fn run_codex(
     prompt: &str,
     timeout: Duration,
 ) -> Result<(bool, String), String> {
+    std::fs::create_dir_all(workdir).map_err(|e| format!("could not create {}: {e}", workdir.display()))?;
     let mut cmd = tokio::process::Command::new(bin);
     cmd.arg("exec");
     if !profile.is_empty() {
