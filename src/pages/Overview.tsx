@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import type { Page } from "../App";
-import { api, AppDetection, Connection, DiagEvent, Provider, STATUS_LABEL, errText, statusTone, when } from "../api";
+import { api, APP_NAME, AppDetection, Connection, DiagEvent, Provider, ROUTE_LABEL, STATUS_LABEL, errText, launchHint, statusTone, when } from "../api";
+import GatewayCard from "./GatewayCard";
 
 export default function Overview({ go }: { go: (p: Page) => void }) {
   const [connections, setConnections] = useState<Connection[]>([]);
@@ -21,7 +22,6 @@ export default function Overview({ go }: { go: (p: Page) => void }) {
   }, []);
 
   const keyed = providers.filter((p) => p.has_credential);
-  const codex = apps.find((a) => a.app_id === "codex_cli");
 
   return (
     <div>
@@ -36,14 +36,14 @@ export default function Overview({ go }: { go: (p: Page) => void }) {
             {keyed.length === 0 ? (
               <>Start by <a onClick={() => go("Providers")}>adding a provider key</a>.</>
             ) : (
-              <><a onClick={() => go("Connections")}>Connect Codex</a> to a model.</>
+              <><a onClick={() => go("Connections")}>Connect Codex or Claude Code</a> to a model.</>
             )}
           </div>
         ) : (
           connections.map((c) => (
             <div key={c.id} className="row spread line">
               <div>
-                <b>{c.model}</b> <span className="muted">via {c.provider_id} → Codex CLI (<code>codex -p {c.profile}</code>)</span>
+                <b>{c.model}</b> <span className="muted">via {c.provider_id} → {APP_NAME[c.app_id]} · {ROUTE_LABEL[c.route]} (<code>{launchHint(c)}</code>)</span>
               </div>
               <span className={`badge ${statusTone(c.status)}`}>{STATUS_LABEL[c.status]}</span>
             </div>
@@ -57,20 +57,25 @@ export default function Overview({ go }: { go: (p: Page) => void }) {
           {keyed.length === 0 ? <div className="muted">None stored.</div> : keyed.map((p) => <div key={p.id}>{p.display_name}</div>)}
           <div className="muted small">Keys live only in the macOS Keychain.</div>
         </div>
-        <div className="card">
-          <div className="section-title">Codex CLI</div>
-          {!codex ? (
-            <div className="muted">Detecting…</div>
-          ) : codex.installed ? (
-            <div>
-              {codex.version} <span className={codex.version_verified ? "ok" : "warn"}>{codex.version_verified ? "· verified version" : "· unverified version"}</span>
+        {apps.length === 0 ? (
+          <div className="card muted">Detecting applications…</div>
+        ) : (
+          apps.map((a) => (
+            <div key={a.app_id} className="card">
+              <div className="section-title">{a.display_name}</div>
+              {a.installed ? (
+                <div>
+                  {a.version} <span className={a.version_verified ? "ok" : "warn"}>{a.version_verified ? "· verified version" : "· unverified version"}</span>
+                </div>
+              ) : (
+                <div className="warn">Not installed</div>
+              )}
             </div>
-          ) : (
-            <div className="warn">Not installed</div>
-          )}
-          <div className="muted small">Gateway: not part of this build (needed only for Claude Code and Chat-only providers).</div>
-        </div>
+          ))
+        )}
       </div>
+
+      <GatewayCard />
 
       {errors.length > 0 && (
         <div className="card">

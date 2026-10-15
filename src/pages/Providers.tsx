@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { api, Provider, errText } from "../api";
+import { api, APP_NAME, Provider, errText } from "../api";
 
 function ProviderCard({ p, onChange }: { p: Provider; onChange: () => void }) {
   const [editing, setEditing] = useState(false);
@@ -47,16 +47,21 @@ function ProviderCard({ p, onChange }: { p: Provider; onChange: () => void }) {
       <div className="muted small">
         {custom ? "Base URL: you supply it" : p.base_url} · {p.protocols.join(", ")}
       </div>
-      <div className="small">
-        Codex CLI:{" "}
-        {p.codex_direct ? (
-          <span className="ok">direct connection available</span>
-        ) : custom ? (
-          <span className="muted">custom endpoints are not supported in this build</span>
-        ) : (
-          <span className="muted">needs the compatibility gateway (not built yet) — Codex requires the Responses API</span>
-        )}
-      </div>
+      {(["codex_cli", "claude_code"] as const).map((app) => {
+        const route = p.routes[app];
+        return (
+          <div key={app} className="small">
+            {APP_NAME[app]}:{" "}
+            {route === "direct" ? (
+              <span className="ok">direct connection</span>
+            ) : route === "gateway" ? (
+              <span className="ok">through PrismFlow's local gateway</span>
+            ) : (
+              <span className="muted">custom endpoints are not supported in this build</span>
+            )}
+          </div>
+        );
+      })}
 
       {!custom && (
         <div className="mt">

@@ -12,6 +12,35 @@ export interface Provider {
   docs_url: string;
   has_credential: boolean;
   codex_direct: boolean;
+  /** How each app reaches this provider; null = unsupported. */
+  routes: Record<AppId, Route | null>;
+}
+
+export type AppId = "codex_cli" | "claude_code";
+export type Route = "direct" | "gateway";
+
+export const APP_NAME: Record<string, string> = { codex_cli: "Codex CLI", claude_code: "Claude Code CLI" };
+
+export const ROUTE_LABEL: Record<Route, string> = {
+  direct: "Direct",
+  gateway: "Via PrismFlow gateway",
+};
+
+export type GatewayPhase = "stopped" | "starting" | "ready" | "restarting" | "failed";
+
+export interface GatewayStatus {
+  phase: GatewayPhase;
+  url: string;
+  port: number;
+  engine: string;
+  node: string | null;
+  detail: string | null;
+  restarts: number;
+  requests: number;
+  rejected: number;
+  upstream_errors: number;
+  connections: number;
+  upstreams: string[];
 }
 
 export interface ModelInfo {
@@ -53,6 +82,7 @@ export interface Connection {
   app_id: string;
   model: string;
   profile: string;
+  route: Route;
   managed_file: string;
   created_at: number;
   status: ConnectionStatus;
@@ -60,6 +90,8 @@ export interface Connection {
 }
 
 export interface ConnectPreview {
+  app_id: AppId;
+  route: Route;
   file: string;
   before: string;
   after: string;
@@ -76,15 +108,22 @@ export const api = {
   deleteCredential: (providerId: string) => invoke<void>("delete_credential", { providerId }),
   discoverModels: (providerId: string) => invoke<ModelInfo[]>("discover_models", { providerId }),
   applications: () => invoke<AppDetection[]>("list_applications"),
-  preview: (providerId: string, model: string) => invoke<ConnectPreview>("preview_connection", { providerId, model }),
-  connect: (providerId: string, model: string) => invoke<Connection>("connect", { providerId, model }),
+  preview: (appId: AppId, providerId: string, model: string) => invoke<ConnectPreview>("preview_connection", { appId, providerId, model }),
+  connect: (appId: AppId, providerId: string, model: string) => invoke<Connection>("connect", { appId, providerId, model }),
   verify: (id: string) => invoke<VerificationReport>("verify_connection", { id }),
   disconnect: (id: string) => invoke<string | null>("disconnect", { id }),
   connections: () => invoke<Connection[]>("list_connections"),
   launch: (id: string) => invoke<void>("launch_connection", { id }),
   diagnostics: () => invoke<DiagEvent[]>("get_diagnostics"),
   exportDiagnostics: () => invoke<string>("export_diagnostics"),
+  gatewayStatus: () => invoke<GatewayStatus>("gateway_status"),
+  restartGateway: () => invoke<GatewayStatus>("restart_gateway"),
 };
+
+/** The command a user runs to start the app with a connection. */
+export function launchHint(c: Connection): string {
+  return c.app_id === "claude_code" ? `claude --settings ${c.managed_file}` : `codex -p ${c.profile}`;
+}
 
 export const STATUS_LABEL: Record<ConnectionStatus, string> = {
   NotConfigured: "Not configured",

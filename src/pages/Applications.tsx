@@ -2,9 +2,23 @@ import { useEffect, useState } from "react";
 import { api, AppDetection, errText } from "../api";
 
 const NOT_YET = [
-  { name: "Claude Code CLI", why: "Needs the compatibility gateway (Anthropic Messages ↔ OpenAI translation). Planned next." },
   { name: "Codex Desktop / Claude Desktop", why: "Each desktop integration is verified individually after the CLI paths work." },
 ];
+
+const INTEGRATION: Record<string, JSX.Element> = {
+  codex_cli: (
+    <>
+      Integration: a PrismFlow-owned profile file (<code>~/.codex/prismflow-&lt;provider&gt;.config.toml</code>), used with <code>codex -p</code>. Your own <code>config.toml</code> is never edited.
+      Providers without the Responses API (e.g. NVIDIA NIM) are reached through PrismFlow's local gateway.
+    </>
+  ),
+  claude_code: (
+    <>
+      Integration: a PrismFlow-owned settings file (<code>~/.claude/prismflow-&lt;provider&gt;.settings.json</code>), used with <code>claude --settings</code>. Your own <code>settings.json</code> and login are never edited.
+      Claude Code speaks only the Anthropic Messages API, so every provider goes through PrismFlow's local gateway; Claude Code holds only a revocable local token.
+    </>
+  ),
+};
 
 export default function Applications() {
   const [apps, setApps] = useState<AppDetection[] | null>(null);
@@ -39,9 +53,7 @@ export default function Applications() {
             </div>
             {a.version && <div className="small">{a.version}</div>}
             {a.path && <div className="muted small"><code>{a.path}</code></div>}
-            <div className="small mt">
-              Integration: a PrismFlow-owned profile file (<code>~/.codex/prismflow-&lt;provider&gt;.config.toml</code>), used with <code>codex -p</code>. Your own <code>config.toml</code> is never edited.
-            </div>
+            <div className="small mt">{INTEGRATION[a.app_id]}</div>
             {a.notes.map((n, i) => <div key={i} className="warn small">{n}</div>)}
           </div>
         ))

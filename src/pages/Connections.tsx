@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import {
-  api, Connection, ConnectPreview, ModelInfo, Provider, STATUS_LABEL, StageResult, errText, statusTone, when,
+  api, APP_NAME, AppId, Connection, ConnectPreview, ModelInfo, Provider, ROUTE_LABEL, STATUS_LABEL, StageResult,
+  errText, launchHint, statusTone, when,
 } from "../api";
 
 const OUTCOME_TONE: Record<string, string> = { Pass: "ok", Warn: "warn", Fail: "err", Skipped: "muted" };
@@ -8,8 +9,8 @@ const OUTCOME_TONE: Record<string, string> = { Pass: "ok", Warn: "warn", Fail: "
 function Stages({ stages }: { stages: StageResult[] }) {
   return (
     <div className="stages">
-      {stages.map((s) => (
-        <div key={s.stage} className="stage">
+      {stages.map((s, i) => (
+        <div key={i} className="stage">
           <span className={`badge ${OUTCOME_TONE[s.outcome]}`}>{s.outcome}</span>{" "}
           <b>{s.stage}. {s.name}</b>
           <div className="small pre-wrap muted">{s.detail}</div>
@@ -20,8 +21,12 @@ function Stages({ stages }: { stages: StageResult[] }) {
 }
 
 function NewConnection({ providers, onDone }: { providers: Provider[]; onDone: () => void }) {
-  const eligible = providers.filter((p) => p.codex_direct);
+  const [appId, setAppId] = useState<AppId>("codex_cli");
+  const eligible = providers.filter((p) => p.routes[appId] != null);
   const [providerId, setProviderId] = useState(eligible.find((p) => p.has_credential)?.id ?? eligible[0]?.id ?? "");
+  useEffect(() => {
+    if (!eligible.some((p) => p.id === providerId)) setProviderId(eligible.find((p) => p.has_credential)?.id ?? eligible[0]?.id ?? "");
+  }, [appId]);
   const [model, setModel] = useState("");
   const [models, setModels] = useState<ModelInfo[] | null>(null);
   const [toolsOnly, setToolsOnly] = useState(true);
@@ -31,7 +36,7 @@ function NewConnection({ providers, onDone }: { providers: Provider[]; onDone: (
   const [error, setError] = useState("");
   const provider = eligible.find((p) => p.id === providerId);
 
-  useEffect(() => { setModels(null); setPreview(null); }, [providerId]);
+  useEffect(() => { setModels(null); setPreview(null); }, [providerId, appId]);
   useEffect(() => { setPreview(null); }, [model]);
 
   async function loadModels() {
@@ -54,7 +59,7 @@ function NewConnection({ providers, onDone }: { providers: Provider[]; onDone: (
   async function doPreview() {
     setBusy("preview");
     setError("");
-    try { setPreview(await api.preview(providerId, model)); }
+    try { setPreview(await api.preview(appId, providerId, model)); }
     catch (e) { setError(errText(e)); }
     finally { setBusy(""); }
   }
@@ -63,26 +68,36 @@ function NewConnection({ providers, onDone }: { providers: Provider[]; onDone: (
     setBusy("connect");
     setError("");
     try {
-      await api.connect(providerId, model);
+      await api.connect(appId, providerId, model);
       setPreview(null);
       onDone();
     } catch (e) { setError(errText(e)); }
     finally { setBusy(""); }
   }
 
-  if (eligible.length === 0) {
-    return <div className="card muted">No provider in this build can connect to Codex directly.</div>;
-  }
-
   return (
     <div className="card">
-      <div className="section-title">Connect Codex CLI to a model</div>
-      <label className="small muted">Provider</label>
+      <div className="section-title">Connect an application to a model</div>
+      <label className="small muted">Application</label>
+      <select value={appId} onChange={(e) => setAppId(e.target.value as AppId)}>
+        <option value="codex_cli">Codex CLI</option>
+        <option value="claude_code">Claude Code CLI</option>
+      </select>
+      <label className="small muted mt-block">Provider</label>
       <select value={providerId} onChange={(e) => setProviderId(e.target.value)}>
         {eligible.map((p) => (
-          <option key={p.id} value={p.id}>{p.display_name}{p.has_credential ? "" : " — no key yet"}</option>
+          <option key={p.id} value={p.id}>
+            {p.display_name} · {ROUTE_LABEL[p.routes[appId]!]}{p.has_credential ? "" : " — no key yet"}
+          </option>
         ))}
       </select>
+      {provider && provider.routes[appId] === "gateway" && (
+        <div className="muted small mt">
+          {appId === "claude_code"
+            ? "Claude Code speaks the Anthropic Messages API; PrismFlow's local gateway translates it for this provider."
+            : "This provider has no Responses API; PrismFlow's local gateway translates Codex's requests."}
+        </div>
+      )}
       {provider && !provider.has_credential && <div className="warn small mt">Add a {provider.display_name} key under Providers first.</div>}
 
       <label className="small muted mt-block">Model</label>
@@ -162,15 +177,16 @@ function ConnectionCard({ c, onChange }: { c: Connection; onChange: () => void }
     <div className="card">
       <div className="row spread">
         <div>
-          <b>{c.model}</b> <span className="muted">via {c.provider_id} → Codex CLI</span>
+          <b>{c.model}</b> <span className="muted">via {c.provider_id} → {APP_NAME[c.app_id]}</span>{" "}
+          <span className="badge muted">{ROUTE_LABEL[c.route]}</span>
         </div>
         <span className={`badge ${statusTone(c.status)}`}>{STATUS_LABEL[c.status]}</span>
       </div>
       <div className="small muted">
-        <code>codex -p {c.profile}</code> · {c.managed_file}
+        <code>{launchHint(c)}</code> · {c.managed_file}
       </div>
       {c.status === "Unverified" && (
-        <div className="warn small mt">Written but not verified. Run verification before relying on it. Codex sessions that were already running keep their old settings until restarted.</div>
+        <div className="warn small mt">Written but not verified. Run verification before relying on it. Sessions that were already running keep their old settings until restarted.</div>
       )}
       {c.last_report && (
         <details className="mt" open={c.status !== "ConnectedAndVerified"}>
@@ -182,12 +198,12 @@ function ConnectionCard({ c, onChange }: { c: Connection; onChange: () => void }
         <button className="primary" disabled={busy !== ""} onClick={() => run("verify", () => api.verify(c.id))}>
           {busy === "verify" ? "Verifying… (up to a few minutes)" : "Verify"}
         </button>
-        <button className="ghost" disabled={busy !== ""} onClick={() => run("launch", () => api.launch(c.id), "Opened Codex in Terminal.")}>Launch in Terminal</button>
+        <button className="ghost" disabled={busy !== ""} onClick={() => run("launch", () => api.launch(c.id), `Opened ${APP_NAME[c.app_id]} in Terminal.`)}>Launch in Terminal</button>
         <button
           className="danger"
           disabled={busy !== ""}
           onClick={() => {
-            if (confirm(`Disconnect? PrismFlow deletes ${c.managed_file} (a backup is kept). Your own Codex config is untouched.`)) {
+            if (confirm(`Disconnect? PrismFlow deletes ${c.managed_file} (a backup is kept)${c.route === "gateway" ? " and revokes this connection's local token" : ""}. Your own ${APP_NAME[c.app_id]} config is untouched.`)) {
               run("disconnect", () => api.disconnect(c.id));
             }
           }}
@@ -216,7 +232,7 @@ export default function Connections() {
       {error && <div className="card err">{error}</div>}
       {connections?.map((c) => <ConnectionCard key={c.id} c={c} onChange={load} />)}
       {providers && <NewConnection providers={providers} onDone={load} />}
-      <p className="muted small">Connecting the same provider again switches its model; the profile file is updated in place.</p>
+      <p className="muted small">Connecting the same app and provider again switches its model; PrismFlow's file is updated in place.</p>
     </div>
   );
 }
