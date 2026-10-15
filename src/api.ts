@@ -184,6 +184,7 @@ export const api = {
   installUpdate: () => invoke<void>("install_update"),
   guidedSetup: (id: string) => invoke<{ gateway_url: string; auth_scheme: string; token: string; model: string; steps: string[] }>("guided_setup", { id }),
   companionState: () => invoke<CompanionView>("companion_state"),
+  keychainWaiting: () => invoke<boolean>("keychain_waiting"),
   companionEnable: (address: string, port: number, keepOn: boolean) => invoke<CompanionView>("companion_enable", { address, port, keepOn }),
   companionDisable: () => invoke<CompanionView>("companion_disable"),
   companionPair: () => invoke<PairingView>("companion_pair"),

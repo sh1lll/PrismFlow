@@ -21,9 +21,23 @@ use tauri::State;
 
 type Cmd<T> = Result<T, String>;
 
+/// Runs work that may wait on the Keychain or start other programs off the
+/// main thread, so the window keeps drawing (and can say what it waits for).
+async fn blocking<T: Send + 'static>(f: impl FnOnce() -> T + Send + 'static) -> Cmd<T> {
+    tauri::async_runtime::spawn_blocking(f).await.map_err(|e| e.to_string())
+}
+
+/// True while a Keychain request has waited more than a moment, which on
+/// macOS means its "allow access" window is open.
 #[tauri::command]
-fn list_providers(svc: State<'_, Arc<Service>>) -> Vec<ProviderView> {
-    svc.providers()
+fn keychain_waiting() -> bool {
+    credentials::keychain::waiting()
+}
+
+#[tauri::command]
+async fn list_providers(svc: State<'_, Arc<Service>>) -> Cmd<Vec<ProviderView>> {
+    let svc = svc.inner().clone();
+    blocking(move || svc.providers()).await
 }
 
 #[tauri::command]
@@ -37,8 +51,9 @@ async fn set_credential(svc: State<'_, Arc<Service>>, provider_id: String, secre
 }
 
 #[tauri::command]
-fn delete_credential(svc: State<'_, Arc<Service>>, provider_id: String) -> Cmd<()> {
-    svc.delete_credential(&provider_id)
+async fn delete_credential(svc: State<'_, Arc<Service>>, provider_id: String) -> Cmd<()> {
+    let svc = svc.inner().clone();
+    blocking(move || svc.delete_credential(&provider_id)).await?
 }
 
 #[tauri::command]
@@ -47,13 +62,15 @@ async fn discover_models(svc: State<'_, Arc<Service>>, provider_id: String) -> C
 }
 
 #[tauri::command]
-fn list_applications(svc: State<'_, Arc<Service>>) -> Vec<adapters::AppDetection> {
-    svc.applications()
+async fn list_applications(svc: State<'_, Arc<Service>>) -> Cmd<Vec<adapters::AppDetection>> {
+    let svc = svc.inner().clone();
+    blocking(move || svc.applications()).await
 }
 
 #[tauri::command]
-fn preview_connection(svc: State<'_, Arc<Service>>, app_id: String, provider_id: String, model: String) -> Cmd<ConnectPreview> {
-    svc.preview(&app_id, &provider_id, &model)
+async fn preview_connection(svc: State<'_, Arc<Service>>, app_id: String, provider_id: String, model: String) -> Cmd<ConnectPreview> {
+    let svc = svc.inner().clone();
+    blocking(move || svc.preview(&app_id, &provider_id, &model)).await?
 }
 
 #[tauri::command]
@@ -104,8 +121,9 @@ async fn add_custom_provider(
 }
 
 #[tauri::command]
-fn remove_custom_provider(svc: State<'_, Arc<Service>>, id: String) -> Cmd<()> {
-    svc.remove_custom_provider(&id)
+async fn remove_custom_provider(svc: State<'_, Arc<Service>>, id: String) -> Cmd<()> {
+    let svc = svc.inner().clone();
+    blocking(move || svc.remove_custom_provider(&id)).await?
 }
 
 #[tauri::command]
@@ -286,13 +304,15 @@ async fn set_signin_consent(svc: State<'_, Arc<Service>>, provider_id: String, c
 }
 
 #[tauri::command]
-fn set_web_search_key(svc: State<'_, Arc<Service>>, key: String) -> Cmd<()> {
-    svc.set_web_search_key(&key)
+async fn set_web_search_key(svc: State<'_, Arc<Service>>, key: String) -> Cmd<()> {
+    let svc = svc.inner().clone();
+    blocking(move || svc.set_web_search_key(&key)).await?
 }
 
 #[tauri::command]
-fn has_web_search_key(svc: State<'_, Arc<Service>>) -> bool {
-    svc.has_web_search_key()
+async fn has_web_search_key(svc: State<'_, Arc<Service>>) -> Cmd<bool> {
+    let svc = svc.inner().clone();
+    blocking(move || svc.has_web_search_key()).await
 }
 
 #[tauri::command]
@@ -419,6 +439,7 @@ pub fn run() {
         .manage(companion_state_holder)
         .manage(sessions::Sessions::open(&dir))
         .invoke_handler(tauri::generate_handler![
+            keychain_waiting,
             list_providers,
             set_credential,
             delete_credential,

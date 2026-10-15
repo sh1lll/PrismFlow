@@ -18,6 +18,12 @@ export default function App() {
   const [remoteUrl, setRemoteUrl] = useState<string | null>(null);
   const refreshRemote = () => api.companionState().then((s) => setRemoteUrl(s.enabled ? s.url : null)).catch(() => setRemoteUrl(null));
   useEffect(() => { refreshRemote(); const t = setInterval(refreshRemote, 15000); return () => clearInterval(t); }, []);
+  // macOS asks before PrismFlow can read its saved keys; say so instead of looking frozen.
+  const [keychain, setKeychain] = useState(false);
+  useEffect(() => {
+    const t = setInterval(() => api.keychainWaiting().then(setKeychain).catch(() => setKeychain(false)), 1000);
+    return () => clearInterval(t);
+  }, []);
   return (
     <div className="shell">
       <nav className="nav">
@@ -29,6 +35,11 @@ export default function App() {
         ))}
       </nav>
       <main className="content">
+        {keychain && (
+          <div className="remote-banner">
+            Waiting for your permission. macOS is asking whether PrismFlow can use its saved keys. Find the Keychain window, enter your Mac password, and click Always Allow.
+          </div>
+        )}
         {remoteUrl && (
           <div className="remote-banner">
             Remote access is ON at {remoteUrl}. <a onClick={() => setPage("Remote access")}>Manage</a>
