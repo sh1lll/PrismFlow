@@ -1,3 +1,4 @@
+import RoutingPanel from "./RoutingPanel";
 import { useEffect, useMemo, useState } from "react";
 import {
   api, APP_NAME, AppId, Connection, ConnectPreview, ModelInfo, Provider, ROUTE_LABEL, STATUS_LABEL, StageResult,
@@ -158,7 +159,7 @@ function NewConnection({ providers, onDone }: { providers: Provider[]; onDone: (
   );
 }
 
-function ConnectionCard({ c, onChange }: { c: Connection; onChange: () => void }) {
+function ConnectionCard({ c, providers, onChange }: { c: Connection; providers: Provider[]; onChange: () => void }) {
   const [busy, setBusy] = useState("");
   const [msg, setMsg] = useState<{ tone: string; text: string } | null>(null);
   const [running, setRunning] = useState<number[]>([]);
@@ -201,6 +202,7 @@ function ConnectionCard({ c, onChange }: { c: Connection; onChange: () => void }
           <Stages stages={c.last_report.stages} />
         </details>
       )}
+      {c.route === "gateway" && <RoutingPanel c={c} providers={providers} onSaved={onChange} />}
       <div className="row mt">
         <button className="primary" disabled={busy !== ""} onClick={() => run("verify", () => api.verify(c.id))}>
           {busy === "verify" ? "Verifying… (up to a few minutes)" : "Verify"}
@@ -237,7 +239,7 @@ export default function Connections() {
     <div>
       <h1>Connections</h1>
       {error && <div className="card err">{error}</div>}
-      {connections?.map((c) => <ConnectionCard key={c.id} c={c} onChange={load} />)}
+      {connections?.map((c) => <ConnectionCard key={c.id} c={c} providers={providers ?? []} onChange={load} />)}
       {providers && <NewConnection providers={providers} onDone={load} />}
       <p className="muted small">Connecting the same app and provider again switches its model; PrismFlow's file is updated in place.</p>
     </div>

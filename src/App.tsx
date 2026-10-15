@@ -4,9 +4,10 @@ import Providers from "./pages/Providers";
 import Applications from "./pages/Applications";
 import Connections from "./pages/Connections";
 import Diagnostics from "./pages/Diagnostics";
+import Settings from "./pages/Settings";
 
-export type Page = "Overview" | "Providers" | "Applications" | "Connections" | "Diagnostics";
-const PAGES: Page[] = ["Overview", "Providers", "Applications", "Connections", "Diagnostics"];
+export type Page = "Overview" | "Providers" | "Applications" | "Connections" | "Diagnostics" | "Settings";
+const PAGES: Page[] = ["Overview", "Providers", "Applications", "Connections", "Diagnostics", "Settings"];
 
 export default function App() {
   const [page, setPage] = useState<Page>("Overview");
@@ -26,6 +27,7 @@ export default function App() {
         {page === "Applications" && <Applications />}
         {page === "Connections" && <Connections />}
         {page === "Diagnostics" && <Diagnostics />}
+        {page === "Settings" && <Settings />}
       </main>
     </div>
   );

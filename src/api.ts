@@ -101,6 +101,23 @@ export interface Connection {
   created_at: number;
   status: ConnectionStatus;
   last_report: VerificationReport | null;
+  routing: Routing;
+}
+
+export type Tier = "default" | "fable" | "opus" | "sonnet" | "haiku" | "subagent";
+export type Effort = "inherit" | "off" | "from_client" | "low" | "medium" | "high" | "xhigh" | "max";
+export interface ModelRef { provider_id: string; model: string }
+export interface Routing {
+  tiers: Partial<Record<Tier, ModelRef>>;
+  reasoning: Effort;
+  tier_reasoning: Partial<Record<Tier, Effort>>;
+  fallbacks: ModelRef[];
+  fallback_consent: boolean;
+}
+export interface RuntimeSettings {
+  rate_limit_per_minute: number;
+  max_concurrency_per_provider: number;
+  upstream_retries: number;
 }
 
 export interface ConnectPreview {
@@ -131,6 +148,9 @@ export const api = {
   addCustomProvider: (name: string, url: string, protocol: Protocol, requiresKey: boolean, consent: boolean) =>
     invoke<Provider>("add_custom_provider", { name, url, protocol, requiresKey, consent }),
   removeCustomProvider: (id: string) => invoke<void>("remove_custom_provider", { id }),
+  setRouting: (id: string, routing: Routing) => invoke<Connection>("set_routing", { id, routing }),
+  getSettings: () => invoke<RuntimeSettings>("get_settings"),
+  setSettings: (settings: RuntimeSettings) => invoke<RuntimeSettings>("set_settings", { settings }),
   runningSessions: (id: string) => invoke<number[]>("running_sessions", { id }),
   launch: (id: string) => invoke<void>("launch_connection", { id }),
   diagnostics: () => invoke<DiagEvent[]>("get_diagnostics"),

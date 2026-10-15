@@ -66,3 +66,8 @@ ul { margin: 6px 0; padding-left: 0; list-style: none; }
 .card.compact { padding: 10px 14px; margin-bottom: 8px; }
 .rowbtn { width: 100%; background: none; border: 0; color: var(--text); padding: 0; cursor: pointer; text-align: left; font-size: 14px; }
 .mb { margin-bottom: 12px; }
+textarea { background: #0d0d12; border: 1px solid var(--line); color: var(--text); border-radius: 8px;
+  padding: 8px 10px; font: 13px ui-monospace, Menlo, monospace; width: 100%; resize: vertical; }
+.mt-s { margin-top: 6px; }
+.tier-label { min-width: 170px; }
+select { background: #0d0d12; border: 1px solid var(--line); color: var(--text); border-radius: 8px; padding: 8px 10px; font-size: 14px; }
