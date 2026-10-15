@@ -45,7 +45,11 @@ async fn claude_desktop_gateway_profile() {
     let sse = client.post(format!("{base}/v1/messages")).bearer_auth(&key)
         .header("anthropic-version", "2023-06-01").json(&body).send().await.unwrap().text().await.unwrap();
     eprintln!("stream tail: {}", sse.chars().rev().take(400).collect::<String>().chars().rev().collect::<String>());
-    assert!(sse.contains("PRISMFLOW_DESKTOP_OK") && sse.contains("message_stop"));
+    let text: String = sse.lines().filter_map(|l| l.strip_prefix("data: "))
+        .filter_map(|d| serde_json::from_str::<Value>(d).ok())
+        .filter_map(|v| v["delta"]["text"].as_str().map(String::from)).collect();
+    eprintln!("streamed text: {text:?}");
+    assert!(text.contains("PRISMFLOW_DESKTOP_OK") && sse.contains("message_stop"));
 
     cd::disconnect_auto().unwrap();
     let meta: Value = serde_json::from_str(&std::fs::read_to_string(lib.path().join("configLibrary/_meta.json")).unwrap()).unwrap();
