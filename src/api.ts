@@ -30,13 +30,13 @@ export interface UrlCheck {
   warnings: string[];
 }
 
-export type AppId = "codex_cli" | "claude_code" | "aider" | "cline" | "pi" | "hermes";
-export const APP_IDS: AppId[] = ["codex_cli", "claude_code", "aider", "cline", "pi", "hermes"];
+export type AppId = "codex_cli" | "codex_desktop" | "claude_code" | "claude_desktop" | "aider" | "cline" | "pi" | "hermes";
+export const APP_IDS: AppId[] = ["codex_cli", "codex_desktop", "claude_code", "claude_desktop", "aider", "cline", "pi", "hermes"];
 export const TERMINAL_AGENTS: AppId[] = ["aider", "cline", "pi", "hermes"];
 export type Route = "direct" | "gateway";
 
 export const APP_NAME: Record<string, string> = {
-  codex_cli: "Codex CLI", claude_code: "Claude Code CLI", aider: "Aider", cline: "Cline CLI", pi: "Pi", hermes: "Hermes Agent",
+  codex_cli: "Codex CLI", codex_desktop: "Codex Desktop", claude_code: "Claude Code CLI", claude_desktop: "Claude Desktop", aider: "Aider", cline: "Cline CLI", pi: "Pi", hermes: "Hermes Agent",
 };
 
 export const ROUTE_LABEL: Record<Route, string> = {
@@ -160,6 +160,7 @@ export const api = {
   setSettings: (settings: RuntimeSettings) => invoke<RuntimeSettings>("set_settings", { settings }),
   checkUpdate: () => invoke<{ current: string; available: string | null; notes: string | null }>("check_update"),
   installUpdate: () => invoke<void>("install_update"),
+  guidedSetup: (id: string) => invoke<{ gateway_url: string; auth_scheme: string; token: string; model: string; steps: string[] }>("guided_setup", { id }),
   uninstall: (dryRun: boolean) => invoke<UninstallReport>("uninstall", { dryRun }),
   runningSessions: (id: string) => invoke<number[]>("running_sessions", { id }),
   launch: (id: string) => invoke<void>("launch_connection", { id }),
@@ -172,6 +173,8 @@ export const api = {
 /** The command a user runs to start the app with a connection. */
 export function launchHint(c: Connection): string {
   if (TERMINAL_AGENTS.includes(c.app_id as AppId)) return c.managed_file;
+  if (c.app_id === "codex_desktop") return "open the Codex app (restart it after changes)";
+  if (c.app_id === "claude_desktop") return "Claude Desktop → Configure Third-Party Inference";
   return c.app_id === "claude_code" ? `claude --settings ${c.managed_file}` : `codex -p ${c.profile}`;
 }
 

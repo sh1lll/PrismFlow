@@ -203,12 +203,13 @@ function ConnectionCard({ c, providers, onChange }: { c: Connection; providers: 
           <Stages stages={c.last_report.stages} />
         </details>
       )}
+      {c.app_id === "claude_desktop" && <GuidedSetup id={c.id} />}
       {c.route === "gateway" && <RoutingPanel c={c} providers={providers} onSaved={onChange} />}
       <div className="row mt">
         <button className="primary" disabled={busy !== ""} onClick={() => run("verify", () => api.verify(c.id))}>
           {busy === "verify" ? "Verifying… (up to a few minutes)" : "Verify"}
         </button>
-        <button className="ghost" disabled={busy !== ""} onClick={() => run("launch", () => api.launch(c.id), `Opened ${APP_NAME[c.app_id]} in Terminal.`)}>Launch in Terminal</button>
+        <button className="ghost" disabled={busy !== ""} onClick={() => run("launch", () => api.launch(c.id), `Opened ${APP_NAME[c.app_id]}.`)}>{c.app_id.endsWith("_desktop") ? "Open app" : "Launch in Terminal"}</button>
         <button
           className="danger"
           disabled={busy !== ""}
@@ -244,5 +245,33 @@ export default function Connections() {
       {providers && <NewConnection providers={providers} onDone={load} />}
       <p className="muted small">Connecting the same app and provider again switches its model; PrismFlow's file is updated in place.</p>
     </div>
+  );
+}
+
+function GuidedSetup({ id }: { id: string }) {
+  const [info, setInfo] = useState<{ gateway_url: string; auth_scheme: string; token: string; model: string; steps: string[] } | null>(null);
+  const [error, setError] = useState("");
+  const [copied, setCopied] = useState(false);
+  return (
+    <details className="mt">
+      <summary className="small">Set up in Claude Desktop</summary>
+      {!info ? (
+        <div className="mt">
+          <div className="small muted">This shows the local token once so you can paste it into Claude Desktop. It works only on this computer, through PrismFlow's gateway, and Disconnect revokes it.</div>
+          <button className="ghost mt" onClick={() => api.guidedSetup(id).then(setInfo).catch((e) => setError(errText(e)))}>Show setup values</button>
+        </div>
+      ) : (
+        <div className="mt small">
+          <ol>{info.steps.map((s, i) => <li key={i}>{s}</li>)}</ol>
+          <div>Gateway base URL: <code className="selectable">{info.gateway_url}</code></div>
+          <div>Model: <code className="selectable">{info.model}</code></div>
+          <div className="row mt-s">
+            <span>API key ({info.auth_scheme}):</span>
+            <button className="ghost" onClick={() => navigator.clipboard.writeText(info.token).then(() => setCopied(true))}>{copied ? "Copied" : "Copy token"}</button>
+          </div>
+        </div>
+      )}
+      {error && <div className="err small mt">{error}</div>}
+    </details>
   );
 }

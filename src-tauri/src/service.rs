@@ -1,7 +1,7 @@
 //! Application service: the operations the UI invokes, independent of Tauri
 //! so they are testable with an in-memory credential store and temp dirs.
 
-use crate::adapters::{self, agents, claude_code, codex, AppDetection};
+use crate::adapters::{self, agents, claude_code, claude_desktop, codex, AppDetection};
 use crate::config_engine;
 use crate::credentials::{account_key, CredentialError, CredentialStore};
 use crate::diagnostics::{now_secs, DiagnosticsLog, Event, Level};
@@ -84,7 +84,7 @@ type R<T> = Result<T, String>;
 
 /// Every application PrismFlow can connect.
 fn app_ids() -> Vec<&'static str> {
-    let mut v = vec![codex::APP_ID, codex::DESKTOP_APP_ID, claude_code::APP_ID];
+    let mut v = vec![codex::APP_ID, codex::DESKTOP_APP_ID, claude_code::APP_ID, claude_desktop::APP_ID];
     v.extend(agents::AGENTS.iter().map(|a| a.id));
     v
 }
@@ -108,6 +108,7 @@ pub fn route_for(app_id: &str, p: &ProviderDefinition) -> Option<Route> {
         codex::DESKTOP_APP_ID if codex_direct(p) && p.requires_key => Some(Route::Direct),
         codex::DESKTOP_APP_ID => Some(Route::Gateway),
         claude_code::APP_ID => Some(Route::Gateway),
+        claude_desktop::APP_ID => Some(Route::Gateway),
         a if agents::spec(a).is_some() => Some(Route::Gateway),
         _ => None,
     }
@@ -124,6 +125,7 @@ fn app_name(app_id: &str) -> &'static str {
     match app_id {
         claude_code::APP_ID => "Claude Code",
         codex::DESKTOP_APP_ID => "Codex Desktop",
+        claude_desktop::APP_ID => "Claude Desktop",
         _ => "Codex",
     }
 }
@@ -381,13 +383,17 @@ impl Service {
         let p = provider(provider_id)?;
         let model = validate_model_id(model)?;
         let route = route_for(app_id, p).ok_or_else(|| match app_id {
-            a if a == codex::APP_ID || a == codex::DESKTOP_APP_ID || a == claude_code::APP_ID || agents::spec(a).is_some() => format!(
+            a if a == codex::APP_ID || a == codex::DESKTOP_APP_ID || a == claude_code::APP_ID || a == claude_desktop::APP_ID || agents::spec(a).is_some() => format!(
                 "{} needs a base URL; custom providers are not supported in this build.", p.display_name
             ),
             other => format!("Unknown application '{other}'."),
         })?;
         let id = connection_id(app_id, p.id);
         let url = self.broker.url_for_config();
+        if app_id == claude_desktop::APP_ID {
+            let steps = claude_desktop::guided_setup(&self.broker.url_for_config(), "(shown after you connect)".into(), model).steps;
+            return Ok((p, route, config_engine::EditPlan { file: PathBuf::new(), before: String::new(), after: String::new(), summary: steps }));
+        }
         if let Some(spec) = agents::spec(app_id) {
             let files = self.agent_files(spec, p, model)?;
             let (script, body) = files[0].clone();
@@ -426,8 +432,8 @@ impl Service {
     fn profile_for(&self, app_id: &str, provider_id: &str) -> String {
         if agents::spec(app_id).is_some() {
             connection_id(app_id, provider_id).replace(':', "-")
-        } else if app_id == codex::DESKTOP_APP_ID {
-            String::new() // the desktop app uses the base config, no profile
+        } else if app_id == codex::DESKTOP_APP_ID || app_id == claude_desktop::APP_ID {
+            String::new() // desktop apps have no PrismFlow profile
         } else if app_id == claude_code::APP_ID {
             claude_code::profile_name(provider_id)
         } else {
@@ -436,6 +442,9 @@ impl Service {
     }
 
     fn launch_line(&self, app_id: &str, profile: &str, file: &std::path::Path) -> String {
+        if app_id == claude_desktop::APP_ID {
+            return format!("open -b {}", claude_desktop::BUNDLE_ID);
+        }
         if app_id == codex::DESKTOP_APP_ID {
             return format!("open -b {}", codex::DESKTOP_BUNDLE_ID);
         }
@@ -457,7 +466,10 @@ impl Service {
         let mut warnings = vec![format!(
             "Requests from this {} profile are billed to your {} account.", app_name(app_id), p.display_name
         )];
-        if app_id == codex::DESKTOP_APP_ID {
+        if app_id == claude_desktop::APP_ID {
+            warnings.push("PrismFlow does not change Claude Desktop's files. After connecting, it shows the gateway address and a token for you to enter in Claude Desktop's own Configure Third-Party Inference screen.".into());
+            warnings.push("While Claude Desktop uses third-party inference, it is not signed in to your Claude account; switch back in the same screen.".into());
+        } else if app_id == codex::DESKTOP_APP_ID {
             let priors = codex::read_base_priors(&self.codex_home).unwrap_or_default();
             match priors.get("model_provider").cloned().flatten() {
                 Some(cur) if !cur.starts_with("prismflow_") => warnings.push(format!(
@@ -543,7 +555,7 @@ impl Service {
         if let Some(spec) = agents::spec(app_id) {
             agents::write(&self.agent_files(spec, p, validate_model_id(model)?)?).map_err(|e| format!("Nothing usable was written: {e}"))?;
         }
-        let applied = if agents::spec(app_id).is_some() {
+        let applied = if agents::spec(app_id).is_some() || app_id == claude_desktop::APP_ID {
             config_engine::AppliedEdit { file: plan.file.clone(), backup_path: None }
         } else { config_engine::apply(&plan).map_err(|e| {
             let msg = format!("Writing {} failed; nothing was changed: {e}", plan.file.display());
@@ -725,7 +737,9 @@ impl Service {
 
     pub async fn disconnect(&self, id: &str) -> R<Option<String>> {
         let record = self.state.get(id).map_err(|e| e.to_string())?.ok_or("Unknown connection.")?;
-        let removed = if record.app_id == codex::DESKTOP_APP_ID {
+        let removed = if record.app_id == claude_desktop::APP_ID {
+            Ok(None) // nothing was written; revoking the token below is the disconnect
+        } else if record.app_id == codex::DESKTOP_APP_ID {
             codex::plan_disconnect_base(&self.codex_home, &record.provider_id, &record.priors)
                 .map_err(|e| e.to_string())
                 .and_then(|plans| {
@@ -777,7 +791,9 @@ impl Service {
     pub fn running_sessions(&self, id: &str) -> R<Vec<u32>> {
         let record = self.state.get(id).map_err(|e| e.to_string())?.ok_or("Unknown connection.")?;
         let procs = adapters::processes::list();
-        Ok(if agents::spec(&record.app_id).is_some() {
+        Ok(if record.app_id == claude_desktop::APP_ID || record.app_id == codex::DESKTOP_APP_ID {
+            Vec::new() // desktop apps: restart is shown in the UI instead
+        } else if agents::spec(&record.app_id).is_some() {
             let dir = agents::agent_dir(self.state.dir(), &record.id).display().to_string();
             procs.iter().filter(|p| p.command.contains(&dir)).map(|p| p.pid).collect()
         } else if record.app_id == claude_code::APP_ID {
@@ -887,6 +903,21 @@ impl Service {
         Ok(UninstallReport { dry_run, complete: true, items })
     }
 
+    /// Values to enter in Claude Desktop's own third-party inference screen.
+    /// The token is this connection's revocable, loopback-only local token.
+    pub async fn guided_setup(&self, id: &str) -> R<claude_desktop::GuidedSetup> {
+        let record = self.state.get(id).map_err(|e| e.to_string())?.ok_or("Unknown connection.")?;
+        if record.app_id != claude_desktop::APP_ID {
+            return Err("Guided setup applies to Claude Desktop connections only.".into());
+        }
+        if !self.broker.is_running().await {
+            self.sync_gateway().await?;
+        }
+        let token = tokens::ensure(self.store.as_ref(), id).map_err(|e| format!("Secure store error: {e}"))?;
+        self.diag.record(Level::Info, "guided.revealed", &format!("Showed the local token for {id} for entry in Claude Desktop."));
+        Ok(claude_desktop::guided_setup(&self.broker.url_for_config(), token, &record.model))
+    }
+
     pub fn connections(&self) -> R<Vec<ConnectionRecord>> {
         self.state.load().map_err(|e| e.to_string())
     }
@@ -914,6 +945,11 @@ impl Service {
 
     pub fn launch(&self, id: &str) -> R<()> {
         let record = self.state.get(id).map_err(|e| e.to_string())?.ok_or("Unknown connection.")?;
+        if record.app_id == claude_desktop::APP_ID {
+            std::process::Command::new("open").args(["-b", claude_desktop::BUNDLE_ID]).status().map_err(|e| e.to_string())?;
+            self.diag.record(Level::Info, "launch", "Opened Claude Desktop.");
+            return Ok(());
+        }
         if record.app_id == codex::DESKTOP_APP_ID {
             std::process::Command::new("open").args(["-b", codex::DESKTOP_BUNDLE_ID]).status().map_err(|e| e.to_string())?;
             self.diag.record(Level::Info, "launch", "Opened the Codex app.");

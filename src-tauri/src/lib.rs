@@ -167,6 +167,11 @@ async fn install_update() -> Cmd<()> {
 }
 
 #[tauri::command]
+async fn guided_setup(svc: State<'_, Service>, id: String) -> Cmd<adapters::claude_desktop::GuidedSetup> {
+    svc.guided_setup(&id).await
+}
+
+#[tauri::command]
 fn list_connections(svc: State<'_, Service>) -> Cmd<Vec<state::ConnectionRecord>> {
     svc.connections()
 }
@@ -246,6 +251,7 @@ pub fn run() {
             list_connections,
             running_sessions,
             set_routing,
+            guided_setup,
             check_update,
             install_update,
             uninstall,

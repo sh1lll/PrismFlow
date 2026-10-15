@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
 import { api, AppDetection, errText } from "../api";
 
-const NOT_YET = [
-  { name: "Codex Desktop / Claude Desktop", why: "Each desktop integration is verified individually after the CLI paths work." },
+const NOT_YET: { name: string; why: string }[] = [
+  { name: "VS Code (Chat, Claude Code, Codex extensions), JetBrains ACP, OpenCode, DeepSeek Harness", why: "Not installed on the machine these adapters are verified on; they ship once each is verified on a real install." },
 ];
 
 const INTEGRATION: Record<string, JSX.Element> = {
@@ -18,6 +18,8 @@ const INTEGRATION: Record<string, JSX.Element> = {
       Claude Code speaks only the Anthropic Messages API, so every provider goes through PrismFlow's local gateway; Claude Code holds only a revocable local token.
     </>
   ),
+  codex_desktop: <>Edits your <code>~/.codex/config.toml</code> (the Codex app has no profiles): three top-level keys and one PrismFlow provider table. Previous values are recorded and restored exactly on disconnect. Restart the app after changes.</>,
+  claude_desktop: <>Guided: PrismFlow creates a gateway connection and shows the address and token to enter in Claude Desktop's own Configure Third-Party Inference screen. It never edits Claude Desktop's files.</>,
   aider: <>Launched by PrismFlow with <code>OPENAI_API_BASE</code> pointed at the local gateway and a token fetched at launch. Your own Aider settings are untouched.</>,
   cline: <>Launched with an isolated <code>--data-dir</code> inside PrismFlow's folder; the key comes from the environment at launch, so none is stored. Your <code>~/.cline</code> is untouched.</>,
   pi: <>Launched with an isolated <code>PI_CODING_AGENT_DIR</code>; Pi runs PrismFlow's token helper itself on each request. Your <code>~/.pi</code> is untouched.</>,

@@ -251,7 +251,9 @@ async fn run_stages(
     // Stage 1 — configuration validation.
     let agent = crate::adapters::agents::spec(&record.app_id);
     let is_claude = record.app_id == claude_code::APP_ID;
-    let stage1 = if let Some(a) = agent {
+    let stage1 = if record.app_id == crate::adapters::claude_desktop::APP_ID {
+        Ok("Gateway connection created. Claude Desktop's own settings hold the address and token you entered; PrismFlow does not read them.".to_string())
+    } else if let Some(a) = agent {
         check_agent_config(a, &record.managed_file)
     } else if record.app_id == codex::DESKTOP_APP_ID {
         check_desktop_config(&record.managed_file, &record.provider_id, env.codex_bin.as_deref())
@@ -347,6 +349,9 @@ async fn run_stages(
 
     if is_claude {
         return claude_agent_stages(env, provider, record, run, &secrets).await;
+    }
+    if record.app_id == crate::adapters::claude_desktop::APP_ID {
+        return claude_desktop_stages(env, provider, record, run, &secrets).await;
     }
     if let Some(a) = agent {
         return terminal_agent_stages(env, a, provider, record, run, &secrets).await;
@@ -488,6 +493,57 @@ fn check_claude_config(file: &Path, claude_bin: Option<&Path>) -> Result<String,
         return Err("Claude Code is not installed.".into());
     }
     Ok("Settings file is valid, PrismFlow-managed, and its token helper exists.".into())
+}
+
+/// Claude Desktop: send the same request shape it sends (Anthropic Messages,
+/// Bearer local token) through the gateway. The app itself cannot be driven,
+/// so the result stays "configured, not verified" until the user tests it.
+async fn claude_desktop_stages(
+    env: &VerifyEnv<'_>,
+    provider: &ProviderDefinition,
+    record: &ConnectionRecord,
+    run: &mut Run,
+    secrets: &[&str],
+) -> ConnectionStatus {
+    let Some(gw) = env.gateway.as_ref().filter(|g| !g.url.is_empty()) else {
+        run.push(5, "End-to-end", StageOutcome::Fail, "The gateway is not running.");
+        return ConnectionStatus::RequiresAttention;
+    };
+    let Ok(token) = env.store.get(&crate::gateway::tokens::account(&record.id)) else {
+        run.push(5, "End-to-end", StageOutcome::Fail, "This connection has no local token. Reconnect it.");
+        return ConnectionStatus::NeedsCredentials;
+    };
+    let body = serde_json::json!({
+        "model": record.model, "max_tokens": 64, "stream": false,
+        "messages": [{"role": "user", "content": format!("Reply with exactly {E2E_TOKEN} and nothing else.")}]
+    });
+    let sent = env.client.post(format!("{}/v1/messages", gw.url)).bearer_auth(&token)
+        .header("anthropic-version", "2023-06-01").json(&body)
+        .timeout(env.agent_timeout).send().await;
+    let mut all_secrets: Vec<&str> = secrets.to_vec();
+    all_secrets.push(&token);
+    match sent {
+        Ok(r) => {
+            let status = r.status();
+            let text = r.text().await.unwrap_or_default();
+            if status.is_success() && text.contains(E2E_TOKEN) {
+                run.push(5, "End-to-end", StageOutcome::Pass, format!(
+                    "The gateway answered Claude Desktop's request format with {} using this connection's token.", record.model));
+            } else {
+                let shown = redact_known(&tail(&text, 6), &all_secrets);
+                let hint = remediation(&text, provider).map(|h| format!("{h}\n\n")).unwrap_or_default();
+                run.push(5, "End-to-end", StageOutcome::Fail, format!("{hint}HTTP {status}: {shown}"));
+                return classify_agent_failure(&shown);
+            }
+        }
+        Err(e) => {
+            run.push(5, "End-to-end", StageOutcome::Fail, format!("The gateway could not be reached: {}", e.without_url()));
+            return ConnectionStatus::ProviderUnavailable;
+        }
+    }
+    run.push(6, "In Claude Desktop", StageOutcome::Skipped,
+        "PrismFlow cannot drive Claude Desktop. Use its Test connection button in Configure Third-Party Inference to finish verifying.");
+    ConnectionStatus::Unverified
 }
 
 fn check_desktop_config(file: &Path, provider_id: &str, codex_bin: Option<&Path>) -> Result<String, String> {

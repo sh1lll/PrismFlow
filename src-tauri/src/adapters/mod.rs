@@ -3,6 +3,7 @@
 
 pub mod agents;
 pub mod claude_code;
+pub mod claude_desktop;
 pub mod codex;
 pub mod processes;
 
@@ -35,7 +36,7 @@ pub struct AppDetection {
 }
 
 pub fn detect_all() -> Vec<AppDetection> {
-    let mut all = vec![codex::detect(), codex::detect_desktop(), claude_code::detect()];
+    let mut all = vec![codex::detect(), codex::detect_desktop(), claude_code::detect(), claude_desktop::detect()];
     all.extend(agents::AGENTS.iter().map(agents::detect));
     all
 }
