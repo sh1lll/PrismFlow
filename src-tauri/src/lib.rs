@@ -9,6 +9,7 @@ pub mod gateway;
 pub mod providers;
 pub mod routing;
 pub mod service;
+pub mod sessions;
 pub mod state;
 pub mod verify;
 pub mod webtools;
@@ -295,6 +296,47 @@ fn has_web_search_key(svc: State<'_, Arc<Service>>) -> bool {
 }
 
 #[tauri::command]
+fn session_list(sessions: State<'_, sessions::Sessions>) -> Vec<sessions::Session> {
+    sessions.list()
+}
+
+#[tauri::command]
+fn session_create(sessions: State<'_, sessions::Sessions>, folder: String, sandbox: sessions::Sandbox, title: String) -> Cmd<sessions::Session> {
+    sessions.create(std::path::Path::new(folder.trim()), sandbox, &title)
+}
+
+/// Send a message; each turn may use a different Codex CLI connection.
+#[tauri::command]
+async fn session_send(svc: State<'_, Arc<Service>>, sessions: State<'_, sessions::Sessions>, id: String, connection_id: String, prompt: String) -> Cmd<()> {
+    let rec = svc.connections()?.into_iter().find(|c| c.id == connection_id).ok_or("Unknown connection.")?;
+    if rec.app_id != adapters::codex::APP_ID {
+        return Err("Code sessions run Codex CLI; pick a Codex CLI connection.".into());
+    }
+    if rec.route == state::Route::Gateway && !svc.gateway_status().phase.eq(&gateway::Phase::Ready) {
+        svc.sync_gateway().await?;
+    }
+    let bin = adapters::codex::find_binary().ok_or("Codex CLI is not installed.")?;
+    sessions.start_turn(&id, &bin, &rec.profile, &rec.id, &rec.model, &prompt)?;
+    svc.diag.record(diagnostics::Level::Info, "session.turn", &format!("Session {id}: Codex turn started with {}.", rec.id));
+    Ok(())
+}
+
+#[tauri::command]
+fn session_events(sessions: State<'_, sessions::Sessions>, id: String, since: usize) -> Cmd<sessions::EventsPage> {
+    sessions.events(&id, since).ok_or_else(|| "Unknown session.".to_string())
+}
+
+#[tauri::command]
+fn session_stop(sessions: State<'_, sessions::Sessions>, id: String) -> Cmd<()> {
+    sessions.stop(&id)
+}
+
+#[tauri::command]
+fn session_delete(sessions: State<'_, sessions::Sessions>, id: String) -> Cmd<()> {
+    sessions.delete(&id)
+}
+
+#[tauri::command]
 fn list_connections(svc: State<'_, Arc<Service>>) -> Cmd<Vec<state::ConnectionRecord>> {
     svc.connections()
 }
@@ -374,6 +416,7 @@ pub fn run() {
         })
         .manage(service)
         .manage(companion_state_holder)
+        .manage(sessions::Sessions::open(&dir))
         .invoke_handler(tauri::generate_handler![
             list_providers,
             set_credential,
@@ -387,6 +430,12 @@ pub fn run() {
             list_connections,
             running_sessions,
             set_routing,
+            session_list,
+            session_create,
+            session_send,
+            session_events,
+            session_stop,
+            session_delete,
             set_web_search_key,
             has_web_search_key,
             set_signin_consent,

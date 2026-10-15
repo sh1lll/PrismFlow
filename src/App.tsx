@@ -6,10 +6,11 @@ import Connections from "./pages/Connections";
 import Diagnostics from "./pages/Diagnostics";
 import Settings from "./pages/Settings";
 import Remote from "./pages/Remote";
+import Sessions from "./pages/Sessions";
 import { api } from "./api";
 
-export type Page = "Overview" | "Providers" | "Applications" | "Connections" | "Diagnostics" | "Remote access" | "Settings";
-const PAGES: Page[] = ["Overview", "Providers", "Applications", "Connections", "Diagnostics", "Remote access", "Settings"];
+export type Page = "Overview" | "Providers" | "Applications" | "Connections" | "Code sessions" | "Diagnostics" | "Remote access" | "Settings";
+const PAGES: Page[] = ["Overview", "Providers", "Applications", "Connections", "Code sessions", "Diagnostics", "Remote access", "Settings"];
 
 export default function App() {
   const [page, setPage] = useState<Page>("Overview");
@@ -37,6 +38,7 @@ export default function App() {
         {page === "Providers" && <Providers />}
         {page === "Applications" && <Applications />}
         {page === "Connections" && <Connections />}
+        {page === "Code sessions" && <Sessions />}
         {page === "Diagnostics" && <Diagnostics />}
         {page === "Remote access" && <Remote onChange={refreshRemote} />}
         {page === "Settings" && <Settings />}

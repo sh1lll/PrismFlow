@@ -78,3 +78,13 @@ select { background: #0d0d12; border: 1px solid var(--line); color: var(--text);
 .qr { background: #fff; padding: 8px; border-radius: 8px; line-height: 0; }
 .qr svg { width: 200px; height: 200px; }
 .code { font: 600 16px ui-monospace, Menlo, monospace; letter-spacing: 0.04em; margin: 6px 0; word-break: break-all; }
+.sessions { display: grid; grid-template-columns: 220px 1fr; gap: 12px; margin-top: 10px; }
+.session-list { display: flex; flex-direction: column; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; align-self: start; }
+.session-view { display: flex; flex-direction: column; gap: 8px; }
+.turn { display: flex; flex-direction: column; gap: 6px; }
+.msg-user { background: #1e2236; border-radius: 10px; padding: 8px 10px; align-self: flex-end; max-width: 85%; }
+.msg-agent { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px; max-width: 95%; }
+.msg-cmd summary { cursor: pointer; }
+.msg-files { color: var(--accent); }
+.composer { display: flex; flex-direction: column; gap: 6px; border-top: 1px solid var(--line); padding-top: 10px; }
+@media (max-width: 900px) { .sessions { grid-template-columns: 1fr; } }

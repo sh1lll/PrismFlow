@@ -142,6 +142,11 @@ export interface CompanionView {
 }
 export interface PairingView { uri: string; qr_svg: string; code: string; url: string; fingerprint: string; expires_in_secs: number }
 
+export type Sandbox = "read_only" | "workspace_write";
+export interface SessionTurn { connection_id: string; model: string; prompt: string; status: "running" | "completed" | "failed" | "stopped"; started_at: number; first_event: number }
+export interface CodeSession { id: string; title: string; folder: string; sandbox: Sandbox; thread_id: string | null; created_at: number; turns: SessionTurn[] }
+export interface EventsPage { session: CodeSession; events: any[]; next: number }
+
 export interface ConnectPreview {
   app_id: AppId;
   route: Route;
@@ -186,6 +191,12 @@ export const api = {
   setSigninConsent: (providerId: string, consent: boolean) => invoke<void>("set_signin_consent", { providerId, consent }),
   setWebSearchKey: (key: string) => invoke<void>("set_web_search_key", { key }),
   hasWebSearchKey: () => invoke<boolean>("has_web_search_key"),
+  sessionList: () => invoke<CodeSession[]>("session_list"),
+  sessionCreate: (folder: string, sandbox: Sandbox, title: string) => invoke<CodeSession>("session_create", { folder, sandbox, title }),
+  sessionSend: (id: string, connectionId: string, prompt: string) => invoke<void>("session_send", { id, connectionId, prompt }),
+  sessionEvents: (id: string, since: number) => invoke<EventsPage>("session_events", { id, since }),
+  sessionStop: (id: string) => invoke<void>("session_stop", { id }),
+  sessionDelete: (id: string) => invoke<void>("session_delete", { id }),
   runningSessions: (id: string) => invoke<number[]>("running_sessions", { id }),
   launch: (id: string) => invoke<void>("launch_connection", { id }),
   diagnostics: () => invoke<DiagEvent[]>("get_diagnostics"),
