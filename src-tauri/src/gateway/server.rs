@@ -91,6 +91,28 @@ fn muse_models(binding: &Binding) -> Response {
     }]})).into_response()
 }
 
+/// The Claude model names Claude Desktop shows, like another tool's list. Each name
+/// routes to the model set for its slot (Fable/Opus/Sonnet/Haiku), or to
+/// the connection's own model when that slot isn't set.
+pub const CLAUDE_DESKTOP_MODELS: &[(&str, &str, &str)] = &[
+    ("claude-fable-5", "Claude Fable 5", "2026-06-09T00:00:00Z"),
+    ("claude-opus-4-20250514", "Claude Opus 4", "2025-05-14T00:00:00Z"),
+    ("claude-sonnet-4-20250514", "Claude Sonnet 4", "2025-05-14T00:00:00Z"),
+    ("claude-haiku-4-20250514", "Claude Haiku 4", "2025-05-14T00:00:00Z"),
+    ("claude-3-opus-20240229", "Claude 3 Opus", "2024-02-29T00:00:00Z"),
+    ("claude-3-5-sonnet-20241022", "Claude 3.5 Sonnet", "2024-10-22T00:00:00Z"),
+    ("claude-3-haiku-20240307", "Claude 3 Haiku", "2024-03-07T00:00:00Z"),
+    ("claude-3-5-haiku-20241022", "Claude 3.5 Haiku", "2024-10-22T00:00:00Z"),
+];
+
+fn claude_desktop_models(_binding: &Binding) -> Response {
+    let data: Vec<serde_json::Value> = CLAUDE_DESKTOP_MODELS.iter().map(|(id, name, created)| json!({
+        "type": "model", "object": "model", "id": id, "display_name": name, "created_at": created, "owned_by": "prismflow",
+    })).collect();
+    let (first, last) = (CLAUDE_DESKTOP_MODELS[0].0, CLAUDE_DESKTOP_MODELS[CLAUDE_DESKTOP_MODELS.len() - 1].0);
+    Json(json!({ "object": "list", "data": data, "has_more": false, "first_id": first, "last_id": last })).into_response()
+}
+
 pub(crate) fn host_allowed(host: &str, port: u16) -> bool {
     host == format!("127.0.0.1:{port}") || host == format!("localhost:{port}")
 }
@@ -141,6 +163,9 @@ async fn proxy(State(inner): State<Arc<Inner>>, req: Request) -> Response {
     }
     if path == "/muse-code/models" {
         return muse_models(&binding);
+    }
+    if path == "/v1/models" && binding.connection_id.starts_with("claude_desktop:") {
+        return claude_desktop_models(&binding);
     }
     let upstream = match inner.upstream() {
         Ok(u) => u,

@@ -771,8 +771,8 @@ impl Service {
         if record.route != Route::Gateway {
             return Err("These options only work when the app goes through PrismFlow.".into());
         }
-        if record.app_id != claude_code::APP_ID && !routing.tiers.is_empty() {
-            return Err("Per-tier models apply to Claude Code only; Codex uses one model per profile.".into());
+        if record.app_id != claude_code::APP_ID && record.app_id != claude_desktop::APP_ID && !routing.tiers.is_empty() {
+            return Err("Different models per slot work with Claude Code and Claude Desktop only.".into());
         }
         if routing.fallbacks.len() > 5 {
             return Err("Use at most 5 fallback models.".into());

@@ -778,3 +778,24 @@ async fn muse_code_catalog_needs_a_token_and_lists_the_connection_model() {
     assert_eq!(r.status(), 401);
     h.broker.stop().await;
 }
+
+#[tokio::test]
+async fn claude_desktop_sees_claude_model_names() {
+    let upstream = chat_upstream().await;
+    let dir = tempfile::tempdir().unwrap();
+    let broker = Broker::new(0, dir.path().to_path_buf(), None);
+    let token = tokens::generate();
+    let spec = UpstreamSpec { provider_id: "nvidia_nim".into(), engine_type: "openai_chat_completions",
+        base_url: format!("{}/v1", upstream.uri()), models: vec![MODEL.into()], key: UPSTREAM_KEY.into(), codex_oauth: false };
+    let binding = Binding { connection_id: "claude_desktop:nvidia_nim".into(), provider_id: "nvidia_nim".into(), model: MODEL.into(), ..Default::default() };
+    broker.start(vec![spec], vec![(token.clone(), binding)]).await.unwrap();
+    let v: serde_json::Value = client().get(format!("{}/v1/models", broker.url())).bearer_auth(&token).send().await.unwrap().json().await.unwrap();
+    let ids: Vec<&str> = v["data"].as_array().unwrap().iter().map(|m| m["id"].as_str().unwrap()).collect();
+    assert!(ids.contains(&"claude-fable-5") && ids.contains(&"claude-3-haiku-20240307"), "{ids:?}");
+    // A Claude name still reaches the connection's model.
+    let mut b = messages_body(false, false);
+    b["model"] = serde_json::json!("claude-opus-4-20250514");
+    let r: serde_json::Value = client().post(format!("{}/v1/messages", broker.url())).bearer_auth(&token).json(&b).send().await.unwrap().json().await.unwrap();
+    assert_eq!(r["type"], "message", "{r}");
+    broker.stop().await;
+}

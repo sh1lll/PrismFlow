@@ -39,6 +39,9 @@ export default function RoutingPanel({ c, providers, onSaved }: { c: Connection;
   const [msg, setMsg] = useState<{ tone: string; text: string } | null>(null);
   const [busy, setBusy] = useState(false);
   const claude = c.app_id === "claude_code";
+  // Claude Desktop shows Claude model names; each name uses its slot's model.
+  const slots = claude || c.app_id === "claude_desktop";
+  const tierList = claude ? TIERS : TIERS.filter((t) => t.tier !== "subagent");
   const usable = providers.filter((p) => (p.has_credential || p.key_optional) && p.routes[c.app_id as AppId]);
 
   const setTier = (t: Tier, ref: ModelRef | undefined) => {
@@ -59,7 +62,7 @@ export default function RoutingPanel({ c, providers, onSaved }: { c: Connection;
     const fallbacks = r.fallbacks.filter(clean);
     setBusy(true);
     try {
-      await api.setRouting(c.id, { ...r, tiers: claude ? tiers : {}, fallbacks });
+      await api.setRouting(c.id, { ...r, tiers: slots ? tiers : {}, fallbacks });
       setMsg({ tone: "ok", text: "Saved. Press Test to check it." });
       onSaved();
     } catch (e) {
@@ -73,10 +76,11 @@ export default function RoutingPanel({ c, providers, onSaved }: { c: Connection;
     <details className="mt">
       <summary className="small">More options</summary>
 
-      {claude && (
+      {slots && (
         <div className="mt">
           <div className="section-title small">Use a different model for…</div>
-          {TIERS.map(({ tier, label }) => (
+          {!claude && <div className="small muted">Claude Desktop lists Claude names like Opus 4 and Haiku 3. Each one uses the model you pick here.</div>}
+          {tierList.map(({ tier, label }) => (
             <div key={tier} className="mt-s">
               <div className="small">{label}</div>
               <RefPicker value={r.tiers[tier]} onChange={(ref) => setTier(tier, ref)} providers={usable} placeholder={`Same as main (${c.model})`} />

@@ -57,6 +57,16 @@ impl Tier {
         let slug = model.strip_prefix(ALIAS_PREFIX)?;
         Tier::ALL.into_iter().find(|t| t.slug() == slug)
     }
+
+    /// A Claude model name (`claude-opus-4-…`, `claude-3-5-haiku-…`) → its
+    /// slot, the way another tool maps them; Claude Desktop sends these names.
+    pub fn from_claude_name(model: &str) -> Option<Tier> {
+        let m = model.to_ascii_lowercase();
+        if !m.starts_with("claude") {
+            return None;
+        }
+        [Tier::Fable, Tier::Opus, Tier::Sonnet, Tier::Haiku].into_iter().find(|t| m.contains(t.slug()))
+    }
 }
 
 /// Reasoning policy (another tool's Off / From client / Low…Max, per-tier Inherit).
@@ -128,7 +138,7 @@ impl Routing {
 
     /// The ordered attempts for a request whose body names `requested`.
     pub fn plan(&self, primary: &ModelRef, requested: Option<&str>) -> (Tier, Vec<ModelRef>) {
-        let tier = requested.and_then(Tier::from_alias).unwrap_or(Tier::Default);
+        let tier = requested.and_then(|m| Tier::from_alias(m).or_else(|| Tier::from_claude_name(m))).unwrap_or(Tier::Default);
         let first = self.tiers.get(&tier).cloned().unwrap_or_else(|| primary.clone());
         let mut chain = vec![first];
         if self.fallback_consent {
@@ -216,11 +226,26 @@ mod tests {
     }
 
     #[test]
+    fn claude_desktop_names_use_their_slot() {
+        let primary = ModelRef::new("ollama", "qwen3");
+        let mut r = Routing::default();
+        r.tiers.insert(Tier::Opus, ModelRef::new("openrouter", "big"));
+        assert_eq!(r.plan(&primary, Some("claude-opus-4-20250514")).1[0], ModelRef::new("openrouter", "big"));
+        assert_eq!(r.plan(&primary, Some("claude-3-opus-20240229")).1[0], ModelRef::new("openrouter", "big"));
+        // Unset slot: the connection's own model.
+        assert_eq!(r.plan(&primary, Some("claude-3-5-haiku-20241022")).1[0], primary);
+    }
+
+    #[test]
     fn aliases_round_trip() {
         for t in Tier::ALL {
             assert_eq!(Tier::from_alias(&t.alias()), Some(t));
         }
         assert_eq!(Tier::from_alias("claude-opus-4"), None);
+        assert_eq!(Tier::from_claude_name("claude-opus-4-20250514"), Some(Tier::Opus));
+        assert_eq!(Tier::from_claude_name("claude-3-5-haiku-20241022"), Some(Tier::Haiku));
+        assert_eq!(Tier::from_claude_name("claude-fable-5"), Some(Tier::Fable));
+        assert_eq!(Tier::from_claude_name("gpt-opus"), None);
         assert_eq!(Tier::from_alias("prismflow-nope"), None);
     }
 
@@ -230,7 +255,9 @@ mod tests {
         r.tiers.insert(Tier::Haiku, ModelRef::new("groq", "small"));
         assert_eq!(r.plan(&primary(), Some("prismflow-haiku")).1, vec![ModelRef::new("groq", "small")]);
         assert_eq!(r.plan(&primary(), Some("prismflow-opus")).1, vec![primary()]);
-        assert_eq!(r.plan(&primary(), Some("claude-sonnet-x")), (Tier::Default, vec![primary()]));
+        // Claude names map to their slot (OTHER-style); an unset slot uses the primary.
+        assert_eq!(r.plan(&primary(), Some("claude-sonnet-x")), (Tier::Sonnet, vec![primary()]));
+        assert_eq!(r.plan(&primary(), Some("gpt-4o")), (Tier::Default, vec![primary()]));
         assert_eq!(r.plan(&primary(), None).1, vec![primary()]);
     }
 
