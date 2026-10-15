@@ -220,7 +220,8 @@ mod tests {
             let f = files(a.id);
             assert!(f[0].0.ends_with("launch.sh"));
             assert!(f[0].1.starts_with("#!/bin/sh\n# Managed by PrismFlow"));
-            assert!(f[0].1.contains("'/Apps/Prism Flow/prismflow' token print --connection 'aider:ollama'"), "{}", a.id);
+            // The token helper is invoked from the script, or from the agent's own config (Pi).
+            assert!(f.iter().any(|(_, b)| b.contains("'/Apps/Prism Flow/prismflow' token print --connection 'aider:ollama'")), "{}", a.id);
             for (_, body) in &f {
                 assert!(!body.contains("pft_") && !body.contains("sk-"), "{}", a.id);
             }
