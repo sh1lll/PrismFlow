@@ -47,11 +47,13 @@ pub struct RuntimeSettings {
     pub shortcuts: bool,
     /// Monthly spending limits in whole US dollars per provider id (estimated cost).
     pub budgets: std::collections::BTreeMap<String, u32>,
+    /// Context size PrismFlow gives local Ollama models (tokens).
+    pub ollama_context: u32,
 }
 
 impl Default for RuntimeSettings {
     fn default() -> Self {
-        Self { rate_limit_per_minute: 0, max_concurrency_per_provider: 0, upstream_retries: 1, web_tools: Default::default(), shortcuts: true, budgets: Default::default() }
+        Self { rate_limit_per_minute: 0, max_concurrency_per_provider: 0, upstream_retries: 1, web_tools: Default::default(), shortcuts: true, budgets: Default::default(), ollama_context: 32_768 }
     }
 }
 

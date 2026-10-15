@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { api, APP_NAME, AppDetection, AppId, ConnectPreview, ModelInfo, Provider, STATUS_LABEL, VerificationReport, errText } from "../api";
+import { api, priceText, APP_NAME, AppDetection, AppId, ConnectPreview, ModelInfo, Provider, STATUS_LABEL, VerificationReport, errText } from "../api";
 
 const POPULAR = ["openrouter", "anthropic", "openai", "gemini", "groq", "deepseek", "nvidia_nim", "mistral", "xai"];
 const notForChat = /embed|rerank|whisper|tts|moderation|image|vision-only/i;
@@ -36,7 +36,8 @@ export default function Setup({ onDone }: { onDone: () => void }) {
     try { await f(); } catch (e) { setError(errText(e)); } finally { setBusy(""); }
   }
   const go = (n: number) => { setError(""); setStep(n); };
-  const shown = (models ?? []).filter((m) => !notForChat.test(m.id) && (!filter || m.id.toLowerCase().includes(filter.toLowerCase()))).slice(0, 100);
+  const [codingOnly, setCodingOnly] = useState(true);
+  const shown = (models ?? []).filter((m) => !notForChat.test(m.id) && (!codingOnly || m.coding) && (!filter || m.id.toLowerCase().includes(filter.toLowerCase()))).slice(0, 100);
 
   return (
     <div>
@@ -107,11 +108,12 @@ export default function Setup({ onDone }: { onDone: () => void }) {
             <input placeholder="Type a model name, or search the list" value={model} onChange={(e) => { setModel(e.target.value); setFilter(e.target.value); }} />
             <button className="ghost" disabled={busy !== ""} onClick={() => run("models", async () => setModels(await api.discoverModels(p.id)))}>{busy === "models" ? "Loading…" : "Show models"}</button>
           </div>
+          {models && <label className="small mt-block"><input type="checkbox" className="check" checked={codingOnly} onChange={(e) => setCodingOnly(e.target.checked)} /> Only models good for coding</label>}
           {models && (
             <div className="picker">
               {shown.map((m) => (
                 <button key={m.id} className={`rowbtn ${model === m.id ? "picked" : ""}`} onClick={() => setModel(m.id)}>
-                  {m.id}{m.context_length ? <span className="muted small"> · {Math.round(m.context_length / 1000)}k</span> : null}{m.reports_tools ? <span className="muted small"> · tools</span> : null}
+                  {m.id}{m.context_length ? <span className="muted small"> · {Math.round(m.context_length / 1000)}k</span> : null}{m.reports_tools ? <span className="muted small"> · tools</span> : null}{priceText(m) ? <span className="muted small"> · {priceText(m)}</span> : null}
                 </button>
               ))}
             </div>

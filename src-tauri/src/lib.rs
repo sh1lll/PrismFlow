@@ -193,6 +193,37 @@ async fn backup_restore(svc: State<'_, Arc<Service>>, path: String) -> Cmd<backu
 }
 
 #[tauri::command]
+async fn ollama_view(svc: State<'_, Arc<Service>>) -> Cmd<serde_json::Value> {
+    let root = ollama::api_root(&providers::get("ollama").map(|p| p.base_url.to_string()).unwrap_or_default());
+    let installed = ollama::list(&svc.client, &root).await;
+    Ok(serde_json::json!({
+        "running": installed.is_ok(),
+        "error": installed.as_ref().err(),
+        "installed": installed.unwrap_or_default(),
+        "pulls": ollama::pulls(),
+        "suggested": ollama::SUGGESTED.iter().map(|(n, d, s)| serde_json::json!({ "name": n, "about": d, "size": s })).collect::<Vec<_>>(),
+        "context": svc.settings().ollama_context,
+    }))
+}
+
+#[tauri::command]
+fn ollama_pull(svc: State<'_, Arc<Service>>, name: String) -> Cmd<()> {
+    let name = name.trim().to_string();
+    if name.is_empty() || name.chars().any(|c| c.is_whitespace()) {
+        return Err("Type a model name, like qwen2.5-coder:7b.".into());
+    }
+    let root = ollama::api_root(&providers::get("ollama").map(|p| p.base_url.to_string()).unwrap_or_default());
+    ollama::start_pull(svc.client.clone(), root, name);
+    Ok(())
+}
+
+#[tauri::command]
+async fn ollama_delete(svc: State<'_, Arc<Service>>, name: String) -> Cmd<()> {
+    let root = ollama::api_root(&providers::get("ollama").map(|p| p.base_url.to_string()).unwrap_or_default());
+    ollama::delete(&svc.client, &root, &name).await
+}
+
+#[tauri::command]
 fn autostart_get(app: tauri::AppHandle) -> bool {
     use tauri_plugin_autostart::ManagerExt;
     app.autolaunch().is_enabled().unwrap_or(false)
@@ -770,6 +801,9 @@ pub fn run() {
         .manage(BotState { bots: bots::Bots::default(), dir: dir.clone() })
         .invoke_handler(tauri::generate_handler![
             keychain_waiting,
+            ollama_view,
+            ollama_pull,
+            ollama_delete,
             tools_get,
             mcp_apply,
             rules_apply,

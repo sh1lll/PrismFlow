@@ -318,6 +318,12 @@ impl Service {
     }
 
     pub async fn discover_models(&self, provider_id: &str) -> R<Vec<ModelInfo>> {
+        let mut models = self.discover_models_raw(provider_id).await?;
+        discovery::enrich(provider_id, &mut models);
+        Ok(models)
+    }
+
+    async fn discover_models_raw(&self, provider_id: &str) -> R<Vec<ModelInfo>> {
         let p = provider(provider_id)?;
         if p.credential_source == providers::CredentialSource::CopilotCli {
             return self.copilot_models().await;
@@ -348,6 +354,9 @@ impl Service {
         }
         let v: serde_json::Value = req.send().await.map_err(|e| e.without_url().to_string())?.json().await.map_err(|e| e.to_string())?;
         Ok(v["data"].as_array().map(|a| a.iter().filter_map(|m| Some(ModelInfo {
+            price_in: None,
+            price_out: None,
+            coding: false,
             id: m["id"].as_str()?.to_string(),
             name: m["name"].as_str().map(String::from),
             context_length: m["capabilities"]["limits"]["max_context_window_tokens"].as_u64(),
@@ -908,7 +917,8 @@ impl Service {
         if let Some(list) = models.get_mut("ollama") {
             let root = crate::ollama::api_root(&self.upstream_url(provider("ollama")?));
             for m in list.iter_mut() {
-                match crate::ollama::ensure_context(&self.client, &root, m, crate::ollama::AGENT_CONTEXT).await {
+                let want = u64::from(self.settings().ollama_context.max(8_192));
+                match crate::ollama::ensure_context(&self.client, &root, m, want).await {
                     Ok(v) if v != *m => {
                         renamed.insert(("ollama".into(), m.clone()), v.clone());
                         *m = v;

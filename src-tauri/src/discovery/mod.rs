@@ -39,6 +39,39 @@ pub struct ModelInfo {
     pub context_length: Option<u64>,
     /// `Some(true)` when the provider reports tool support for this model.
     pub reports_tools: Option<bool>,
+    /// USD per 1M tokens, from the price table (None = unknown).
+    pub price_in: Option<f64>,
+    pub price_out: Option<f64>,
+    /// Likely a good fit for coding agents (tools, enough room, a coding model).
+    pub coding: bool,
+}
+
+/// Fills in price, missing context and the coding hint for `provider`'s models.
+pub fn enrich(provider: &str, models: &mut [ModelInfo]) {
+    for m in models.iter_mut() {
+        if let Some((i, o, ctx)) = crate::usage::price(provider, &m.id) {
+            m.price_in = Some(i);
+            m.price_out = Some(o);
+            if m.context_length.is_none() && ctx > 0 {
+                m.context_length = Some(ctx);
+            }
+        }
+        m.coding = is_coding_model(m);
+    }
+}
+
+/// Heuristic, shown as a filter only: tool support and a big enough
+/// context, or a well-known coding model family.
+pub fn is_coding_model(m: &ModelInfo) -> bool {
+    let id = m.id.to_ascii_lowercase();
+    if ["embed", "rerank", "whisper", "tts", "image", "vision-only", "moderation", "guard"].iter().any(|x| id.contains(x)) {
+        return false;
+    }
+    let family = ["coder", "codestral", "devstral", "claude", "gpt-5", "gpt-4.1", "o3", "o4", "qwen3", "deepseek", "kimi-k2", "glm-4", "glm-5",
+        "gemini-2.5", "gemini-3", "grok-code", "grok-4", "gpt-oss", "minimax-m", "mistral-medium", "mistral-large"]
+        .iter().any(|f| id.contains(f));
+    let roomy = m.context_length.is_none_or(|c| c >= 32_000);
+    roomy && (family || m.reports_tools == Some(true))
 }
 
 pub fn client() -> reqwest::Client {
@@ -130,6 +163,9 @@ pub async fn list_models_as(
                 .or_else(|| m.get("capabilities").and_then(|c| c.as_array())
                     .map(|c| c.iter().any(|v| v.as_str() == Some("tool-calling"))));
             Some(ModelInfo {
+                price_in: None,
+                price_out: None,
+                coding: false,
                 id,
                 name: m.get("name").and_then(|n| n.as_str()).map(String::from),
                 context_length: m

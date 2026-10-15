@@ -70,6 +70,17 @@ export interface ModelInfo {
   name: string | null;
   context_length: number | null;
   reports_tools: boolean | null;
+  price_in: number | null;
+  price_out: number | null;
+  coding: boolean;
+}
+
+/** "$0.15 / $0.60 per 1M" style text, or "" when unknown. */
+export function priceText(m: ModelInfo): string {
+  if (m.price_in == null || m.price_out == null) return "";
+  if (m.price_in === 0 && m.price_out === 0) return "free";
+  const f = (n: number) => (n < 0.1 ? n.toFixed(3) : n.toFixed(2));
+  return `$${f(m.price_in)} in · $${f(m.price_out)} out per 1M`;
 }
 
 export interface AppDetection {
@@ -152,6 +163,7 @@ export interface RuntimeSettings {
   shortcuts: boolean;
   web_tools: WebToolsSettings;
   budgets: Record<string, number>;
+  ollama_context: number;
 }
 
 export interface FoundKey { provider_id: string; provider_name: string; variable: string; source: string; masked: string; already_saved: boolean }
@@ -230,6 +242,9 @@ export const api = {
   guidedSetup: (id: string) => invoke<{ gateway_url: string; auth_scheme: string; token: string; model: string; steps: string[] }>("guided_setup", { id }),
   companionState: () => invoke<CompanionView>("companion_state"),
   keychainWaiting: () => invoke<boolean>("keychain_waiting"),
+  ollama: () => invoke<any>("ollama_view"),
+  ollamaPull: (name: string) => invoke<void>("ollama_pull", { name }),
+  ollamaDelete: (name: string) => invoke<void>("ollama_delete", { name }),
   tools: () => invoke<ToolsView>("tools_get"),
   mcpApply: (servers: McpServer[], apps: string[]) => invoke<string[]>("mcp_apply", { servers, apps }),
   rulesApply: (rules: string, project: string | null) => invoke<string[]>("rules_apply", { rules, project }),

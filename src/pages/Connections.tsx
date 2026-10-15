@@ -1,7 +1,7 @@
 import RoutingPanel from "./RoutingPanel";
 import { useEffect, useMemo, useState } from "react";
 import {
-  api, APP_IDS, APP_NAME, AppId, Connection, ConnectPreview, ModelInfo, Provider, STATUS_LABEL, StageResult,
+  api, priceText, APP_IDS, APP_NAME, AppId, Connection, ConnectPreview, ModelInfo, Provider, STATUS_LABEL, StageResult,
   errText, launchHint, providerName, statusTone, when,
 } from "../api";
 
@@ -88,7 +88,7 @@ function NewConnection({ providers, onDone }: { providers: Provider[]; onDone: (
     const f = filter.toLowerCase();
     return models
       .filter((m) => !notForChat(m.id))
-      .filter((m) => !toolsOnly || m.reports_tools !== false)
+      .filter((m) => !toolsOnly || m.coding)
       .filter((m) => !f || m.id.toLowerCase().includes(f) || (m.name ?? "").toLowerCase().includes(f))
       .slice(0, 200);
   }, [models, filter, toolsOnly]);
@@ -145,7 +145,9 @@ function NewConnection({ providers, onDone }: { providers: Provider[]; onDone: (
             {shown.map((m) => (
               <button key={m.id} className={m.id === model ? "model active" : "model"} onClick={() => setModel(m.id)}>
                 <span>{m.name && m.name !== m.id ? m.name : m.id}</span>
-                <span className="muted small">{m.reports_tools === false ? "can't use tools" : ""}</span>
+                <span className="muted small">
+                  {[m.context_length ? `${Math.round(m.context_length / 1000)}k` : "", priceText(m), m.reports_tools === false ? "can't use tools" : ""].filter(Boolean).join(" · ")}
+                </span>
               </button>
             ))}
             {shown.length === 0 && <div className="muted small">No models match.</div>}

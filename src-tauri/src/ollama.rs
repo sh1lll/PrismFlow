@@ -91,11 +91,132 @@ pub async fn ensure_context(client: &reqwest::Client, root: &str, model: &str, w
     Ok(name)
 }
 
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct Installed {
+    pub name: String,
+    pub size_gb: f64,
+    pub parameters: String,
+    /// One of PrismFlow's large-context copies (same weights, no extra disk).
+    pub prismflow_copy: bool,
+    pub running: bool,
+}
+
+pub async fn list(client: &reqwest::Client, root: &str) -> Result<Vec<Installed>, String> {
+    let tags: Value = client.get(format!("{root}/api/tags")).timeout(Duration::from_secs(10)).send().await
+        .map_err(|_| "Ollama isn't running. Open the Ollama app, or run `ollama serve`.".to_string())?.json().await.map_err(|e| e.to_string())?;
+    let ps: Value = match client.get(format!("{root}/api/ps")).timeout(Duration::from_secs(10)).send().await {
+        Ok(r) => r.json().await.unwrap_or_default(),
+        Err(_) => Value::Null,
+    };
+    let running: Vec<String> = ps["models"].as_array().map(|a| a.iter().filter_map(|m| m["name"].as_str().map(String::from)).collect()).unwrap_or_default();
+    Ok(tags["models"].as_array().map(|a| a.iter().filter_map(|m| {
+        let name = m["name"].as_str()?.to_string();
+        Some(Installed {
+            prismflow_copy: name.contains("-pf") && name.ends_with('k'),
+            running: running.contains(&name),
+            size_gb: m["size"].as_f64().unwrap_or(0.0) / 1e9,
+            parameters: m["details"]["parameter_size"].as_str().unwrap_or("").to_string(),
+            name,
+        })
+    }).collect()).unwrap_or_default())
+}
+
+#[derive(Debug, Clone, Default, serde::Serialize)]
+pub struct Pull {
+    pub status: String,
+    pub done: bool,
+    pub error: Option<String>,
+    pub percent: Option<f64>,
+}
+
+static PULLS: Mutex<Option<HashMap<String, Pull>>> = Mutex::new(None);
+
+pub fn pulls() -> HashMap<String, Pull> {
+    PULLS.lock().unwrap_or_else(|e| e.into_inner()).clone().unwrap_or_default()
+}
+
+fn set_pull(name: &str, p: Pull) {
+    PULLS.lock().unwrap_or_else(|e| e.into_inner()).get_or_insert_with(HashMap::new).insert(name.to_string(), p);
+}
+
+/// Downloads `name` in the background; progress via `pulls()`.
+pub fn start_pull(client: reqwest::Client, root: String, name: String) {
+    set_pull(&name, Pull { status: "Starting".into(), ..Default::default() });
+    tokio::spawn(async move {
+        use futures_util::StreamExt;
+        let r = client.post(format!("{root}/api/pull")).json(&json!({ "model": name, "stream": true })).send().await;
+        let mut stream = match r {
+            Ok(r) => r.bytes_stream(),
+            Err(_) => return set_pull(&name, Pull { done: true, error: Some("Ollama isn't running.".into()), ..Default::default() }),
+        };
+        let mut buf = String::new();
+        let mut last = Pull::default();
+        while let Some(chunk) = stream.next().await {
+            let Ok(chunk) = chunk else { break };
+            buf.push_str(&String::from_utf8_lossy(&chunk));
+            while let Some(i) = buf.find('\n') {
+                let line: String = buf.drain(..=i).collect();
+                let Ok(v) = serde_json::from_str::<Value>(line.trim()) else { continue };
+                if let Some(e) = v["error"].as_str() {
+                    return set_pull(&name, Pull { done: true, error: Some(e.to_string()), ..Default::default() });
+                }
+                last.status = v["status"].as_str().unwrap_or("").to_string();
+                if let (Some(c), Some(t)) = (v["completed"].as_f64(), v["total"].as_f64()) {
+                    if t > 0.0 {
+                        last.percent = Some((c / t * 100.0).min(100.0));
+                    }
+                }
+                last.done = last.status == "success";
+                set_pull(&name, last.clone());
+            }
+        }
+        if !last.done {
+            set_pull(&name, Pull { done: true, error: Some(if last.status.is_empty() { "The download stopped.".into() } else { last.status.clone() }), ..last });
+        }
+    });
+}
+
+pub async fn delete(client: &reqwest::Client, root: &str, name: &str) -> Result<(), String> {
+    let r = client.delete(format!("{root}/api/delete")).json(&json!({ "model": name })).send().await.map_err(|_| "Ollama isn't running.".to_string())?;
+    if r.status().is_success() { Ok(()) } else { Err(format!("Ollama couldn't delete {name}.")) }
+}
+
+/// Good coding models to download (name, what it is, rough download size).
+pub const SUGGESTED: &[(&str, &str, &str)] = &[
+    ("qwen3-coder:30b", "Strong coding model (needs 32 GB+ memory)", "19 GB"),
+    ("qwen2.5-coder:7b", "Coding model for most laptops", "4.7 GB"),
+    ("devstral:24b", "Mistral's agent coding model (needs 32 GB+ memory)", "14 GB"),
+    ("gpt-oss:20b", "OpenAI's open model, good with tools (16 GB+ memory)", "14 GB"),
+    ("qwen3:4b-instruct-2507-q4_K_M", "Small and fast, for light tasks", "2.5 GB"),
+];
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use wiremock::matchers::{body_partial_json, method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    #[tokio::test]
+    async fn lists_models_and_tracks_a_download() {
+        let s = MockServer::start().await;
+        Mock::given(method("GET")).and(path("/api/tags")).respond_with(ResponseTemplate::new(200).set_body_json(json!({"models": [
+            {"name": "qwen3:4b", "size": 2_500_000_000u64, "details": {"parameter_size": "4.0B"}},
+            {"name": "qwen3:4b-pf32k", "size": 2_500_000_000u64, "details": {"parameter_size": "4.0B"}}]}))).mount(&s).await;
+        Mock::given(method("GET")).and(path("/api/ps")).respond_with(ResponseTemplate::new(200).set_body_json(json!({"models": [{"name": "qwen3:4b"}]}))).mount(&s).await;
+        let progress = "{\"status\":\"pulling manifest\"}\n{\"status\":\"downloading\",\"completed\":50,\"total\":100}\n{\"status\":\"success\"}\n";
+        Mock::given(method("POST")).and(path("/api/pull")).respond_with(ResponseTemplate::new(200).set_body_string(progress)).mount(&s).await;
+        let c = reqwest::Client::new();
+        let l = list(&c, &s.uri()).await.unwrap();
+        assert_eq!(l.len(), 2);
+        assert!(l[0].running && !l[0].prismflow_copy && l[1].prismflow_copy);
+        start_pull(c, s.uri(), "tiny:1".into());
+        for _ in 0..50 {
+            if pulls().get("tiny:1").is_some_and(|p| p.done) { break; }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        let p = pulls()["tiny:1"].clone();
+        assert!(p.done && p.error.is_none(), "{p:?}");
+    }
 
     #[test]
     fn variant_names() {
