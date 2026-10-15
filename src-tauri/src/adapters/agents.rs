@@ -1,5 +1,5 @@
 //! Terminal coding agents launched through PrismFlow (Aider, Cline, Pi,
-//! Hermes). Mechanisms verified 2026-10-14 (research/agent-mechanisms-…md).
+//! Hermes, OpenCode, DeepSeek Harness, Grok Build, Muse Code). Mechanisms verified 2026-10-14 (research/agent-mechanisms-…md).
 //!
 //! Each connection owns a directory in PrismFlow's state dir holding a
 //! launch script and, where the agent needs one, an isolated config. The
@@ -19,6 +19,10 @@ pub enum Kind {
     Cline,
     Pi,
     Hermes,
+    OpenCode,
+    Dsh,
+    Grok,
+    Muse,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -38,6 +42,11 @@ pub const AGENTS: &[AgentSpec] = &[
     AgentSpec { id: "cline", display_name: "Cline CLI", binary: "cline", kind: Kind::Cline, verified_version: "3.0.70", tools: true },
     AgentSpec { id: "pi", display_name: "Pi", binary: "pi", kind: Kind::Pi, verified_version: "1.1.0", tools: true },
     AgentSpec { id: "hermes", display_name: "Hermes Agent", binary: "hermes", kind: Kind::Hermes, verified_version: "0.21.6", tools: true },
+    // OpenCode 1.19.0 and 2.0.29 both verified 2026-10-15; the script picks the config format at launch.
+    AgentSpec { id: "opencode", display_name: "OpenCode", binary: "opencode", kind: Kind::OpenCode, verified_version: "2.0.29", tools: true },
+    AgentSpec { id: "dsh", display_name: "DeepSeek Harness", binary: "dsh", kind: Kind::Dsh, verified_version: "0.2.0-rc.2", tools: true },
+    AgentSpec { id: "grok", display_name: "Grok Build", binary: "grok", kind: Kind::Grok, verified_version: "1.0.52", tools: true },
+    AgentSpec { id: "muse", display_name: "Muse Code", binary: "muse", kind: Kind::Muse, verified_version: "1.4.8", tools: true },
 ];
 
 pub fn spec(app_id: &str) -> Option<&'static AgentSpec> {
@@ -177,6 +186,93 @@ pub fn plan_files(
             script.push_str(&format!("export HERMES_HOME={}\n", q(&dir.join("hermes-home").display().to_string())));
             script.push_str(&format!("exec {bin} \"$@\"\n"));
         }
+        Kind::OpenCode => {
+            // Process-local config (OPENCODE_CONFIG_CONTENT); verified with
+            // opencode-ai 1.19.0 and @opencode/cli 2.0.29, which use different keys.
+            let model_def = |v2: bool| {
+                let m = if v2 {
+                    serde_json::json!({ "name": model, "capabilities": { "tools": true, "input": ["text"], "output": ["text"] }, "limit": { "context": 32768, "output": 4096 } })
+                } else {
+                    serde_json::json!({ "name": model, "tool_call": true, "limit": { "context": 32768, "output": 4096 } })
+                };
+                serde_json::json!({ "main": m })
+            };
+            let v1 = serde_json::json!({
+                "provider": { "prismflow": { "npm": "@ai-sdk/openai-compatible", "name": "PrismFlow",
+                    "options": { "baseURL": base, "apiKey": "{env:PRISMFLOW_API_KEY}", "timeout": 600000 },
+                    "models": model_def(false) } },
+                "enabled_providers": ["prismflow"], "model": "prismflow/main", "small_model": "prismflow/main",
+                "autoupdate": false, "share": "disabled"
+            });
+            let v2 = serde_json::json!({
+                "providers": { "prismflow": { "name": "PrismFlow", "package": "@opencode/ai/providers/openai-compatible",
+                    "settings": { "baseURL": base, "apiKey": "{env:PRISMFLOW_API_KEY}" },
+                    "models": model_def(true) } },
+                "experimental": { "policies": [
+                    { "action": "provider.use", "resource": "*", "effect": "deny" },
+                    { "action": "provider.use", "resource": "prismflow", "effect": "allow" } ] },
+                "model": "prismflow/main", "agents": { "title": { "model": "prismflow/main" } }
+            });
+            script.push_str(&format!("PRISMFLOW_API_KEY=\"$({token_cmd})\"\nexport PRISMFLOW_API_KEY\n"));
+            script.push_str("export OPENCODE_DISABLE_MODELS_FETCH=1 OPENCODE_DISABLE_AUTOUPDATE=1 OPENCODE_DISABLE_SHARE=1 OPENCODE_DISABLE_CLAUDE_CODE=1 OPENCODE_DISABLE_LSP_DOWNLOAD=1\n");
+            script.push_str(&format!("case \"$({bin} --version 2>/dev/null)\" in\n"));
+            script.push_str(&format!("  *v2.*|2.*) export OPENCODE_CONFIG_CONTENT={}\n", q(&v2.to_string())));
+            script.push_str("    # One-shot runs get a private server instead of the background service.\n");
+            script.push_str("    if [ \"$1\" = run ]; then shift; set -- run --standalone \"$@\"; fi ;;\n");
+            script.push_str(&format!("  *) export OPENCODE_CONFIG_CONTENT={} ;;\nesac\n", q(&v1.to_string())));
+            script.push_str(&format!("exec {bin} \"$@\"\n"));
+        }
+        Kind::Dsh => {
+            // A launcher patch (verified with @deepseek-ai/dsh 0.2.0-rc.2):
+            // PrismFlow's provider, DeepSeek's own account/web rows off.
+            let creds = dir.join("dsh-credentials.yaml");
+            let patch = format!(
+                "{MARKER}\n- id: credentials\n  name: '@deepseek-ai/dsh-credentials-local'\n  config: {{ path: {}, watch: false }}\n\
+                 - id: llm-pi-ai\n  name: '@deepseek-ai/dsh-llm-pi-ai'\n  config:\n    providers:\n      prismflow:\n        displayName: PrismFlow\n\
+                 \x20       apiKeyEnv: PRISMFLOW_API_KEY\n        api: openai-completions\n        baseURL: {}\n        defaultInput: [text]\n\
+                 \x20       retryPolicy: {{ mode: normal, maxRetries: 0 }}\n        streamIdleTimeoutMs: 600000\n        models:\n\
+                 \x20         - {{ id: main, name: {}, reasoningEfforts: false, input: [text], contextWindow: 32768, maxTokens: 4096 }}\n\
+                 - id: agent-default-model\n  name: '@deepseek-ai/dsh-agent-default-model'\n  config: {{ provider: prismflow, model: main }}\n\
+                 - {{ id: llm-deepseek, name: '@deepseek-ai/dsh-llm-deepseek-api-key', disabled: true }}\n\
+                 - {{ id: llm-deepseek-account, name: '@deepseek-ai/dsh-llm-deepseek-account', disabled: true }}\n\
+                 - {{ id: web-search-deepseek, name: '@deepseek-ai/dsh-web-search-deepseek', disabled: true }}\n\
+                 - {{ id: tool-web, name: '@deepseek-ai/dsh-tool-web', disabled: true }}\n",
+                serde_json::to_string(&creds.display().to_string()).unwrap(),
+                serde_json::to_string(&base).unwrap(),
+                serde_json::to_string(model).unwrap(),
+            );
+            files.push((dir.join("dsh-patch.yml"), patch));
+            files.push((creds, "{}\n".into()));
+            script.push_str(&format!("PRISMFLOW_API_KEY=\"$({token_cmd})\"\nexport PRISMFLOW_API_KEY\n"));
+            script.push_str(&format!("export DSH_HOME={} DSH_TELEMETRY_DISABLED=1\n", q(&dir.join("dsh-home").display().to_string())));
+            let patch_arg = q(&dir.join("dsh-patch.yml").display().to_string());
+            // Launcher flags go before the app's own flags.
+            script.push_str(&format!("if [ \"$1\" = --prismflow-oneshot ]; then shift; exec {bin} --profile headless --patch {patch_arg} \"$@\"; fi\n"));
+            script.push_str(&format!("exec {bin} --patch {patch_arg} \"$@\"\n"));
+        }
+        Kind::Grok => {
+            // Environment only (verified with grok 1.0.52): no login, the
+            // model list comes from PrismFlow, telemetry and feedback off.
+            let cfg = serde_json::json!({ "cli": { "auto_update": false }, "features": { "telemetry": false, "feedback": false },
+                "telemetry": { "trace_upload": false, "mixpanel_enabled": false } });
+            script.push_str(&format!("XAI_API_KEY=\"$({token_cmd})\"\nexport XAI_API_KEY\n"));
+            script.push_str(&format!("export GROK_XAI_API_BASE_URL={b} GROK_MODELS_BASE_URL={b}\n", b = q(&base)));
+            script.push_str(&format!("export GROK_HOME={}\n", q(&dir.join("grok-home").display().to_string())));
+            script.push_str("export GROK_TELEMETRY_ENABLED=0 GROK_FEEDBACK_ENABLED=0 GROK_DISABLE_AUTOUPDATER=1\n");
+            script.push_str(&format!("export GROK_CONFIG={}\n", q(&cfg.to_string())));
+            script.push_str(&format!("exec {bin} --disable-web-search --no-leader \"$@\"\n"));
+        }
+        Kind::Muse => {
+            // Verified with Muse Code 1.4.8: Meta provider mode pointed at
+            // PrismFlow; PrismFlow answers its /muse-code/models catalog.
+            script.push_str(&format!("META_API_KEY=\"$({token_cmd})\"\nexport META_API_KEY\n"));
+            script.push_str(&format!("export MUSE_MODEL={} MUSE_ENABLE_WEB_TOOLS=0 MUSE_WEB_SEARCH_MODE=off TBH_DISABLE_FEATURE_CONFIG=1\n", q(model)));
+            let conn = format!("--provider meta --base-url {} --model {}", q(&base), q(model));
+            script.push_str(&format!(
+                "if [ \"$1\" = exec ] || [ \"$1\" = resume ]; then sub=\"$1\"; shift; exec {bin} \"$sub\" {conn} --no-foreign-personal-context -c telemetry.enabled=false -c feature_config.enabled=false \"$@\"; fi\n"
+            ));
+            script.push_str(&format!("exec {bin} {conn} \"$@\"\n"));
+        }
     }
     files.insert(0, (launch_script(dir), script));
     files
@@ -190,6 +286,11 @@ pub fn oneshot_args(spec: &AgentSpec, prompt: &str) -> Vec<String> {
         Kind::Cline => vec!["--retries".into(), "2".into(), p],
         Kind::Pi => vec!["--no-extensions".into(), "-p".into(), p],
         Kind::Hermes => vec!["--ignore-rules".into(), "-z".into(), p],
+        Kind::OpenCode => vec!["run".into(), p],
+        Kind::Dsh => vec!["--prismflow-oneshot".into(), p],
+        Kind::Grok => vec!["--always-approve".into(), "-p".into(), p],
+        Kind::Muse => vec!["exec".into(), "--trust-workspace".into(), "--approval-mode".into(), "never".into(), "--approval-judge".into(), "off".into(),
+            "--disable-web-tools".into(), "--disable-reminders".into(), p],
     }
 }
 
@@ -200,6 +301,11 @@ pub fn write(files: &[(PathBuf, String)]) -> Result<(), String> {
             std::fs::create_dir_all(d).map_err(|e| format!("{}: {e}", d.display()))?;
         }
         crate::config_engine::atomic_write(path, body).map_err(|e| e.to_string())?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600));
+        }
     }
     #[cfg(unix)]
     if let Some((script, _)) = files.first() {
@@ -289,3 +395,4 @@ mod tests {
         assert!(dir.exists());
     }
 }
+

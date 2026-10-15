@@ -765,3 +765,16 @@ async fn claude_code_background_requests_never_reach_the_provider() {
     assert_eq!(h._upstream.received_requests().await.unwrap().len(), 1);
     h.broker.stop().await;
 }
+
+#[tokio::test]
+async fn muse_code_catalog_needs_a_token_and_lists_the_connection_model() {
+    let h = harness().await;
+    let v: serde_json::Value = client().get(format!("{}/muse-code/models", h.broker.url()))
+        .bearer_auth(&h.token).send().await.unwrap().json().await.unwrap();
+    // The harness binding has no model of its own; real connections list theirs.
+    assert!(v["data"][0]["id"].as_str().is_some_and(|s| !s.is_empty()));
+    assert_eq!(v["data"][0]["metadata"]["muse-code"]["limit"]["context"], 32768);
+    let r = client().get(format!("{}/muse-code/models", h.broker.url())).send().await.unwrap();
+    assert_eq!(r.status(), 401);
+    h.broker.stop().await;
+}

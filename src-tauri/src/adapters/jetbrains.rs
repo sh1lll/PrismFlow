@@ -26,6 +26,10 @@ pub fn acp_file() -> PathBuf {
     if let Some(p) = std::env::var_os("PRISMFLOW_JETBRAINS_ACP_FILE") {
         return PathBuf::from(p);
     }
+    // Tests never touch the real app's files.
+    if cfg!(test) {
+        return std::env::temp_dir().join(format!("prismflow-test-{}-acp.json", std::process::id()));
+    }
     dirs::home_dir().unwrap_or_default().join(".jetbrains").join("acp.json")
 }
 

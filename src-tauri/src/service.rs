@@ -489,8 +489,8 @@ impl Service {
         let id = connection_id(app_id, p.id);
         let url = self.broker.url_for_config();
         if app_id == claude_desktop::APP_ID {
-            let steps = claude_desktop::guided_setup(&self.broker.url_for_config(), "(shown after you connect)".into(), model).steps;
-            return Ok((p, route, config_engine::EditPlan { file: PathBuf::new(), before: String::new(), after: String::new(), summary: steps }));
+            let summary = claude_desktop::describe_auto();
+            return Ok((p, route, config_engine::EditPlan { file: claude_desktop::config_root(), before: String::new(), after: String::new(), summary }));
         }
         if app_id == jetbrains::APP_ID {
             let jp = self.jetbrains_plan(p, model, &id, &url)?;
@@ -631,8 +631,8 @@ impl Service {
         }
         let app = app_name(app_id);
         if app_id == claude_desktop::APP_ID {
-            warnings.push("After connecting, PrismFlow shows what to enter in Claude Desktop.".into());
-            warnings.push("While it's set up this way, Claude Desktop won't use your Claude account. You can switch back any time.".into());
+            warnings.push("PrismFlow sets up Claude Desktop for you. Quit and reopen Claude Desktop afterwards.".into());
+            warnings.push("While it's set up this way, Claude Desktop won't use your Claude account. Disconnect switches it back.".into());
         } else if app_id == vscode::CLAUDE_APP_ID {
             warnings.push("Start a new Claude Code chat in VS Code after connecting. Reload the window if it still uses the old setup.".into());
             warnings.push("Your own ~/.claude settings and history aren't used while it's connected.".into());
@@ -708,6 +708,13 @@ impl Service {
         if app_id == jetbrains::APP_ID {
             let jp = self.jetbrains_plan(p, validate_model_id(model)?, &id, &self.broker.url_for_config())?;
             agents::write(&jp.owned).map_err(|e| format!("Nothing usable was written: {e}"))?;
+        }
+        if app_id == claude_desktop::APP_ID {
+            let token = tokens::ensure(self.store.as_ref(), &id).map_err(|e| format!("Couldn't save a key for this app: {e}"))?;
+            if let Err(e) = claude_desktop::connect_auto(&self.broker.url_for_config(), &token, &id) {
+                // Fall back to the guided steps (shown on the connection).
+                self.diag.record(Level::Warn, "connect.claude_desktop", &format!("Automatic setup skipped: {e}"));
+            }
         }
         if app_id == vscode::CLAUDE_APP_ID || app_id == vscode::CHAT_APP_ID {
             let token = tokens::ensure(self.store.as_ref(), &id).map_err(|e| format!("Couldn't save a key for this app: {e}"))?;
@@ -907,7 +914,9 @@ impl Service {
     pub async fn disconnect(&self, id: &str) -> R<Option<String>> {
         let record = self.state.get(id).map_err(|e| e.to_string())?.ok_or("Unknown connection.")?;
         let removed = if record.app_id == claude_desktop::APP_ID {
-            Ok(None) // nothing was written; revoking the token below is the disconnect
+            // Automatic setup: back to the Claude account, PrismFlow's entry removed.
+            // Guided setup wrote nothing; revoking the token below is the disconnect.
+            claude_desktop::disconnect_auto().map(|()| None)
         } else if record.app_id == codex::DESKTOP_APP_ID {
             codex::plan_disconnect_base(&self.codex_home, &record.provider_id, &record.priors)
                 .map_err(|e| e.to_string())

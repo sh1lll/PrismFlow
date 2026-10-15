@@ -26,6 +26,10 @@ pub fn user_dir() -> PathBuf {
     if let Some(p) = std::env::var_os("PRISMFLOW_VSCODE_USER_DIR") {
         return PathBuf::from(p);
     }
+    // Tests never touch the real app's files.
+    if cfg!(test) {
+        return std::env::temp_dir().join(format!("prismflow-test-{}-vscode-user", std::process::id()));
+    }
     let base = if cfg!(target_os = "macos") {
         dirs::home_dir().unwrap_or_default().join("Library/Application Support")
     } else {

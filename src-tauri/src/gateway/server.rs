@@ -33,6 +33,8 @@ const ALLOWED: &[(&str, &str)] = &[
     ("POST", "/v1/chat/completions"),
     ("POST", "/v1/responses"),
     ("GET", "/v1/models"),
+    // Muse Code's model catalog (answered here, see `muse_models`).
+    ("GET", "/muse-code/models"),
 ];
 
 /// Hop-by-hop and credential headers that never cross the broker.
@@ -75,6 +77,18 @@ fn reject(status: StatusCode, kind: &str, message: &str) -> Response {
         "error": { "type": kind, "message": format!("PrismFlow broker: {message}") }
     });
     (status, Json(body)).into_response()
+}
+
+/// Muse Code reads `/muse-code/models` (without `/v1`) before any request:
+/// OpenAI-style rows plus `metadata["muse-code"]` (shape verified with
+/// Muse Code 1.4.8 on 2026-10-15). The connection's own model is listed.
+fn muse_models(binding: &Binding) -> Response {
+    let model = if binding.model.is_empty() { "prismflow" } else { binding.model.as_str() };
+    Json(json!({ "object": "list", "data": [{
+        "id": model, "object": "model", "created": 0, "owned_by": "prismflow",
+        "metadata": { "muse-code": { "name": model, "is_hidden": false, "reasoning": false,
+            "limit": { "context": 32768, "output": 4096 } } }
+    }]})).into_response()
 }
 
 pub(crate) fn host_allowed(host: &str, port: u16) -> bool {
@@ -124,6 +138,9 @@ async fn proxy(State(inner): State<Arc<Inner>>, req: Request) -> Response {
         inner.count(|c| c.rejected += 1);
         inner.record(Level::Warn, "broker.rate_limited", &format!("{}: over the per-minute request limit.", binding.connection_id));
         return reject(StatusCode::TOO_MANY_REQUESTS, "rate_limit_error", "this connection is over its per-minute request limit (Settings)");
+    }
+    if path == "/muse-code/models" {
+        return muse_models(&binding);
     }
     let upstream = match inner.upstream() {
         Ok(u) => u,

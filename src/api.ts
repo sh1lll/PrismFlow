@@ -32,13 +32,13 @@ export interface UrlCheck {
   warnings: string[];
 }
 
-export type AppId = "codex_cli" | "codex_desktop" | "claude_code" | "claude_desktop" | "jetbrains" | "vscode_claude" | "vscode_chat" | "aider" | "cline" | "pi" | "hermes";
-export const APP_IDS: AppId[] = ["codex_cli", "codex_desktop", "claude_code", "claude_desktop", "jetbrains", "vscode_claude", "vscode_chat", "aider", "cline", "pi", "hermes"];
-export const TERMINAL_AGENTS: AppId[] = ["aider", "cline", "pi", "hermes"];
+export type AppId = "codex_cli" | "codex_desktop" | "claude_code" | "claude_desktop" | "jetbrains" | "vscode_claude" | "vscode_chat" | "aider" | "cline" | "pi" | "hermes" | "opencode" | "dsh" | "grok" | "muse";
+export const APP_IDS: AppId[] = ["codex_cli", "codex_desktop", "claude_code", "claude_desktop", "jetbrains", "vscode_claude", "vscode_chat", "aider", "cline", "pi", "hermes", "opencode", "dsh", "grok", "muse"];
+export const TERMINAL_AGENTS: AppId[] = ["aider", "cline", "pi", "hermes", "opencode", "dsh", "grok", "muse"];
 export type Route = "direct" | "gateway";
 
 export const APP_NAME: Record<string, string> = {
-  codex_cli: "Codex CLI", codex_desktop: "Codex app & VS Code", claude_code: "Claude Code CLI", claude_desktop: "Claude Desktop", jetbrains: "JetBrains IDEs", vscode_claude: "Claude Code for VS Code", vscode_chat: "VS Code Chat", aider: "Aider", cline: "Cline CLI", pi: "Pi", hermes: "Hermes Agent",
+  codex_cli: "Codex CLI", codex_desktop: "Codex app & VS Code", claude_code: "Claude Code CLI", claude_desktop: "Claude Desktop", jetbrains: "JetBrains IDEs", vscode_claude: "Claude Code for VS Code", vscode_chat: "VS Code Chat", aider: "Aider", cline: "Cline CLI", pi: "Pi", hermes: "Hermes Agent", opencode: "OpenCode", dsh: "DeepSeek Harness", grok: "Grok Build", muse: "Muse Code",
 };
 
 export const ROUTE_LABEL: Record<Route, string> = {

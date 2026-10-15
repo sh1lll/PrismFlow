@@ -543,11 +543,29 @@ async fn claude_desktop_stages(
         run.push(5, "End-to-end", StageOutcome::Fail, "This connection is missing its key. Connect it again.");
         return ConnectionStatus::NeedsCredentials;
     };
+    // Automatic setup: test with exactly what Claude Desktop holds.
+    let auto = crate::adapters::claude_desktop::auto_active(&record.id);
+    let (base, token) = match crate::adapters::claude_desktop::auto_profile().filter(|_| auto) {
+        Some(p) => (
+            p["inferenceGatewayBaseUrl"].as_str().unwrap_or(&gw.url).to_string(),
+            p["inferenceGatewayApiKey"].as_str().unwrap_or(&token).to_string(),
+        ),
+        None => (gw.url.clone(), token),
+    };
+    if auto {
+        // Claude Desktop lists models first (modelDiscoveryEnabled).
+        let listed = env.client.get(format!("{base}/v1/models")).bearer_auth(&token).send().await;
+        if !listed.as_ref().is_ok_and(|r| r.status().is_success()) {
+            run.push(5, "End-to-end", StageOutcome::Fail, "Claude Desktop's settings point at PrismFlow, but its model list didn't load. Connect again.");
+            return ConnectionStatus::ConfigurationInvalid;
+        }
+    }
+    let gw_url = base;
     let body = serde_json::json!({
         "model": record.model, "max_tokens": 64, "stream": false,
         "messages": [{"role": "user", "content": format!("Reply with exactly {E2E_TOKEN} and nothing else.")}]
     });
-    let sent = env.client.post(format!("{}/v1/messages", gw.url)).bearer_auth(&token)
+    let sent = env.client.post(format!("{gw_url}/v1/messages")).bearer_auth(&token)
         .header("anthropic-version", "2023-06-01").json(&body)
         .timeout(env.agent_timeout).send().await;
     let mut all_secrets: Vec<&str> = secrets.to_vec();
@@ -570,6 +588,11 @@ async fn claude_desktop_stages(
             run.push(5, "End-to-end", StageOutcome::Fail, format!("PrismFlow's background service didn't respond.\n\n{}", e.without_url()));
             return ConnectionStatus::ProviderUnavailable;
         }
+    }
+    if auto {
+        run.push(6, "In Claude Desktop", StageOutcome::Pass,
+            "Claude Desktop is set to use PrismFlow. Quit and reopen it if it's open.");
+        return ConnectionStatus::ConnectedAndVerified;
     }
     run.push(6, "In Claude Desktop", StageOutcome::Skipped,
         "Finish by pressing Test connection in Claude Desktop.");
