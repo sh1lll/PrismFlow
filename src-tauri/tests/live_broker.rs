@@ -20,7 +20,7 @@ async fn serve_broker_for_a_live_agent() {
     broker.set_settings(RuntimeSettings { shortcuts, ..Default::default() });
     let token = tokens::generate();
     let spec = UpstreamSpec { provider_id: "ollama".into(), engine_type: "openai_chat_completions",
-        base_url: ollama, models: vec![model.clone()], key: "ollama".into(), codex_oauth: false, headers: vec![] };
+        base_url: ollama, models: vec![model.clone()], key: "ollama".into(), codex_oauth: false, headers: vec![], extra_keys: vec![] };
     let binding = Binding { connection_id: "claude_code:ollama".into(), provider_id: "ollama".into(), model, ..Default::default() };
     broker.start(vec![spec], vec![(token.clone(), binding)]).await.unwrap();
     std::fs::write(dir.join("url"), broker.url()).unwrap();

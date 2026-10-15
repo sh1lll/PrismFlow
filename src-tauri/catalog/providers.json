@@ -15,7 +15,8 @@
       "auth_check_path": "/key",
       "docs_url": "https://openrouter.ai/docs",
       "keys_url": "https://openrouter.ai/keys",
-      "verified_at": "2026-10-14"
+      "verified_at": "2026-10-14",
+      "example_model": "openrouter/free"
     },
     {
       "id": "nvidia_nim",
@@ -27,7 +28,8 @@
       "model_list_path": "/models",
       "docs_url": "https://build.nvidia.com",
       "keys_url": "https://build.nvidia.com/settings/api-keys",
-      "verified_at": "2026-10-14"
+      "verified_at": "2026-10-14",
+      "example_model": "nvidia/nemotron-3-super-120b-a12b"
     },
     {
       "id": "huggingface",
@@ -40,7 +42,8 @@
       "model_list_path": "/models",
       "docs_url": "https://huggingface.co/docs/inference-providers",
       "keys_url": "https://huggingface.co/settings/tokens",
-      "verified_at": "2026-10-14"
+      "verified_at": "2026-10-14",
+      "example_model": "Qwen/Qwen3-Coder-480B-A35B-Instruct:fastest"
     },
     {
       "id": "openai",
@@ -54,7 +57,8 @@
       "auth_check_path": "/models",
       "docs_url": "https://platform.openai.com/docs",
       "keys_url": "https://platform.openai.com/api-keys",
-      "verified_at": "2026-10-14"
+      "verified_at": "2026-10-14",
+      "example_model": "gpt-5.6-sol"
     },
     {
       "id": "anthropic",
@@ -86,7 +90,7 @@
     },
     {
       "id": "chatgpt",
-      "display_name": "ChatGPT (your Codex sign-in)",
+      "display_name": "OpenAI / ChatGPT",
       "base_url": "https://chatgpt.com/backend-api/codex",
       "protocols": [
         "OpenAiResponses"
@@ -122,7 +126,8 @@
       "auth_check_path": "/models",
       "docs_url": "https://console.groq.com/docs",
       "keys_url": "https://console.groq.com/keys",
-      "verified_at": "2026-10-14"
+      "verified_at": "2026-10-14",
+      "example_model": "llama-3.3-70b-versatile"
     },
     {
       "id": "together",
@@ -135,7 +140,8 @@
       "auth_check_path": "/models",
       "docs_url": "https://docs.together.ai",
       "keys_url": "https://api.together.ai/settings/api-keys",
-      "verified_at": "2026-10-14"
+      "verified_at": "2026-10-14",
+      "example_model": "zai-org/GLM-5.2"
     },
     {
       "id": "fireworks",
@@ -148,7 +154,8 @@
       "auth_check_path": "/models",
       "docs_url": "https://docs.fireworks.ai",
       "keys_url": "https://fireworks.ai/account/api-keys",
-      "verified_at": "2026-10-14"
+      "verified_at": "2026-10-14",
+      "example_model": "accounts/fireworks/models/llama-v3p3-70b-instruct"
     },
     {
       "id": "deepseek",
@@ -161,11 +168,12 @@
       "auth_check_path": "/models",
       "docs_url": "https://api-docs.deepseek.com",
       "keys_url": "https://platform.deepseek.com/api_keys",
-      "verified_at": "2026-10-14"
+      "verified_at": "2026-10-14",
+      "example_model": "deepseek-chat"
     },
     {
       "id": "mistral",
-      "display_name": "Mistral",
+      "display_name": "Mistral La Plateforme",
       "base_url": "https://api.mistral.ai/v1",
       "protocols": [
         "OpenAiChat"
@@ -174,11 +182,12 @@
       "auth_check_path": "/models",
       "docs_url": "https://docs.mistral.ai",
       "keys_url": "https://console.mistral.ai/api-keys",
-      "verified_at": "2026-10-14"
+      "verified_at": "2026-10-14",
+      "example_model": "devstral-small-latest"
     },
     {
       "id": "cerebras",
-      "display_name": "Cerebras",
+      "display_name": "Cerebras Inference",
       "base_url": "https://api.cerebras.ai/v1",
       "protocols": [
         "OpenAiChat"
@@ -187,7 +196,8 @@
       "auth_check_path": "/models",
       "docs_url": "https://inference-docs.cerebras.ai",
       "keys_url": "https://cloud.cerebras.ai",
-      "verified_at": "2026-10-14"
+      "verified_at": "2026-10-14",
+      "example_model": "gpt-oss-120b"
     },
     {
       "id": "deepinfra",
@@ -199,7 +209,8 @@
       "model_list_path": "/models",
       "docs_url": "https://deepinfra.com/docs",
       "keys_url": "https://deepinfra.com/dash/api_keys",
-      "verified_at": "2026-10-14"
+      "verified_at": "2026-10-14",
+      "example_model": "deepseek-ai/DeepSeek-V4-Flash"
     },
     {
       "id": "xai",
@@ -212,11 +223,12 @@
       "auth_check_path": "/models",
       "docs_url": "https://docs.x.ai",
       "keys_url": "https://console.x.ai",
-      "verified_at": "2026-10-14"
+      "verified_at": "2026-10-14",
+      "example_model": "grok-4.5"
     },
     {
       "id": "moonshot",
-      "display_name": "Moonshot (Kimi API)",
+      "display_name": "Kimi API",
       "base_url": "https://api.moonshot.ai/v1",
       "protocols": [
         "OpenAiChat"
@@ -225,11 +237,12 @@
       "auth_check_path": "/models",
       "docs_url": "https://platform.moonshot.ai/docs",
       "keys_url": "https://platform.moonshot.ai/console/api-keys",
-      "verified_at": "2026-10-14"
+      "verified_at": "2026-10-14",
+      "example_model": "kimi-k2.5"
     },
     {
       "id": "zai",
-      "display_name": "Z.ai",
+      "display_name": "Z.ai API (pay as you go)",
       "base_url": "https://api.z.ai/api/paas/v4",
       "protocols": [
         "OpenAiChat"
@@ -238,7 +251,8 @@
       "auth_check_path": "/models",
       "docs_url": "https://docs.z.ai",
       "keys_url": "https://z.ai/manage-apikey/apikey-list",
-      "verified_at": "2026-10-14"
+      "verified_at": "2026-10-14",
+      "example_model": "glm-4.7-flash"
     },
     {
       "id": "sambanova",
@@ -250,7 +264,8 @@
       "model_list_path": "/models",
       "docs_url": "https://docs.sambanova.ai",
       "keys_url": "https://cloud.sambanova.ai/apis",
-      "verified_at": "2026-10-14"
+      "verified_at": "2026-10-14",
+      "example_model": "Meta-Llama-3.3-70B-Instruct"
     },
     {
       "id": "novita",
@@ -262,7 +277,8 @@
       "model_list_path": "/models",
       "docs_url": "https://novita.ai/docs",
       "keys_url": "https://novita.ai/settings/key-management",
-      "verified_at": "2026-10-14"
+      "verified_at": "2026-10-14",
+      "example_model": "deepseek/deepseek-v4-flash-0731"
     },
     {
       "id": "siliconflow",
@@ -275,7 +291,8 @@
       "auth_check_path": "/models",
       "docs_url": "https://docs.siliconflow.com",
       "keys_url": "https://cloud.siliconflow.com/account/ak",
-      "verified_at": "2026-10-14"
+      "verified_at": "2026-10-14",
+      "example_model": "Qwen/Qwen3-32B"
     },
     {
       "id": "cohere",
@@ -288,7 +305,8 @@
       "auth_check_path": "/models",
       "docs_url": "https://docs.cohere.com",
       "keys_url": "https://dashboard.cohere.com/api-keys",
-      "verified_at": "2026-10-14"
+      "verified_at": "2026-10-14",
+      "example_model": "command-a-plus-05-2026"
     },
     {
       "id": "minimax",
@@ -301,7 +319,8 @@
       "auth_check_path": "/models",
       "docs_url": "https://platform.minimax.io/docs",
       "keys_url": "https://platform.minimax.io/user-center/basic-information/interface-key",
-      "verified_at": "2026-10-14"
+      "verified_at": "2026-10-14",
+      "example_model": "MiniMax-M3"
     },
     {
       "id": "ollama_cloud",
@@ -313,7 +332,8 @@
       "model_list_path": "/models",
       "docs_url": "https://docs.ollama.com",
       "keys_url": "https://ollama.com/settings/keys",
-      "verified_at": "2026-10-14"
+      "verified_at": "2026-10-14",
+      "example_model": "qwen3-coder:480b"
     },
     {
       "id": "vercel",
@@ -325,7 +345,8 @@
       "model_list_path": "/models",
       "docs_url": "https://vercel.com/docs/ai-gateway",
       "keys_url": "https://vercel.com/dashboard",
-      "verified_at": "2026-10-14"
+      "verified_at": "2026-10-14",
+      "example_model": "openai/gpt-5.5"
     },
     {
       "id": "chutes",
@@ -337,7 +358,8 @@
       "model_list_path": "/models",
       "docs_url": "https://chutes.ai/docs",
       "keys_url": "https://chutes.ai",
-      "verified_at": "2026-10-14"
+      "verified_at": "2026-10-14",
+      "example_model": "Qwen/Qwen3-32B-TEE"
     },
     {
       "id": "featherless",
@@ -349,7 +371,8 @@
       "model_list_path": "/models",
       "docs_url": "https://featherless.ai/docs",
       "keys_url": "https://featherless.ai/account/api-keys",
-      "verified_at": "2026-10-14"
+      "verified_at": "2026-10-14",
+      "example_model": "Qwen/Qwen3-32B"
     },
     {
       "id": "scaleway",
@@ -362,7 +385,8 @@
       "auth_check_path": "/models",
       "docs_url": "https://www.scaleway.com/en/docs/generative-apis/",
       "keys_url": "https://console.scaleway.com/iam/api-keys",
-      "verified_at": "2026-10-14"
+      "verified_at": "2026-10-14",
+      "example_model": "deepseek/deepseek-v4-flash"
     },
     {
       "id": "llm7",
@@ -374,11 +398,12 @@
       "model_list_path": "/models",
       "docs_url": "https://llm7.io",
       "keys_url": "https://dash.llm7.io",
-      "verified_at": "2026-10-14"
+      "verified_at": "2026-10-14",
+      "example_model": "default"
     },
     {
       "id": "gemini",
-      "display_name": "Google Gemini",
+      "display_name": "Google AI Studio (Gemini)",
       "base_url": "https://generativelanguage.googleapis.com/v1beta/openai",
       "protocols": [
         "OpenAiChat"
@@ -388,7 +413,8 @@
       "docs_url": "https://ai.google.dev/gemini-api/docs/openai",
       "keys_url": "https://aistudio.google.com/apikey",
       "verified_at": "2026-10-15",
-      "_evidence": "probed 2026-10-15: live, rejects an invalid key (400 \"Please pass a valid API key\")"
+      "_evidence": "probed 2026-10-15: live, rejects an invalid key (400 \"Please pass a valid API key\")",
+      "example_model": "models/gemini-3.1-flash-lite"
     },
     {
       "id": "bedrock",
@@ -401,7 +427,8 @@
       "auth_check_path": "/models",
       "docs_url": "https://docs.aws.amazon.com/bedrock/",
       "verified_at": "2026-10-15",
-      "_evidence": "probed 2026-10-15: live, rejects an invalid key; key = Bedrock API key (AWS_BEARER_TOKEN_BEDROCK); us-east-1"
+      "_evidence": "probed 2026-10-15: live, rejects an invalid key; key = Bedrock API key (AWS_BEARER_TOKEN_BEDROCK); us-east-1",
+      "example_model": "openai.gpt-oss-120b"
     },
     {
       "id": "alibaba_cloud",
@@ -418,14 +445,15 @@
     },
     {
       "id": "qwencloud_coding",
-      "display_name": "Qwen Coding Plan",
+      "display_name": "QwenCloud Coding Plan",
       "base_url": "https://coding-intl.dashscope.aliyuncs.com/v1",
       "protocols": [
         "OpenAiChat"
       ],
       "model_list_path": "/models",
       "verified_at": "2026-10-15",
-      "_evidence": "probed 2026-10-15: public model list answers; chat rejects an invalid key"
+      "_evidence": "probed 2026-10-15: public model list answers; chat rejects an invalid key",
+      "example_model": "qwen3.7-plus"
     },
     {
       "id": "kimi_code",
@@ -438,7 +466,8 @@
       "auth_check_path": "/models",
       "docs_url": "https://www.kimi.com/coding",
       "verified_at": "2026-10-15",
-      "_evidence": "probed 2026-10-15: live, rejects an invalid key"
+      "_evidence": "probed 2026-10-15: live, rejects an invalid key",
+      "example_model": "k3"
     },
     {
       "id": "zai_coding",
@@ -451,7 +480,8 @@
       "auth_check_path": "/models",
       "docs_url": "https://docs.z.ai/devpack/overview",
       "verified_at": "2026-10-15",
-      "_evidence": "probed 2026-10-15: live, rejects an invalid key"
+      "_evidence": "probed 2026-10-15: live, rejects an invalid key",
+      "example_model": "glm-5.2"
     },
     {
       "id": "mistral_codestral",
@@ -463,7 +493,8 @@
       "docs_url": "https://docs.mistral.ai/capabilities/code_generation/",
       "keys_url": "https://console.mistral.ai/codestral",
       "verified_at": "2026-10-15",
-      "_evidence": "probed 2026-10-15: chat rejects an invalid key; no model list (enter the model, e.g. codestral-latest)"
+      "_evidence": "probed 2026-10-15: chat rejects an invalid key; no model list (enter the model, e.g. codestral-latest)",
+      "example_model": "codestral-latest"
     },
     {
       "id": "opencode_zen",
@@ -476,7 +507,8 @@
       "auth_check_path": "/models",
       "docs_url": "https://opencode.ai/docs/zen/",
       "verified_at": "2026-10-15",
-      "_evidence": "probed 2026-10-15: live, rejects an invalid key"
+      "_evidence": "probed 2026-10-15: live, rejects an invalid key",
+      "example_model": "gpt-5.3-codex"
     },
     {
       "id": "opencode_go",
@@ -489,7 +521,8 @@
       "auth_check_path": "/models",
       "docs_url": "https://opencode.ai/docs/zen/",
       "verified_at": "2026-10-15",
-      "_evidence": "probed 2026-10-15: live, rejects an invalid key"
+      "_evidence": "probed 2026-10-15: live, rejects an invalid key",
+      "example_model": "minimax-m2.7"
     },
     {
       "id": "cline_pass",
@@ -501,11 +534,12 @@
       "model_list_path": "/models",
       "docs_url": "https://cline.bot",
       "verified_at": "2026-10-15",
-      "_evidence": "probed 2026-10-15: public model list answers; chat rejects an invalid key"
+      "_evidence": "probed 2026-10-15: public model list answers; chat rejects an invalid key",
+      "example_model": "cline-pass/kimi-k3"
     },
     {
       "id": "kilo",
-      "display_name": "Kilo",
+      "display_name": "Kilo.ai",
       "base_url": "https://api.kilo.ai/api/gateway",
       "protocols": [
         "OpenAiChat"
@@ -513,7 +547,8 @@
       "model_list_path": "/models",
       "docs_url": "https://kilo.ai",
       "verified_at": "2026-10-15",
-      "_evidence": "probed 2026-10-15: public model list answers; chat rejects an invalid key"
+      "_evidence": "probed 2026-10-15: public model list answers; chat rejects an invalid key",
+      "example_model": "kilo-auto/free"
     },
     {
       "id": "nebius",
@@ -526,7 +561,8 @@
       "auth_check_path": "/models",
       "docs_url": "https://tokenfactory.nebius.com",
       "verified_at": "2026-10-15",
-      "_evidence": "probed 2026-10-15: live, rejects an invalid key"
+      "_evidence": "probed 2026-10-15: live, rejects an invalid key",
+      "example_model": "Qwen/Qwen3-30B-A3B"
     },
     {
       "id": "wandb",
@@ -540,7 +576,8 @@
       "docs_url": "https://docs.wandb.ai/inference/",
       "keys_url": "https://wandb.ai/authorize",
       "verified_at": "2026-10-15",
-      "_evidence": "probed 2026-10-15: live, rejects an invalid key"
+      "_evidence": "probed 2026-10-15: live, rejects an invalid key",
+      "example_model": "openai/gpt-oss-20b"
     },
     {
       "id": "zenmux",
@@ -552,7 +589,8 @@
       "model_list_path": "/models",
       "docs_url": "https://zenmux.ai",
       "verified_at": "2026-10-15",
-      "_evidence": "probed 2026-10-15: public model list answers; chat rejects an invalid key"
+      "_evidence": "probed 2026-10-15: public model list answers; chat rejects an invalid key",
+      "example_model": "deepseek/deepseek-v4-flash-free"
     },
     {
       "id": "agnes",
@@ -563,7 +601,8 @@
       ],
       "model_list_path": "/models",
       "verified_at": "2026-10-15",
-      "_evidence": "probed 2026-10-15: public model list answers; chat rejects an invalid key"
+      "_evidence": "probed 2026-10-15: public model list answers; chat rejects an invalid key",
+      "example_model": "agnes-2.0-flash"
     },
     {
       "id": "wafer",
@@ -575,7 +614,8 @@
       "model_list_path": "/models",
       "auth_check_path": "/models",
       "verified_at": "2026-10-15",
-      "_evidence": "probed 2026-10-15: live, rejects an invalid key"
+      "_evidence": "probed 2026-10-15: live, rejects an invalid key",
+      "example_model": "DeepSeek-V4-Pro"
     },
     {
       "id": "tokenrouter",
@@ -587,7 +627,8 @@
       "model_list_path": "/models",
       "auth_check_path": "/models",
       "verified_at": "2026-10-15",
-      "_evidence": "probed 2026-10-15: live, rejects an invalid key"
+      "_evidence": "probed 2026-10-15: live, rejects an invalid key",
+      "example_model": "moonshotai/kimi-k3-free"
     },
     {
       "id": "nararoute",
@@ -599,11 +640,12 @@
       "model_list_path": "/models",
       "auth_check_path": "/models",
       "verified_at": "2026-10-15",
-      "_evidence": "probed 2026-10-15: live, rejects an invalid key"
+      "_evidence": "probed 2026-10-15: live, rejects an invalid key",
+      "example_model": "kimi-k3-free"
     },
     {
       "id": "poolside",
-      "display_name": "Poolside",
+      "display_name": "Poolside AI",
       "base_url": "https://inference.poolside.ai/v1",
       "protocols": [
         "OpenAiChat"
@@ -611,7 +653,8 @@
       "model_list_path": "/models",
       "docs_url": "https://poolside.ai",
       "verified_at": "2026-10-15",
-      "_evidence": "probed 2026-10-15: answers 403 without a valid key; first live check needs a key"
+      "_evidence": "probed 2026-10-15: answers 403 without a valid key; first live check needs a key",
+      "example_model": "poolside/laguna-s-2.1"
     },
     {
       "id": "lightning",
@@ -623,7 +666,8 @@
       "model_list_path": "/models",
       "docs_url": "https://lightning.ai",
       "verified_at": "2026-10-15",
-      "_evidence": "probed 2026-10-15: public model list answers; chat rejects an invalid key"
+      "_evidence": "probed 2026-10-15: public model list answers; chat rejects an invalid key",
+      "example_model": "lightning-ai/Qwen3.8-27B"
     },
     {
       "id": "experiential",
@@ -635,7 +679,8 @@
       "model_list_path": "/models",
       "auth_check_path": "/models",
       "verified_at": "2026-10-15",
-      "_evidence": "probed 2026-10-15: live, rejects an invalid key"
+      "_evidence": "probed 2026-10-15: live, rejects an invalid key",
+      "example_model": "union-alpha"
     },
     {
       "id": "cheaperinference",
@@ -647,7 +692,8 @@
       "model_list_path": "/models",
       "auth_check_path": "/models",
       "verified_at": "2026-10-15",
-      "_evidence": "probed 2026-10-15: live, rejects an invalid key"
+      "_evidence": "probed 2026-10-15: live, rejects an invalid key",
+      "example_model": "gpt-5.4-mini"
     },
     {
       "id": "orcarouter",
@@ -659,7 +705,8 @@
       "model_list_path": "/models",
       "auth_check_path": "/models",
       "verified_at": "2026-10-15",
-      "_evidence": "probed 2026-10-15: live, rejects an invalid key"
+      "_evidence": "probed 2026-10-15: live, rejects an invalid key",
+      "example_model": "deepseek/deepseek-v4-flash-free"
     },
     {
       "id": "atlascloud",
@@ -671,7 +718,8 @@
       "model_list_path": "/models",
       "docs_url": "https://www.atlascloud.ai",
       "verified_at": "2026-10-15",
-      "_evidence": "probed 2026-10-15: public model list answers; chat rejects an invalid key"
+      "_evidence": "probed 2026-10-15: public model list answers; chat rejects an invalid key",
+      "example_model": "deepseek-ai/deepseek-v4-flash"
     },
     {
       "id": "xkiro",
@@ -682,7 +730,8 @@
       ],
       "model_list_path": "/models",
       "verified_at": "2026-10-15",
-      "_evidence": "probed 2026-10-15: public model list answers; chat rejects an invalid key"
+      "_evidence": "probed 2026-10-15: public model list answers; chat rejects an invalid key",
+      "example_model": "qwen/qwen3.7-flash:free"
     },
     {
       "id": "opper",
@@ -695,7 +744,8 @@
       "auth_check_path": "/models",
       "docs_url": "https://docs.opper.ai",
       "verified_at": "2026-10-15",
-      "_evidence": "probed 2026-10-15: live, rejects an invalid key"
+      "_evidence": "probed 2026-10-15: live, rejects an invalid key",
+      "example_model": "claude-sonnet-4-6"
     },
     {
       "id": "qwencloud",
@@ -709,7 +759,8 @@
       "docs_url": "https://www.alibabacloud.com/help/en/model-studio/token-plan-overview",
       "keys_url": "https://home.qwencloud.com/api-keys",
       "verified_at": "2026-10-15",
-      "_evidence": "probed 2026-10-15: live, rejects an invalid key (401 InvalidApiKey); Singapore region; keys start sk-sp-; Alibaba may revoke keys used for non-interactive automation"
+      "_evidence": "probed 2026-10-15: live, rejects an invalid key (401 InvalidApiKey); Singapore region; keys start sk-sp-; Alibaba may revoke keys used for non-interactive automation",
+      "example_model": "qwen3.7-plus"
     },
     {
       "id": "ai21",
@@ -1342,7 +1393,7 @@
     },
     {
       "id": "lmstudio",
-      "display_name": "LM Studio (local)",
+      "display_name": "LM Studio",
       "base_url": "http://127.0.0.1:1234/v1",
       "protocols": [
         "OpenAiChat"
@@ -1356,7 +1407,7 @@
     },
     {
       "id": "llamacpp",
-      "display_name": "llama.cpp server (local)",
+      "display_name": "llama.cpp",
       "base_url": "http://127.0.0.1:8080/v1",
       "protocols": [
         "OpenAiChat"

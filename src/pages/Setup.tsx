@@ -105,7 +105,7 @@ export default function Setup({ onDone }: { onDone: () => void }) {
         <div className="card">
           <div className="section-title">Pick a model</div>
           <div className="row">
-            <input placeholder="Type a model name, or search the list" value={model} onChange={(e) => { setModel(e.target.value); setFilter(e.target.value); }} />
+            <input placeholder={p.example_model ? `e.g. ${p.example_model}` : "Type a model name, or search the list"} value={model} onChange={(e) => { setModel(e.target.value); setFilter(e.target.value); }} />
             <button className="ghost" disabled={busy !== ""} onClick={() => run("models", async () => setModels(await api.discoverModels(p.id)))}>{busy === "models" ? "Loading…" : "Show models"}</button>
           </div>
           {models && <label className="small mt-block"><input type="checkbox" className="check" checked={codingOnly} onChange={(e) => setCodingOnly(e.target.checked)} /> Only models good for coding</label>}
@@ -118,6 +118,7 @@ export default function Setup({ onDone }: { onDone: () => void }) {
               ))}
             </div>
           )}
+          {p.example_model && !model && <button className="ghost mt" onClick={() => setModel(p.example_model)}>Use {p.example_model}</button>}
           <div className="row mt">
             <button className="ghost" onClick={() => go(2)}>Back</button>
             <button className="primary" disabled={!model.trim() || busy !== ""} onClick={() => run("preview", async () => { setPreview(await api.preview(app as AppId, p.id, model.trim())); go(5); })}>Next</button>

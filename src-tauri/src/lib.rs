@@ -194,7 +194,7 @@ async fn backup_restore(svc: State<'_, Arc<Service>>, path: String) -> Cmd<backu
 
 #[tauri::command]
 async fn ollama_view(svc: State<'_, Arc<Service>>) -> Cmd<serde_json::Value> {
-    let root = ollama::api_root(&providers::get("ollama").map(|p| p.base_url.to_string()).unwrap_or_default());
+    let root = ollama::api_root(&providers::get("ollama").map(|p| svc.upstream_url(p)).unwrap_or_default());
     let installed = ollama::list(&svc.client, &root).await;
     Ok(serde_json::json!({
         "running": installed.is_ok(),
@@ -212,15 +212,24 @@ fn ollama_pull(svc: State<'_, Arc<Service>>, name: String) -> Cmd<()> {
     if name.is_empty() || name.chars().any(|c| c.is_whitespace()) {
         return Err("Type a model name, like qwen2.5-coder:7b.".into());
     }
-    let root = ollama::api_root(&providers::get("ollama").map(|p| p.base_url.to_string()).unwrap_or_default());
+    let root = ollama::api_root(&providers::get("ollama").map(|p| svc.upstream_url(p)).unwrap_or_default());
     ollama::start_pull(svc.client.clone(), root, name);
     Ok(())
 }
 
 #[tauri::command]
 async fn ollama_delete(svc: State<'_, Arc<Service>>, name: String) -> Cmd<()> {
-    let root = ollama::api_root(&providers::get("ollama").map(|p| p.base_url.to_string()).unwrap_or_default());
+    let root = ollama::api_root(&providers::get("ollama").map(|p| svc.upstream_url(p)).unwrap_or_default());
     ollama::delete(&svc.client, &root, &name).await
+}
+
+#[tauri::command]
+async fn set_provider_url(svc: State<'_, Arc<Service>>, provider_id: String, url: String) -> Cmd<String> {
+    let addr = svc.set_provider_url(&provider_id, &url)?;
+    if svc.provider_in_gateway(&provider_id) {
+        svc.sync_gateway().await?;
+    }
+    Ok(addr)
 }
 
 #[tauri::command]
@@ -801,6 +810,7 @@ pub fn run() {
         .manage(BotState { bots: bots::Bots::default(), dir: dir.clone() })
         .invoke_handler(tauri::generate_handler![
             keychain_waiting,
+            set_provider_url,
             ollama_view,
             ollama_pull,
             ollama_delete,

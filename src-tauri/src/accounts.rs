@@ -21,6 +21,10 @@ type R<T> = Result<T, String>;
 
 pub const MAX_KEYS: usize = 5;
 
+/// Tests that set PRISMFLOW_IMPORT_TEST_DIR take turns.
+#[cfg(test)]
+pub static TEST_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 /// Environment variable → PrismFlow provider id (another tool's names plus the common ones).
 pub const ENV_KEYS: &[(&str, &str)] = &[
     ("OPENAI_API_KEY", "openai"), ("ANTHROPIC_API_KEY", "anthropic"), ("OPENROUTER_API_KEY", "openrouter"),
@@ -41,6 +45,9 @@ pub const ENV_KEYS: &[(&str, &str)] = &[
     ("XKIRO_API_KEY", "xkiro"), ("OPPER_API_KEY", "opper"), ("VENICE_API_KEY", "venice"), ("AI21_API_KEY", "ai21"),
     ("REKA_API_KEY", "reka"), ("WRITER_API_KEY", "writer"), ("POE_API_KEY", "poe"), ("REQUESTY_API_KEY", "requesty"),
 ];
+
+/// Address variables for servers on your computer.
+pub const ENV_ADDRESSES: &[(&str, &str)] = &[("OLLAMA_BASE_URL", "ollama"), ("OLLAMA_HOST", "ollama"), ("LM_STUDIO_BASE_URL", "lmstudio"), ("LLAMACPP_BASE_URL", "llamacpp")];
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
 pub struct Found {
@@ -113,6 +120,24 @@ fn sources() -> Vec<(String, BTreeMap<String, String>)> {
 fn scan_with_secrets(svc: &Service) -> Vec<(Found, String)> {
     let mut out: Vec<(Found, String)> = Vec::new();
     for (label, vars) in sources() {
+        for (var, provider) in ENV_ADDRESSES {
+            let Some(value) = vars.get(*var).map(|v| v.trim().to_string()).filter(|v| !v.is_empty()) else { continue };
+            let Some(p) = crate::providers::get(provider) else { continue };
+            // OLLAMA_HOST is often just host:port.
+            let value = if value.starts_with("http") { value } else { format!("http://{value}") };
+            if out.iter().any(|(f, s)| f.provider_id == p.id && *s == value) {
+                continue;
+            }
+            let current = svc.upstream_url(p);
+            out.push((Found {
+                provider_id: p.id.into(),
+                provider_name: p.display_name.into(),
+                variable: (*var).into(),
+                source: label.clone(),
+                masked: value.clone(),
+                already_saved: current.trim_end_matches("/v1") == value.trim_end_matches('/').trim_end_matches("/v1"),
+            }, value));
+        }
         for (var, provider) in ENV_KEYS {
             let Some(value) = vars.get(*var).map(|v| v.trim().to_string()).filter(|v| v.len() >= 8 && !v.contains(char::is_whitespace)) else { continue };
             let Some(p) = crate::providers::get(provider) else { continue };
@@ -206,7 +231,11 @@ impl Service {
             if f.already_saved || !chosen.iter().any(|(p, v, s)| *p == f.provider_id && *v == f.variable && *s == f.source) {
                 continue;
             }
-            self.add_key(&f.provider_id, &secret)?;
+            if ENV_ADDRESSES.iter().any(|(v, _)| *v == f.variable) {
+                self.set_provider_url(&f.provider_id, &secret)?;
+            } else {
+                self.add_key(&f.provider_id, &secret)?;
+            }
             n += 1;
         }
         self.diag.record(crate::diagnostics::Level::Info, "keys.imported", &format!("Imported {n} key(s)."));

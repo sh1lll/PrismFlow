@@ -135,6 +135,22 @@ function badge(p: Provider): { text: string; tone: string } {
   return p.key_optional ? { text: "No key needed", tone: "muted" } : { text: "Needs a key", tone: "muted" };
 }
 
+function LocalAddress({ p, onChange }: { p: Provider; onChange: () => void }) {
+  const [addr, setAddr] = useState(p.address.replace(/\/v1$/, ""));
+  const [msg, setMsg] = useState("");
+  return (
+    <div className="mt-s">
+      <div className="small muted">Make sure it's running. Address:</div>
+      <div className="row">
+        <input value={addr} onChange={(e) => setAddr(e.target.value)} />
+        <button className="ghost" onClick={() => api.setProviderUrl(p.id, addr).then((a) => { setMsg(`Using ${a}`); onChange(); }).catch((e) => setMsg(errText(e)))}>Save</button>
+        {p.address !== p.base_url && <button className="ghost" onClick={() => api.setProviderUrl(p.id, "").then((a) => { setAddr(a.replace(/\/v1$/, "")); setMsg("Back to the usual address."); onChange(); }).catch((e) => setMsg(errText(e)))}>Reset</button>}
+      </div>
+      {msg && <div className="small muted">{msg}</div>}
+    </div>
+  );
+}
+
 function ProviderRow({ p, onChange }: { p: Provider; onChange: () => void }) {
   const [open, setOpen] = useState(false);
   const [msg, setMsg] = useState<Msg>(null);
@@ -159,7 +175,8 @@ function ProviderRow({ p, onChange }: { p: Provider; onChange: () => void }) {
       {open && (
         <div className="mt">
           {p.keys_url && <div className="small muted selectable">Get a key at {p.keys_url}</div>}
-          {p.local && !p.has_credential && <div className="small muted">Make sure it's running on this computer.</div>}
+          {p.local && <LocalAddress p={p} onChange={onChange} />}
+          {p.example_model && <div className="small muted">Try model: <code className="selectable">{p.example_model}</code></div>}
           <div className="mt row">
             {p.credential_source === "keychain" ? <KeyEditor p={p} onChange={onChange} setMsg={setMsg} /> : <SignIn p={p} onChange={onChange} setMsg={setMsg} />}
             {p.custom && <button className="danger" onClick={removeProvider}>Remove</button>}

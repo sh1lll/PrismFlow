@@ -26,6 +26,8 @@ pub struct ProviderView {
     pub has_credential: bool,
     /// Keys saved for this provider (main + extras).
     pub key_count: usize,
+    /// The address in use (differs from `base_url` when the user changed it).
+    pub address: String,
     /// Codex can talk to this provider without the gateway.
     pub codex_direct: bool,
     /// How each app would reach this provider, or None when it cannot.
@@ -236,8 +238,45 @@ impl Service {
         self.key(p.id).or_else(|| (!p.requires_key).then(|| "no-key-required".to_string()))
     }
 
-    fn upstream_url(&self, p: &ProviderDefinition) -> String {
-        self.upstream_overrides.get(p.id).cloned().unwrap_or_else(|| p.base_url.to_string())
+    pub fn upstream_url(&self, p: &ProviderDefinition) -> String {
+        if let Some(u) = self.upstream_overrides.get(p.id) {
+            return u.clone();
+        }
+        if p.local {
+            if let Some(u) = self.provider_urls().get(p.id) {
+                return u.clone();
+            }
+        }
+        p.base_url.to_string()
+    }
+
+    /// Addresses the user set for servers on this computer (or their network).
+    pub fn provider_urls(&self) -> BTreeMap<String, String> {
+        std::fs::read_to_string(self.state.dir().join("provider_urls.json")).ok().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default()
+    }
+
+    /// Sets (or with an empty `url`, resets) a local server's address.
+    pub fn set_provider_url(&self, provider_id: &str, url: &str) -> R<String> {
+        let p = provider(provider_id)?;
+        if !p.local {
+            return Err(format!("{}'s address can't be changed.", p.display_name));
+        }
+        let mut m = self.provider_urls();
+        let url = url.trim().trim_end_matches('/');
+        if url.is_empty() {
+            m.remove(p.id);
+        } else {
+            let u = reqwest::Url::parse(url).map_err(|_| "Enter a full address, like http://127.0.0.1:11434".to_string())?;
+            if !matches!(u.scheme(), "http" | "https") || u.host_str().is_none() || !u.username().is_empty() || u.query().is_some() {
+                return Err("Enter a full address, like http://127.0.0.1:11434".into());
+            }
+            // Ollama's address is usually given without /v1.
+            let v = if u.path().trim_end_matches('/').ends_with("/v1") { url.to_string() } else { format!("{url}/v1") };
+            m.insert(p.id.into(), v);
+        }
+        crate::config_engine::atomic_write(&self.state.dir().join("provider_urls.json"), &serde_json::to_string_pretty(&m).unwrap_or_default())
+            .map_err(|e| e.to_string())?;
+        Ok(self.upstream_url(p))
     }
 
     pub fn providers(&self) -> Vec<ProviderView> {
@@ -252,6 +291,7 @@ impl Service {
                 (def, has_credential)
             })
             .map(|(def, has_credential)| ProviderView {
+                address: self.upstream_url(def),
                 def: def.clone(),
                 has_credential,
                 // Extra keys only matter once there is a main one.
@@ -1413,6 +1453,30 @@ mod tests {
     const CODEX: &str = codex::APP_ID;
     const CLAUDE: &str = claude_code::APP_ID;
 
+    #[test]
+    fn local_server_addresses_can_change_and_be_imported() {
+        let _turn = crate::accounts::TEST_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let dir = tempfile::tempdir().unwrap();
+        let mut s = service(dir.path());
+        s.upstream_overrides.clear();
+        let ollama = providers::get("ollama").unwrap();
+        assert_eq!(s.set_provider_url("ollama", "http://192.168.1.20:11434").unwrap(), "http://192.168.1.20:11434/v1");
+        assert_eq!(s.upstream_url(ollama), "http://192.168.1.20:11434/v1");
+        assert!(s.set_provider_url("openai", "http://x").is_err(), "only local servers");
+        assert!(s.set_provider_url("ollama", "not a url").is_err());
+        s.set_provider_url("ollama", "").unwrap();
+        assert_eq!(s.upstream_url(ollama), ollama.base_url);
+        assert_eq!(providers::get("nvidia_nim").unwrap().example_model, "nvidia/nemotron-3-super-120b-a12b");
+        let fx = dir.path().join("imp");
+        std::fs::create_dir_all(&fx).unwrap();
+        std::fs::write(fx.join("shell.env"), "OLLAMA_HOST=127.0.0.1:11500\n").unwrap();
+        std::env::set_var("PRISMFLOW_IMPORT_TEST_DIR", &fx);
+        let f = s.scan_keys();
+        std::env::remove_var("PRISMFLOW_IMPORT_TEST_DIR");
+        assert_eq!(f.len(), 1);
+        assert_eq!(f[0].masked, "http://127.0.0.1:11500", "addresses are shown in full");
+    }
+
     #[tokio::test]
     async fn backup_restores_on_a_fresh_install_without_keys() {
         let d1 = tempfile::tempdir().unwrap();
@@ -1440,6 +1504,7 @@ mod tests {
 
     #[tokio::test]
     async fn keys_import_extra_keys_and_profiles() {
+        let _turn = crate::accounts::TEST_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let dir = tempfile::tempdir().unwrap();
         let s = service(dir.path());
         let fx = dir.path().join("import");

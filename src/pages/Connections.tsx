@@ -131,7 +131,8 @@ function NewConnection({ providers, onDone }: { providers: Provider[]; onDone: (
 
       <label className="small muted mt-block">Model</label>
       <div className="row">
-        <input placeholder="Type a model name, or browse" value={model} onChange={(e) => setModel(e.target.value)} />
+        <input placeholder={provider?.example_model ? `e.g. ${provider.example_model}` : "Type a model name, or browse"} value={model} onChange={(e) => setModel(e.target.value)} />
+        {provider?.example_model && !model && <button className="ghost" onClick={() => setModel(provider.example_model)}>Use example</button>}
         <button className="ghost" disabled={busy !== ""} onClick={loadModels}>{busy === "models" ? "Loading…" : "Browse"}</button>
       </div>
 

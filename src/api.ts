@@ -20,6 +20,8 @@ export interface Provider {
   signin_available: boolean;
   has_credential: boolean;
   key_count: number;
+  address: string;
+  example_model: string;
   codex_direct: boolean;
   /** How each app reaches this provider; null = unsupported. */
   routes: Record<AppId, Route | null>;
@@ -242,6 +244,7 @@ export const api = {
   guidedSetup: (id: string) => invoke<{ gateway_url: string; auth_scheme: string; token: string; model: string; steps: string[] }>("guided_setup", { id }),
   companionState: () => invoke<CompanionView>("companion_state"),
   keychainWaiting: () => invoke<boolean>("keychain_waiting"),
+  setProviderUrl: (providerId: string, url: string) => invoke<string>("set_provider_url", { providerId, url }),
   ollama: () => invoke<any>("ollama_view"),
   ollamaPull: (name: string) => invoke<void>("ollama_pull", { name }),
   ollamaDelete: (name: string) => invoke<void>("ollama_delete", { name }),

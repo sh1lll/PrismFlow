@@ -74,6 +74,8 @@ pub struct ProviderDefinition {
     /// Date the facts were last checked (SPEC §21.3); empty for custom.
     pub verified_at: &'static str,
     pub credential_source: CredentialSource,
+    /// A model to suggest (another tool's example for this provider); empty = none.
+    pub example_model: &'static str,
 }
 
 #[derive(Deserialize)]
@@ -104,6 +106,8 @@ struct CatalogEntry {
     verified_at: String,
     #[serde(default)]
     credential_source: CredentialSource,
+    #[serde(default)]
+    example_model: String,
 }
 
 fn yes() -> bool {
@@ -135,6 +139,7 @@ impl CatalogEntry {
             custom,
             verified_at: leak(self.verified_at),
             credential_source: self.credential_source,
+            example_model: leak(self.example_model),
         }
     }
 }
@@ -215,6 +220,7 @@ impl CustomProvider {
             requires_key: self.requires_key,
             verified_at: String::new(),
             credential_source: self.credential_source,
+            example_model: String::new(),
         }
         .into_def(true)
     }
