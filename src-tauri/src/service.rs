@@ -313,6 +313,12 @@ impl Service {
 
     /// Save gateway limits and apply them (engine-side ones restart the engine).
     pub async fn set_settings(&self, settings: crate::gateway::RuntimeSettings) -> R<crate::gateway::RuntimeSettings> {
+        if settings.web_tools.backend == crate::webtools::SearchBackend::Searxng {
+            let u = settings.web_tools.searxng_url.trim();
+            if !(u.starts_with("https://") || u.starts_with("http://127.0.0.1") || u.starts_with("http://localhost")) {
+                return Err("The SearXNG URL must be https, or http on this machine.".into());
+            }
+        }
         if settings.rate_limit_per_minute > 10_000 || settings.max_concurrency_per_provider > 256 || settings.upstream_retries > 5 {
             return Err("Limits out of range: up to 10000 requests/min, 256 concurrent, 5 retries.".into());
         }
@@ -325,11 +331,33 @@ impl Service {
         Ok(settings)
     }
 
+    /// Store (or with an empty value, remove) the Brave Search API key.
+    pub fn set_web_search_key(&self, key: &str) -> R<()> {
+        let key = key.trim();
+        if key.is_empty() {
+            let _ = self.store.delete(crate::webtools::BRAVE_ACCOUNT);
+            self.broker.set_web_key(None);
+            return Ok(());
+        }
+        if key.chars().any(char::is_whitespace) {
+            return Err("Paste the key exactly as issued.".into());
+        }
+        self.store.set(crate::webtools::BRAVE_ACCOUNT, key).map_err(|e| e.to_string())?;
+        self.broker.set_web_key(Some(key.to_string()));
+        self.diag.record(Level::Info, "webtools.key", "Saved a Brave Search API key to the secure store.");
+        Ok(())
+    }
+
+    pub fn has_web_search_key(&self) -> bool {
+        self.store.get(crate::webtools::BRAVE_ACCOUNT).is_ok()
+    }
+
     /// Load saved custom providers into the registry (call at startup).
     pub fn load_custom_providers(&self) -> R<()> {
         let list = self.state.load_custom_providers().map_err(|e| e.to_string())?;
         providers::set_custom(&list);
         self.broker.set_settings(self.state.load_settings().map_err(|e| e.to_string())?);
+        self.broker.set_web_key(self.store.get(crate::webtools::BRAVE_ACCOUNT).ok());
         Ok(())
     }
 
@@ -926,6 +954,7 @@ impl Service {
             .into_iter()
             .map(|p| (account_key(p.id, "default"), format!("{} key", p.display_name)))
             .collect();
+        accounts.push((crate::webtools::BRAVE_ACCOUNT.to_string(), "Brave Search key".into()));
         for app in app_ids() {
             for p in providers::registry() {
                 let id = connection_id(app, p.id);

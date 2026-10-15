@@ -285,6 +285,16 @@ async fn set_signin_consent(svc: State<'_, Arc<Service>>, provider_id: String, c
 }
 
 #[tauri::command]
+fn set_web_search_key(svc: State<'_, Arc<Service>>, key: String) -> Cmd<()> {
+    svc.set_web_search_key(&key)
+}
+
+#[tauri::command]
+fn has_web_search_key(svc: State<'_, Arc<Service>>) -> bool {
+    svc.has_web_search_key()
+}
+
+#[tauri::command]
 fn list_connections(svc: State<'_, Arc<Service>>) -> Cmd<Vec<state::ConnectionRecord>> {
     svc.connections()
 }
@@ -377,6 +387,8 @@ pub fn run() {
             list_connections,
             running_sessions,
             set_routing,
+            set_web_search_key,
+            has_web_search_key,
             set_signin_consent,
             companion_state,
             companion_enable,

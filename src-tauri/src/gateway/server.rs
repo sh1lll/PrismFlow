@@ -173,6 +173,30 @@ async fn proxy(State(inner): State<Arc<Inner>>, req: Request) -> Response {
     };
 
     let url = format!("http://127.0.0.1:{}{path}{query}", upstream.port);
+
+    // Local web tools: Anthropic's server-side WebSearch/WebFetch, run here.
+    let web_on = inner.settings.read().unwrap_or_else(|e| e.into_inner()).web_tools.enabled;
+    if web_on && front == crate::routing::Front::Messages {
+        if let Some(j) = json.as_ref().filter(|j| super::webloop::wants_web_tools(j)) {
+            let target = chain[0].clone();
+            let model = if !binding.model.is_empty() || tier != crate::routing::Tier::Default { target.model.clone() } else { String::new() };
+            let headers = super::webloop::engine_headers(&base_headers, &target.provider_id, &model);
+            let client = inner.client.clone();
+            let counter = inner.clone();
+            let engine_url = url.clone();
+            let send = move |b: serde_json::Value| {
+                let (client, headers, engine_url, counter) = (client.clone(), headers.clone(), engine_url.clone(), counter.clone());
+                async move {
+                    counter.count(|c| c.requests += 1);
+                    let r = client.post(&engine_url).headers(headers).json(&b).send().await
+                        .map_err(|_| "the gateway engine is unreachable".to_string())?;
+                    let status = r.status().as_u16();
+                    Ok((status, r.text().await.map_err(|e| e.to_string())?))
+                }
+            };
+            return super::webloop::run(&inner, &binding.connection_id, j.clone(), send).await;
+        }
+    }
     let mut last_error: Option<Response> = None;
     let mut resp = None;
     for (attempt, target) in chain.iter().enumerate() {

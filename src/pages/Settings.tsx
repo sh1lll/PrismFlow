@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
 import { api, RuntimeSettings, UninstallReport, errText } from "../api";
 
-const FIELDS: { key: keyof RuntimeSettings; label: string; help: string; max: number }[] = [
+type NumericKey = "rate_limit_per_minute" | "max_concurrency_per_provider" | "upstream_retries";
+const FIELDS: { key: NumericKey; label: string; help: string; max: number }[] = [
   { key: "rate_limit_per_minute", label: "Requests per minute, per connection", help: "0 = no limit. Over the limit, the agent gets HTTP 429 from PrismFlow.", max: 10000 },
   { key: "max_concurrency_per_provider", label: "Concurrent requests, per provider", help: "0 = no limit. Extra requests wait up to 30 s.", max: 256 },
   { key: "upstream_retries", label: "Transport retries per attempt", help: "Retries for connection-level failures before a fallback is tried.", max: 5 },
@@ -38,6 +39,7 @@ export default function Settings() {
         <div className="row mt"><button className="primary" disabled={!s} onClick={save}>Save</button></div>
         {msg && <div className={`small mt ${msg.tone}`}>{msg.text}</div>}
       </div>
+      {s && <WebTools s={s} setS={setS} save={save} />}
       <Updates />
       <RemoveAll />
       <div className="card muted small">
@@ -110,6 +112,42 @@ function Updates() {
         {available && <button className="primary" onClick={() => api.installUpdate().catch((e) => setMsg({ tone: "err", text: errText(e) }))}>Install {available} and restart</button>}
       </div>
       {msg && <div className={`small mt ${msg.tone}`}>{msg.text}</div>}
+    </div>
+  );
+}
+
+function WebTools({ s, setS, save }: { s: RuntimeSettings; setS: (s: RuntimeSettings) => void; save: () => void }) {
+  const w = s.web_tools;
+  const set = (patch: Partial<RuntimeSettings["web_tools"]>) => setS({ ...s, web_tools: { ...w, ...patch } });
+  const [hasKey, setHasKey] = useState(false);
+  const [key, setKey] = useState("");
+  const [msg, setMsg] = useState("");
+  useEffect(() => { api.hasWebSearchKey().then(setHasKey).catch(() => setHasKey(false)); }, []);
+  return (
+    <div className="card">
+      <div className="section-title">Web tools for Claude Code</div>
+      <div className="small muted">
+        Claude Code's WebSearch normally runs on Anthropic's servers, so it fails with other providers. When this is on, PrismFlow runs
+        searches and page fetches on this computer for gateway connections. Off by default.
+      </div>
+      <label className="small mt-block"><input type="checkbox" className="check" checked={w.enabled} onChange={(e) => set({ enabled: e.target.checked })} /> Run web search and fetch locally</label>
+      <label className="small muted mt-block">Search backend</label>
+      <select value={w.backend} onChange={(e) => set({ backend: e.target.value as RuntimeSettings["web_tools"]["backend"] })}>
+        <option value="none">None (fetch only)</option>
+        <option value="searxng">SearXNG (your own instance)</option>
+        <option value="brave">Brave Search API</option>
+      </select>
+      {w.backend === "searxng" && <input className="mt" placeholder="https://search.example.org" value={w.searxng_url} onChange={(e) => set({ searxng_url: e.target.value })} />}
+      {w.backend === "brave" && (
+        <div className="row mt">
+          <input type="password" placeholder={hasKey ? "Key stored — paste to replace" : "Brave Search API key"} value={key} onChange={(e) => setKey(e.target.value)} />
+          <button className="ghost" onClick={() => api.setWebSearchKey(key).then(() => { setKey(""); setHasKey(true); setMsg("Key saved to the secure store."); }).catch((e) => setMsg(errText(e)))}>Save key</button>
+        </div>
+      )}
+      <label className="small mt-block"><input type="checkbox" className="check" checked={w.allow_private} onChange={(e) => set({ allow_private: e.target.checked })} /> Allow fetching addresses on private networks</label>
+      {w.allow_private && <div className="warn small">A model could then read services on your local network (routers, internal sites). Leave this off unless you need it.</div>}
+      <div className="row mt"><button className="primary" onClick={save}>Save web tools</button></div>
+      {msg && <div className="small mt">{msg}</div>}
     </div>
   );
 }

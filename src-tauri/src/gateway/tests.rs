@@ -550,7 +550,7 @@ async fn engine_starts_and_serves_with_concurrency_limits_enabled() {
     let upstream = chat_upstream().await;
     let dir = tempfile::tempdir().unwrap();
     let broker = Broker::new(0, dir.path().to_path_buf(), None);
-    broker.set_settings(RuntimeSettings { max_concurrency_per_provider: 2, upstream_retries: 2, rate_limit_per_minute: 100 });
+    broker.set_settings(RuntimeSettings { max_concurrency_per_provider: 2, upstream_retries: 2, rate_limit_per_minute: 100, ..Default::default() });
     let token = tokens::generate();
     let spec = UpstreamSpec {
         provider_id: "nvidia_nim".into(), engine_type: "openai_chat_completions",
@@ -667,4 +667,62 @@ async fn chatgpt_signin_plugin_is_accepted_and_the_token_never_written() {
     assert!(hook.get("refreshToken").is_none());
     assert!(!cfg.contains(ACCESS), "the token must never be written to the engine config");
     broker.stop().await;
+}
+
+// ---- Local web tools ------------------------------------------------------
+
+#[tokio::test]
+async fn web_search_server_tool_runs_locally_and_the_client_gets_the_answer() {
+    let search = MockServer::start().await;
+    Mock::given(method("GET")).and(path("/search"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({"results": [
+            {"title": "PrismFlow docs", "url": "https://example.org/pf", "content": "The answer is 42."}
+        ]})))
+        .mount(&search).await;
+    let upstream = MockServer::start().await;
+    let final_text = serde_json::json!({"id": "c2", "object": "chat.completion", "created": 1, "model": MODEL,
+        "choices": [{"index": 0, "message": {"role": "assistant", "content": "Per the docs, the answer is 42."}, "finish_reason": "stop"}]});
+    let call_search = serde_json::json!({"id": "c1", "object": "chat.completion", "created": 1, "model": MODEL,
+        "choices": [{"index": 0, "message": {"role": "assistant", "content": null, "tool_calls": [{"id": "call_s", "type": "function",
+            "function": {"name": "web_search", "arguments": "{\"query\":\"prismflow answer\"}"}}]}, "finish_reason": "tool_calls"}]});
+    Mock::given(method("POST")).and(path("/v1/chat/completions")).and(body_string_contains("The answer is 42."))
+        .respond_with(ResponseTemplate::new(200).set_body_json(final_text)).with_priority(1).mount(&upstream).await;
+    Mock::given(method("POST")).and(path("/v1/chat/completions"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(call_search)).with_priority(2).mount(&upstream).await;
+
+    let dir = tempfile::tempdir().unwrap();
+    let broker = Broker::new(0, dir.path().to_path_buf(), None);
+    broker.set_settings(RuntimeSettings {
+        web_tools: crate::webtools::WebToolsSettings { enabled: true, backend: crate::webtools::SearchBackend::Searxng, searxng_url: search.uri(), allow_private: false },
+        ..Default::default()
+    });
+    let token = tokens::generate();
+    let spec = UpstreamSpec { provider_id: "nvidia_nim".into(), engine_type: "openai_chat_completions",
+        base_url: format!("{}/v1", upstream.uri()), models: vec![MODEL.into()], key: UPSTREAM_KEY.into(), codex_oauth: false };
+    let binding = Binding { connection_id: "claude_code:nvidia_nim".into(), provider_id: "nvidia_nim".into(), model: MODEL.into(), ..Default::default() };
+    broker.start(vec![spec], vec![(token.clone(), binding)]).await.unwrap();
+
+    let body = serde_json::json!({"model": "prismflow-default", "max_tokens": 256, "stream": true,
+        "messages": [{"role": "user", "content": "What is the answer? Search the web."}],
+        "tools": [{"type": "web_search_20250305", "name": "web_search", "max_uses": 3}]});
+    let r = client().post(format!("{}/v1/messages", broker.url())).header("x-api-key", &token).json(&body).send().await.unwrap();
+    assert_eq!(r.status(), 200);
+    assert!(r.headers()["content-type"].to_str().unwrap().starts_with("text/event-stream"));
+    let sse = r.text().await.unwrap();
+    assert!(sse.contains("the answer is 42") && sse.contains("event: message_stop"), "{sse}");
+    assert!(!sse.contains("\"name\":\"web_search\""), "the client never sees our internal tool call: {sse}");
+    assert_eq!(upstream.received_requests().await.unwrap().len(), 2, "search turn + answer turn");
+    assert_eq!(search.received_requests().await.unwrap().len(), 1);
+    broker.stop().await;
+}
+
+#[tokio::test]
+async fn web_tools_off_leaves_requests_untouched() {
+    let h = harness().await;
+    let mut b = messages_body(false, false);
+    b["tools"] = serde_json::json!([{"type": "web_search_20250305", "name": "web_search"}]);
+    // Off by default: the request goes straight through (the mock answers text).
+    let v: serde_json::Value = h.post("/v1/messages", b).header("x-api-key", &h.token).send().await.unwrap().json().await.unwrap();
+    assert_eq!(v["type"], "message", "{v}");
+    h.broker.stop().await;
 }

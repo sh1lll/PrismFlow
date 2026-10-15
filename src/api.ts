@@ -120,10 +120,12 @@ export interface Routing {
   fallbacks: ModelRef[];
   fallback_consent: boolean;
 }
+export interface WebToolsSettings { enabled: boolean; backend: "none" | "searxng" | "brave"; searxng_url: string; allow_private: boolean }
 export interface RuntimeSettings {
   rate_limit_per_minute: number;
   max_concurrency_per_provider: number;
   upstream_retries: number;
+  web_tools: WebToolsSettings;
 }
 
 export interface UninstallItem { what: string; outcome: "planned" | "done" | "failed"; detail: string }
@@ -182,6 +184,8 @@ export const api = {
   companionAllowActions: (id: string, allow: boolean) => invoke<CompanionView>("companion_allow_actions", { id, allow }),
   uninstall: (dryRun: boolean) => invoke<UninstallReport>("uninstall", { dryRun }),
   setSigninConsent: (providerId: string, consent: boolean) => invoke<void>("set_signin_consent", { providerId, consent }),
+  setWebSearchKey: (key: string) => invoke<void>("set_web_search_key", { key }),
+  hasWebSearchKey: () => invoke<boolean>("has_web_search_key"),
   runningSessions: (id: string) => invoke<number[]>("running_sessions", { id }),
   launch: (id: string) => invoke<void>("launch_connection", { id }),
   diagnostics: () => invoke<DiagEvent[]>("get_diagnostics"),

@@ -5,6 +5,7 @@
 //! → provider (upstream key). See the Slice 2 plan for the threat model.
 
 pub mod server;
+pub mod webloop;
 pub mod supervisor;
 pub mod tokens;
 
@@ -39,11 +40,13 @@ pub struct RuntimeSettings {
     pub max_concurrency_per_provider: u32,
     /// Transport retries per upstream attempt (engine), for idempotent failures.
     pub upstream_retries: u32,
+    /// Local WebSearch/WebFetch for Claude Code (off by default).
+    pub web_tools: crate::webtools::WebToolsSettings,
 }
 
 impl Default for RuntimeSettings {
     fn default() -> Self {
-        Self { rate_limit_per_minute: 0, max_concurrency_per_provider: 0, upstream_retries: 1 }
+        Self { rate_limit_per_minute: 0, max_concurrency_per_provider: 0, upstream_retries: 1, web_tools: Default::default() }
     }
 }
 
@@ -122,6 +125,8 @@ struct EngineState {
 
 pub(crate) struct Inner {
     port: Mutex<u16>,
+    /// Brave Search key, in memory only (from the secure store).
+    pub(crate) web_key: RwLock<Option<String>>,
     pub(crate) settings: RwLock<RuntimeSettings>,
     /// Fixed one-minute windows per connection: (window start, count).
     limiter: Mutex<HashMap<String, (std::time::Instant, u32)>>,
@@ -134,7 +139,7 @@ pub(crate) struct Inner {
 }
 
 impl Inner {
-    fn record(&self, level: Level, code: &str, message: &str) {
+    pub(crate) fn record(&self, level: Level, code: &str, message: &str) {
         if let Some(d) = &self.diag {
             d.record(level, code, message);
         }
@@ -172,7 +177,7 @@ impl Inner {
         true
     }
 
-    fn count(&self, f: impl FnOnce(&mut Counters)) {
+    pub(crate) fn count(&self, f: impl FnOnce(&mut Counters)) {
         f(&mut self.counters.lock().unwrap_or_else(|e| e.into_inner()));
     }
 }
@@ -206,6 +211,7 @@ impl Broker {
         Self {
             inner: Arc::new(Inner {
                 port: Mutex::new(port),
+                web_key: RwLock::new(None),
                 settings: RwLock::new(RuntimeSettings::default()),
                 limiter: Mutex::new(HashMap::new()),
                 bindings: RwLock::new(HashMap::new()),
@@ -266,6 +272,10 @@ impl Broker {
     /// Update limits; engine-side ones apply on the next `start`.
     pub fn set_settings(&self, settings: RuntimeSettings) {
         *self.inner.settings.write().unwrap_or_else(|e| e.into_inner()) = settings;
+    }
+
+    pub fn set_web_key(&self, key: Option<String>) {
+        *self.inner.web_key.write().unwrap_or_else(|e| e.into_inner()) = key;
     }
 
     pub fn settings(&self) -> RuntimeSettings {
