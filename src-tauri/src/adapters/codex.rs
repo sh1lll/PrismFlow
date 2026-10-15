@@ -335,6 +335,134 @@ pub fn render_catalog(t: &CatalogTemplate, entries: &[CatalogEntry]) -> serde_js
     serde_json::json!({ "models": models })
 }
 
+
+// ---- Codex Desktop: the base config ------------------------------------
+//
+// The Codex app (bundle id com.openai.codex) reads ~/.codex/config.toml and
+// has no `-p`. Codex 0.162 rejects the legacy top-level `profile` key
+// (verified 2026-10-14), so the desktop connection edits the base file:
+// the top-level keys in BASE_KEYS plus one `[model_providers.prismflow_*]`
+// table. Prior values are recorded and restored exactly on disconnect.
+
+pub const DESKTOP_APP_ID: &str = "codex_desktop";
+pub const DESKTOP_BUNDLE_ID: &str = "com.openai.codex";
+pub const BASE_KEYS: &[&str] = &["model", "model_provider", "model_catalog_json"];
+
+pub fn base_config(home: &Path) -> PathBuf {
+    home.join("config.toml")
+}
+
+/// Plan the base-config edit. `auth_args` + `base_url` decide direct vs
+/// gateway exactly as for the CLI profile.
+#[allow(clippy::too_many_arguments)]
+pub fn plan_connect_base(
+    home: &Path,
+    provider: &ProviderDefinition,
+    model: &str,
+    base_url: &str,
+    helper: &Path,
+    auth_args: Vec<String>,
+    catalog: Option<&Path>,
+) -> Result<EditPlan, CodexError> {
+    let file = base_config(home);
+    let table = provider_table(provider.id);
+    let mut top = vec![
+        ("model".to_string(), TomlVal::Str(model.into())),
+        ("model_provider".to_string(), TomlVal::Str(table.clone())),
+    ];
+    if let Some(c) = catalog {
+        top.push(("model_catalog_json".to_string(), TomlVal::Str(c.display().to_string())));
+    }
+    let tables = vec![
+        (vec![], top),
+        (
+            vec!["model_providers".to_string(), table.clone()],
+            vec![
+                ("name".to_string(), TomlVal::Str(format!("{} (via PrismFlow)", provider.display_name))),
+                ("base_url".to_string(), TomlVal::Str(base_url.into())),
+                ("wire_api".to_string(), TomlVal::Str("responses".into())),
+            ],
+        ),
+        (
+            vec!["model_providers".to_string(), table, "auth".to_string()],
+            vec![
+                ("command".to_string(), TomlVal::Str(helper.display().to_string())),
+                ("args".to_string(), TomlVal::StrArray(auth_args)),
+            ],
+        ),
+    ];
+    Ok(config_engine::plan_set_tables(&file, &tables)?)
+}
+
+/// Current values of BASE_KEYS (None = absent), for restore on disconnect.
+pub fn read_base_priors(home: &Path) -> Result<std::collections::BTreeMap<String, Option<String>>, CodexError> {
+    Ok(config_engine::read_top_level_strings(&base_config(home), BASE_KEYS)?)
+}
+
+/// Undo the desktop connection: drop our provider table, restore priors.
+/// Returns the plans to apply (removal first), or none if nothing remains.
+pub fn plan_disconnect_base(
+    home: &Path,
+    provider_id: &str,
+    priors: &std::collections::BTreeMap<String, Option<String>>,
+) -> Result<Vec<EditPlan>, CodexError> {
+    let file = base_config(home);
+    let mut plans = Vec::new();
+    let before = std::fs::read_to_string(&file).unwrap_or_default();
+    let mut doc: toml_edit::DocumentMut = before.parse().map_err(|e: toml_edit::TomlError| ConfigError::Parse { file: file.clone(), detail: e.to_string() })?;
+    if let Some(t) = doc.get_mut("model_providers").and_then(|t| t.as_table_like_mut()) {
+        t.remove(&provider_table(provider_id));
+    }
+    for k in BASE_KEYS {
+        match priors.get(*k).cloned().flatten() {
+            Some(v) => { doc[*k] = toml_edit::value(v); }
+            None => { doc.remove(k); }
+        }
+    }
+    let after = doc.to_string();
+    if after != before {
+        plans.push(EditPlan { file, before, after, summary: vec![format!("Restore Codex's own provider settings and remove {}", provider_table(provider_id))] });
+    }
+    Ok(plans)
+}
+
+/// Codex Desktop detection: the app bundle, not a CLI.
+pub fn detect_desktop() -> AppDetection {
+    let app = ["/Applications/ChatGPT.app", "/Applications/Codex.app"]
+        .iter()
+        .map(PathBuf::from)
+        .chain(dirs::home_dir().map(|h| h.join("Applications/ChatGPT.app")))
+        .find(|p| {
+            Command::new("/usr/bin/defaults")
+                .args(["read", &p.join("Contents/Info").display().to_string(), "CFBundleIdentifier"])
+                .output()
+                .is_ok_and(|o| String::from_utf8_lossy(&o.stdout).trim() == DESKTOP_BUNDLE_ID)
+        });
+    let mut d = AppDetection {
+        app_id: DESKTOP_APP_ID.into(),
+        display_name: "Codex Desktop".into(),
+        installed: app.is_some(),
+        path: app.as_ref().map(|p| p.display().to_string()),
+        version: None,
+        version_verified: false,
+        notes: vec![
+            "Uses your ~/.codex/config.toml (the desktop app has no profiles). PrismFlow changes three top-level keys and adds one provider table, and restores the previous values on disconnect.".into(),
+            "Restart the Codex app after connecting or disconnecting.".into(),
+        ],
+    };
+    if let Some(p) = &app {
+        d.version = Command::new("/usr/bin/defaults")
+            .args(["read", &p.join("Contents/Info").display().to_string(), "CFBundleShortVersionString"])
+            .output()
+            .ok()
+            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string());
+        d.notes.push("Verified through the Codex CLI, which shares the app's config loader; the app itself is not driven by PrismFlow.".into());
+    } else {
+        d.notes = vec!["The Codex desktop app was not found in /Applications.".into()];
+    }
+    d
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -476,5 +604,33 @@ mod tests {
         let cat = home.path().join("cat.json");
         let plan = plan_connect(home.path(), providers::get("openrouter").unwrap(), "m", &helper(), Some(&cat)).unwrap();
         assert!(plan.after.contains(&format!("model_catalog_json = \"{}\"", cat.display())));
+    }
+
+    #[test]
+    fn desktop_base_edit_restores_priors_exactly() {
+        let home = tempfile::tempdir().unwrap();
+        let original = "# my codex\nmodel = \"nvidia_nim/z-ai/glm\"\nmodel_provider = \"other\"\n\n[model_providers.other]\nbase_url = \"http://127.0.0.1:9090/v1\"\n\n[mcp_servers.x]\ncommand = \"node\"\n";
+        std::fs::write(base_config(home.path()), original).unwrap();
+        let priors = read_base_priors(home.path()).unwrap();
+        assert_eq!(priors["model_provider"].as_deref(), Some("other"));
+        assert_eq!(priors["model_catalog_json"], None);
+        let cat = home.path().join("cat.json");
+        let plan = plan_connect_base(home.path(), providers::get("openrouter").unwrap(), "a/b", "https://openrouter.ai/api/v1",
+            &helper(), vec!["credential".into()], Some(&cat)).unwrap();
+        config_engine::apply(&plan).unwrap();
+        let doc: toml_edit::DocumentMut = std::fs::read_to_string(base_config(home.path())).unwrap().parse().unwrap();
+        assert_eq!(doc["model_provider"].as_str(), Some("prismflow_openrouter"));
+        assert_eq!(doc["model_providers"]["other"]["base_url"].as_str(), Some("http://127.0.0.1:9090/v1"), "other tables untouched");
+        for p in plan_disconnect_base(home.path(), "openrouter", &priors).unwrap() {
+            config_engine::apply(&p).unwrap();
+        }
+        let restored: toml_edit::DocumentMut = std::fs::read_to_string(base_config(home.path())).unwrap().parse().unwrap();
+        let orig: toml_edit::DocumentMut = original.parse().unwrap();
+        assert_eq!(restored["model"].as_str(), orig["model"].as_str());
+        assert_eq!(restored["model_provider"].as_str(), Some("other"));
+        assert!(restored.get("model_catalog_json").is_none());
+        assert!(restored["model_providers"].get("prismflow_openrouter").is_none());
+        let text = std::fs::read_to_string(base_config(home.path())).unwrap();
+        assert!(text.contains("# my codex") && text.contains("[mcp_servers.x]"));
     }
 }
