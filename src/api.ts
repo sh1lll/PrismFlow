@@ -19,6 +19,7 @@ export interface Provider {
   credential_source: "keychain" | "gh_cli" | "codex_login" | "gcloud" | "copilot_cli";
   signin_available: boolean;
   has_credential: boolean;
+  key_count: number;
   codex_direct: boolean;
   /** How each app reaches this provider; null = unsupported. */
   routes: Record<AppId, Route | null>;
@@ -153,6 +154,10 @@ export interface RuntimeSettings {
   budgets: Record<string, number>;
 }
 
+export interface FoundKey { provider_id: string; provider_name: string; variable: string; source: string; masked: string; already_saved: boolean }
+export interface ProfileEntry { app_id: string; provider_id: string; model: string }
+export interface Profiles { active: string | null; list: Record<string, ProfileEntry[]> }
+
 export interface UsageTotals { requests: number; errors: number; input_tokens: number; output_tokens: number; cost: number; unpriced: number }
 export interface UsageRequest {
   ts: number; connection: string; provider: string; model: string; path: string; status: number; ms: number;
@@ -220,6 +225,14 @@ export const api = {
   guidedSetup: (id: string) => invoke<{ gateway_url: string; auth_scheme: string; token: string; model: string; steps: string[] }>("guided_setup", { id }),
   companionState: () => invoke<CompanionView>("companion_state"),
   keychainWaiting: () => invoke<boolean>("keychain_waiting"),
+  addKey: (providerId: string, secret: string) => invoke<number>("keys_add", { providerId, secret }),
+  removeExtraKeys: (providerId: string) => invoke<void>("keys_remove_extra", { providerId }),
+  scanKeys: () => invoke<FoundKey[]>("keys_scan"),
+  importKeys: (chosen: [string, string, string][]) => invoke<number>("keys_import", { chosen }),
+  profiles: () => invoke<Profiles>("profiles_get"),
+  saveProfile: (name: string) => invoke<Profiles>("profile_save", { name }),
+  deleteProfile: (name: string) => invoke<Profiles>("profile_delete", { name }),
+  switchProfile: (name: string) => invoke<Profiles>("profile_switch", { name }),
   tryChat: (providerId: string, model: string, messages: { role: string; content: string }[]) => invoke<string>("try_chat", { providerId, model, messages }),
   usage: (since: string, limit: number) => invoke<UsageView>("usage_view", { since, limit }),
   autostartGet: () => invoke<boolean>("autostart_get"),

@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import type { Page } from "../App";
-import { api, APP_NAME, AppDetection, Connection, DiagEvent, Provider, STATUS_LABEL, errText, providerName, statusTone, when } from "../api";
+import { api, APP_NAME, AppDetection, Profiles, Connection, DiagEvent, Provider, STATUS_LABEL, errText, providerName, statusTone, when } from "../api";
 import GatewayCard from "./GatewayCard";
 
 export default function Overview({ go }: { go: (p: Page) => void }) {
@@ -57,6 +57,8 @@ export default function Overview({ go }: { go: (p: Page) => void }) {
         )}
       </div>
 
+      <ProfilesCard onChange={() => api.connections().then(setConnections).catch(() => {})} />
+
       <GatewayCard />
 
       {errors.length > 0 && (
@@ -66,6 +68,41 @@ export default function Overview({ go }: { go: (p: Page) => void }) {
           <a onClick={() => go("Activity")}>See all</a>
         </div>
       )}
+    </div>
+  );
+}
+
+/** Save the current connections as a profile, and switch between profiles. */
+function ProfilesCard({ onChange }: { onChange: () => void }) {
+  const [p, setP] = useState<Profiles | null>(null);
+  const [name, setName] = useState("");
+  const [msg, setMsg] = useState("");
+  const [busy, setBusy] = useState(false);
+  useEffect(() => { api.profiles().then(setP).catch(() => {}); }, []);
+  const act = (f: () => Promise<Profiles>, done: string) => {
+    setBusy(true); setMsg("");
+    f().then((x) => { setP(x); setMsg(done); onChange(); }).catch((e) => { setMsg(errText(e)); api.profiles().then(setP); onChange(); }).finally(() => setBusy(false));
+  };
+  const names = Object.keys(p?.list ?? {});
+  return (
+    <div className="card">
+      <div className="section-title">Profiles</div>
+      <div className="small muted">Save your current set of connections (like "Work" or "Personal") and switch between them in one click.</div>
+      {names.length > 0 && (
+        <div className="choices">
+          {names.map((n) => (
+            <span key={n} className="row">
+              <button className={p?.active === n ? "primary" : "ghost"} disabled={busy} onClick={() => act(() => api.switchProfile(n), `Switched to ${n}.`)}>{n}</button>
+              <button className="ghost small" title="Delete" onClick={() => act(() => api.deleteProfile(n), "Deleted.")}>×</button>
+            </span>
+          ))}
+        </div>
+      )}
+      <div className="row mt">
+        <input placeholder="Profile name" value={name} onChange={(e) => setName(e.target.value)} />
+        <button className="ghost" disabled={!name.trim() || busy} onClick={() => act(() => api.saveProfile(name), `Saved "${name}".`)}>Save current</button>
+      </div>
+      {msg && <div className="small mt pre-wrap">{msg}</div>}
     </div>
   );
 }

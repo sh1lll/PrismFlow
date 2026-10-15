@@ -66,6 +66,16 @@ fn build_menu<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
         }
         menu.append(&sub)?;
     }
+    let profiles = svc.profiles();
+    if !profiles.list.is_empty() {
+        let title = format!("Profile: {}", profiles.active.clone().unwrap_or_else(|| "none".into()));
+        let sub = Submenu::with_id(app, "profiles", title, true)?;
+        for name in profiles.list.keys() {
+            let mark = if profiles.active.as_deref() == Some(name.as_str()) { "✓ " } else { "" };
+            sub.append(&MenuItem::with_id(app, format!("profile:{name}"), format!("{mark}{name}"), true, None::<&str>)?)?;
+        }
+        menu.append(&sub)?;
+    }
     if !conns.is_empty() {
         menu.append(&MenuItem::with_id(app, "restart", "Restart background service", true, None::<&str>)?)?;
     }
@@ -123,6 +133,17 @@ pub fn install<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
                 let al = app.autolaunch();
                 let _ = if al.is_enabled().unwrap_or(false) { al.disable() } else { al.enable() };
                 refresh(app);
+            }
+            other if other.starts_with("profile:") => {
+                let name = other.trim_start_matches("profile:").to_string();
+                let svc = app.state::<Arc<Service>>().inner().clone();
+                tauri::async_runtime::spawn(async move {
+                    match svc.switch_profile(&name).await {
+                        Ok(_) => crate::notify::send(&handle, "Profile switched", &format!("Now using \"{name}\".")),
+                        Err(e) => crate::notify::send(&handle, "Profile switched with problems", &e),
+                    }
+                    refresh(&handle);
+                });
             }
             other if other.starts_with("switch:") => {
                 let rest = other.trim_start_matches("switch:").to_string();

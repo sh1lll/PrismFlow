@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { api, Protocol, Provider, UrlCheck, errText } from "../api";
+import { api, FoundKey, Protocol, Provider, UrlCheck, errText } from "../api";
 
 /** Plain names for the API styles a custom server can speak. */
 const STYLE: Record<Protocol, string> = {
@@ -71,6 +71,22 @@ function KeyEditor({ p, onChange, setMsg }: { p: Provider; onChange: () => void;
     }
   }
 
+  const [adding, setAdding] = useState(false);
+  async function addAnother() {
+    setBusy(true); setMsg(null);
+    try { await api.addKey(p.id, secret); setSecret(""); setAdding(false); setMsg({ tone: "ok", text: "Key added. PrismFlow now shares requests between your keys." }); onChange(); }
+    catch (e) { setMsg({ tone: "err", text: errText(e) }); }
+    finally { setBusy(false); }
+  }
+  if (adding) {
+    return (
+      <div className="row">
+        <input type="password" autoComplete="off" placeholder="Paste another key" value={secret} onChange={(e) => setSecret(e.target.value)} />
+        <button className="primary" disabled={busy || !secret.trim()} onClick={addAnother}>Add</button>
+        <button className="ghost" onClick={() => { setAdding(false); setSecret(""); }}>Cancel</button>
+      </div>
+    );
+  }
   return editing ? (
     <div className="row">
       <input type="password" autoComplete="off" placeholder="Paste your key" value={secret} onChange={(e) => setSecret(e.target.value)} />
@@ -81,6 +97,8 @@ function KeyEditor({ p, onChange, setMsg }: { p: Provider; onChange: () => void;
     <div className="row">
       {p.id === "openrouter" && !p.has_credential && <button className="primary" disabled={busy} onClick={signIn}>Sign in with OpenRouter</button>}
       <button className="ghost" onClick={() => setEditing(true)}>{p.has_credential ? "Change key" : p.key_optional ? "Add key (optional)" : p.id === "openrouter" ? "Paste a key instead" : "Add key"}</button>
+      {p.has_credential && <button className="ghost" onClick={() => setAdding(true)}>Add another key</button>}
+      {p.key_count > 1 && <button className="ghost" onClick={() => api.removeExtraKeys(p.id).then(() => { setMsg({ tone: "ok", text: "Extra keys removed." }); onChange(); }).catch((e) => setMsg({ tone: "err", text: errText(e) }))}>Remove extra keys</button>}
       {p.has_credential && <button className="danger" onClick={remove}>Remove key</button>}
     </div>
   );
@@ -113,7 +131,7 @@ function SignIn({ p, onChange, setMsg }: { p: Provider; onChange: () => void; se
 
 function badge(p: Provider): { text: string; tone: string } {
   if (p.credential_source !== "keychain") return p.has_credential ? { text: "On", tone: "ok" } : { text: "Off", tone: "muted" };
-  if (p.has_credential) return { text: "Ready", tone: "ok" };
+  if (p.has_credential) return { text: p.key_count > 1 ? `Ready · ${p.key_count} keys` : "Ready", tone: "ok" };
   return p.key_optional ? { text: "No key needed", tone: "muted" } : { text: "Needs a key", tone: "muted" };
 }
 
@@ -157,6 +175,50 @@ function ProviderRow({ p, onChange }: { p: Provider; onChange: () => void }) {
           </details>
         </div>
       )}
+    </div>
+  );
+}
+
+function ImportKeys({ onDone }: { onDone: () => void }) {
+  const [found, setFound] = useState<FoundKey[] | null>(null);
+  const [picked, setPicked] = useState<Set<number>>(new Set());
+  const [msg, setMsg] = useState("");
+  const [busy, setBusy] = useState(false);
+  async function scan() {
+    setBusy(true); setMsg("");
+    try {
+      const f = await api.scanKeys();
+      setFound(f);
+      setPicked(new Set(f.map((x, i) => (x.already_saved ? -1 : i)).filter((i) => i >= 0)));
+    } catch (e) { setMsg(errText(e)); } finally { setBusy(false); }
+  }
+  async function importPicked() {
+    if (!found) return;
+    setBusy(true);
+    try {
+      const n = await api.importKeys(found.filter((_, i) => picked.has(i)).map((f) => [f.provider_id, f.variable, f.source] as [string, string, string]));
+      setMsg(`Imported ${n} key${n === 1 ? "" : "s"}.`); setFound(null); onDone();
+    } catch (e) { setMsg(errText(e)); } finally { setBusy(false); }
+  }
+  return (
+    <div className="card">
+      <div className="section-title">Import keys you already have</div>
+      <div className="small muted">PrismFlow looks for keys in your terminal settings (like OPENAI_API_KEY) and in another tool's settings. You choose which to import.</div>
+      {!found && <button className="ghost mt" disabled={busy} onClick={scan}>{busy ? "Looking…" : "Look for keys"}</button>}
+      {found && found.length === 0 && <div className="small mt">No keys found.</div>}
+      {found && found.length > 0 && (
+        <>
+          {found.map((f, i) => (
+            <label key={i} className="small mt-block">
+              <input type="checkbox" className="check" disabled={f.already_saved} checked={picked.has(i)}
+                onChange={(e) => { const n = new Set(picked); if (e.target.checked) n.add(i); else n.delete(i); setPicked(n); }} />
+              <b>{f.provider_name}</b> <span className="muted">{f.masked} · {f.variable} · {f.source}{f.already_saved ? " · already saved" : ""}</span>
+            </label>
+          ))}
+          <div className="row mt"><button className="primary" disabled={busy || picked.size === 0} onClick={importPicked}>Import {picked.size}</button><button className="ghost" onClick={() => setFound(null)}>Cancel</button></div>
+        </>
+      )}
+      {msg && <div className="small mt">{msg}</div>}
     </div>
   );
 }
@@ -291,6 +353,7 @@ export default function Providers() {
           </div>
         ))
       )}
+      <ImportKeys onDone={load} />
       <AddCustom onDone={load} />
     </div>
   );

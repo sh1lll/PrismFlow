@@ -85,7 +85,7 @@ async fn harness() -> Harness {
         engine_type: "openai_chat_completions",
         base_url: format!("{}/v1", upstream.uri()),
         models: vec![MODEL.into()],
-        key: UPSTREAM_KEY.into(), codex_oauth: false, headers: vec![] };
+        key: UPSTREAM_KEY.into(), codex_oauth: false, headers: vec![], extra_keys: vec![] };
     let binding = Binding { connection_id: "claude_code:nvidia_nim".into(), provider_id: "nvidia_nim".into(), ..Default::default() };
     let status = broker.start(vec![spec], vec![(token.clone(), binding)]).await.expect("broker starts");
     assert_eq!(status.phase, Phase::Ready);
@@ -403,7 +403,7 @@ async fn anthropic_harness() -> Harness {
         engine_type: supervisor::engine_type(p),
         base_url: upstream.uri(),
         models: vec![CLAUDE_MODEL.into()],
-        key: ANTHROPIC_KEY.into(), codex_oauth: false, headers: vec![] };
+        key: ANTHROPIC_KEY.into(), codex_oauth: false, headers: vec![], extra_keys: vec![] };
     let binding = Binding { connection_id: "codex_cli:anthropic".into(), provider_id: "anthropic".into(), ..Default::default() };
     broker.start(vec![spec], vec![(token.clone(), binding)]).await.expect("broker starts");
     Harness { broker, token, _dir: dir, diag_path, _upstream: upstream }
@@ -470,7 +470,7 @@ async fn routed(routing: Routing) -> (Harness, MockServer) {
     let token = tokens::generate();
     let spec = |id: &str, url: String, key: &str, model: &str| UpstreamSpec {
         provider_id: id.into(), engine_type: "openai_chat_completions", base_url: format!("{url}/v1"),
-        models: vec![model.into()], key: key.into(), codex_oauth: false, headers: vec![] };
+        models: vec![model.into()], key: key.into(), codex_oauth: false, headers: vec![], extra_keys: vec![] };
     let specs = vec![spec("prov_a", a.uri(), KEY_A, "model-a"), spec("prov_b", b.uri(), KEY_B, "model-b")];
     let binding = Binding {
         connection_id: "claude_code:prov_a".into(), provider_id: "prov_a".into(), model: "model-a".into(),
@@ -535,7 +535,7 @@ async fn per_connection_rate_limit_answers_429() {
 
 #[test]
 fn engine_config_carries_concurrency_and_retry_limits() {
-    let spec = UpstreamSpec { provider_id: "p".into(), engine_type: "openai_chat_completions", base_url: "https://x/v1".into(), models: vec![], key: "k".into(), codex_oauth: false, headers: vec![] };
+    let spec = UpstreamSpec { provider_id: "p".into(), engine_type: "openai_chat_completions", base_url: "https://x/v1".into(), models: vec![], key: "k".into(), codex_oauth: false, headers: vec![], extra_keys: vec![] };
     let cfg = supervisor::render_config(&[spec], &RuntimeSettings { max_concurrency_per_provider: 4, upstream_retries: 2, ..Default::default() });
     assert_eq!(cfg["upstreamConcurrency"]["enabled"], true);
     assert_eq!(cfg["upstreamConcurrency"]["maxInFlightPerProvider"], 4);
@@ -554,7 +554,7 @@ async fn engine_starts_and_serves_with_concurrency_limits_enabled() {
     let token = tokens::generate();
     let spec = UpstreamSpec {
         provider_id: "nvidia_nim".into(), engine_type: "openai_chat_completions",
-        base_url: format!("{}/v1", upstream.uri()), models: vec![MODEL.into()], key: UPSTREAM_KEY.into(), codex_oauth: false, headers: vec![] };
+        base_url: format!("{}/v1", upstream.uri()), models: vec![MODEL.into()], key: UPSTREAM_KEY.into(), codex_oauth: false, headers: vec![], extra_keys: vec![] };
     let binding = Binding { connection_id: "c".into(), provider_id: "nvidia_nim".into(), ..Default::default() };
     broker.start(vec![spec], vec![(token.clone(), binding)]).await.expect("engine accepts the limits config");
     let r = client().post(format!("{}/v1/messages", broker.url())).json(&messages_body(false, false))
@@ -583,7 +583,7 @@ async fn replay_harness(stream_body: String, json_body: String) -> (Harness, Moc
     let token = tokens::generate();
     let spec = UpstreamSpec {
         provider_id: "ollama".into(), engine_type: "openai_chat_completions", base_url: format!("{}/v1", upstream.uri()),
-        models: vec!["qwen3:4b-instruct-2507-q4_K_M".into()], key: "no-key-required".into(), codex_oauth: false, headers: vec![] };
+        models: vec!["qwen3:4b-instruct-2507-q4_K_M".into()], key: "no-key-required".into(), codex_oauth: false, headers: vec![], extra_keys: vec![] };
     let binding = Binding { connection_id: "claude_code:ollama".into(), provider_id: "ollama".into(),
         model: "qwen3:4b-instruct-2507-q4_K_M".into(), ..Default::default() };
     broker.start(vec![spec], vec![(token.clone(), binding)]).await.expect("broker starts");
@@ -655,7 +655,7 @@ async fn chatgpt_signin_plugin_is_accepted_and_the_token_never_written() {
     let spec = UpstreamSpec {
         provider_id: "chatgpt".into(), engine_type: "openai_responses",
         base_url: "https://chatgpt.com/backend-api/codex".into(), models: vec!["gpt-x".into()],
-        key: ACCESS.into(), codex_oauth: true, headers: vec![],
+        key: ACCESS.into(), codex_oauth: true, headers: vec![], extra_keys: vec![],
     };
     let binding = Binding { connection_id: "claude_code:chatgpt".into(), provider_id: "chatgpt".into(), model: "gpt-x".into(), ..Default::default() };
     broker.start(vec![spec], vec![(tokens::generate(), binding)]).await.expect("engine accepts the codexOauth plugin");
@@ -698,7 +698,7 @@ async fn web_search_server_tool_runs_locally_and_the_client_gets_the_answer() {
     });
     let token = tokens::generate();
     let spec = UpstreamSpec { provider_id: "nvidia_nim".into(), engine_type: "openai_chat_completions",
-        base_url: format!("{}/v1", upstream.uri()), models: vec![MODEL.into()], key: UPSTREAM_KEY.into(), codex_oauth: false, headers: vec![] };
+        base_url: format!("{}/v1", upstream.uri()), models: vec![MODEL.into()], key: UPSTREAM_KEY.into(), codex_oauth: false, headers: vec![], extra_keys: vec![] };
     let binding = Binding { connection_id: "claude_code:nvidia_nim".into(), provider_id: "nvidia_nim".into(), model: MODEL.into(), ..Default::default() };
     broker.start(vec![spec], vec![(token.clone(), binding)]).await.unwrap();
 
@@ -786,7 +786,7 @@ async fn claude_desktop_sees_claude_model_names() {
     let broker = Broker::new(0, dir.path().to_path_buf(), None);
     let token = tokens::generate();
     let spec = UpstreamSpec { provider_id: "nvidia_nim".into(), engine_type: "openai_chat_completions",
-        base_url: format!("{}/v1", upstream.uri()), models: vec![MODEL.into()], key: UPSTREAM_KEY.into(), codex_oauth: false, headers: vec![] };
+        base_url: format!("{}/v1", upstream.uri()), models: vec![MODEL.into()], key: UPSTREAM_KEY.into(), codex_oauth: false, headers: vec![], extra_keys: vec![] };
     let binding = Binding { connection_id: "claude_desktop:nvidia_nim".into(), provider_id: "nvidia_nim".into(), model: MODEL.into(), ..Default::default() };
     broker.start(vec![spec], vec![(token.clone(), binding)]).await.unwrap();
     let v: serde_json::Value = client().get(format!("{}/v1/models", broker.url())).bearer_auth(&token).send().await.unwrap().json().await.unwrap();
@@ -826,4 +826,34 @@ async fn requests_are_logged_with_tokens_and_limits_stop_spending() {
     assert_eq!(r.status(), 402);
     assert!(r.text().await.unwrap().contains("monthly limit"));
     h.broker.stop().await;
+}
+
+#[tokio::test]
+async fn extra_keys_are_used_and_a_rejected_key_is_skipped() {
+    let upstream = MockServer::start().await;
+    Mock::given(method("POST")).and(path("/v1/chat/completions")).and(header("authorization", "Bearer key-good"))
+        .respond_with(ResponseTemplate::new(200).insert_header("content-type", "text/event-stream").set_body_string(text_stream()))
+        .mount(&upstream).await;
+    Mock::given(method("POST")).and(path("/v1/chat/completions")).and(header("authorization", "Bearer key-bad"))
+        .respond_with(ResponseTemplate::new(429).set_body_json(serde_json::json!({"error": {"message": "rate limited"}})))
+        .mount(&upstream).await;
+    let dir = tempfile::tempdir().unwrap();
+    let broker = Broker::new(0, dir.path().to_path_buf(), None);
+    let token = tokens::generate();
+    let spec = UpstreamSpec { provider_id: "nvidia_nim".into(), engine_type: "openai_chat_completions",
+        base_url: format!("{}/v1", upstream.uri()), models: vec![MODEL.into()], key: "key-bad".into(), codex_oauth: false,
+        headers: vec![], extra_keys: vec!["key-good".into()] };
+    let binding = Binding { connection_id: "claude_code:nvidia_nim".into(), provider_id: "nvidia_nim".into(), model: MODEL.into(), ..Default::default() };
+    broker.start(vec![spec], vec![(token.clone(), binding)]).await.unwrap();
+    let mut ok = 0;
+    for _ in 0..4 {
+        let r = client().post(format!("{}/v1/messages", broker.url())).header("x-api-key", &token).json(&messages_body(false, false)).send().await.unwrap();
+        if r.status() == 200 { ok += 1; }
+    }
+    let used: std::collections::BTreeSet<String> = upstream.received_requests().await.unwrap().iter()
+        .filter_map(|r| r.headers.get("authorization").map(|v| v.to_str().unwrap().to_string())).collect();
+    eprintln!("ok={ok} used={used:?}");
+    assert!(used.contains("Bearer key-good"), "the extra key is used");
+    assert!(ok >= 3, "requests succeed despite one key being rate-limited (ok={ok})");
+    broker.stop().await;
 }

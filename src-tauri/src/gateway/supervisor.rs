@@ -167,6 +167,9 @@ pub struct UpstreamSpec {
     /// Extra headers every request to this upstream needs (GitHub Copilot's
     /// endpoint headers and short-lived session token).
     pub headers: Vec<(String, String)>,
+    /// More keys for the same provider; the engine spreads requests across
+    /// all of them and skips one that is rate-limited or rejected.
+    pub extra_keys: Vec<String>,
 }
 
 impl std::fmt::Debug for UpstreamSpec {
@@ -192,14 +195,24 @@ pub fn key_env(provider_id: &str) -> String {
 pub fn render_config(specs: &[UpstreamSpec], settings: &super::RuntimeSettings) -> serde_json::Value {
     let providers: Vec<_> = specs
         .iter()
-        .map(|s| json!({
-            "name": s.provider_id,
-            "type": s.engine_type,
-            "apiKeyEnv": key_env(&s.provider_id),
-            "baseurl": s.base_url,
-            "models": s.models,
-            "extraHeaders": { "default": s.headers.iter().map(|(k, v)| (k.clone(), json!(v))).collect::<serde_json::Map<String, serde_json::Value>>(), "byModel": {} },
-        }))
+        .map(|s| {
+            let mut p = json!({
+                "name": s.provider_id,
+                "type": s.engine_type,
+                "apiKeyEnv": key_env(&s.provider_id),
+                "baseurl": s.base_url,
+                "models": s.models,
+                "extraHeaders": { "default": s.headers.iter().map(|(k, v)| (k.clone(), json!(v))).collect::<serde_json::Map<String, serde_json::Value>>(), "byModel": {} },
+            });
+            if !s.extra_keys.is_empty() {
+                p["credentials"] = json!((0..=s.extra_keys.len()).map(|i| json!({
+                    "id": format!("key{}", i + 1),
+                    "apiKeyEnv": if i == 0 { key_env(&s.provider_id) } else { format!("{}_K{}", key_env(&s.provider_id), i + 1) },
+                    "enabled": true, "priority": 1, "weight": 1,
+                })).collect::<Vec<_>>());
+            }
+            p
+        })
         .collect();
     // Env references only: the file never holds a token.
     let plugins: Vec<_> = specs
@@ -219,6 +232,9 @@ pub fn render_config(specs: &[UpstreamSpec], settings: &super::RuntimeSettings) 
         .collect();
     json!({
         "host": "127.0.0.1",
+        // Spreads requests over a provider's keys and rests a key that was
+        // rate-limited or rejected (only needed when there are several).
+        "scheduling": { "enabled": specs.iter().any(|s| !s.extra_keys.is_empty()) },
         "plugins": plugins,
         "providers": providers,
         "defaultTargetProvider": specs.first().map(|s| s.provider_id.clone()),
@@ -328,6 +344,9 @@ pub fn spawn(rt: &GatewayRuntime, specs: &[UpstreamSpec], settings: &super::Runt
         .env("UPSTREAM_TIMEOUT_MS", "0");
     for s in specs {
         cmd.env(key_env(&s.provider_id), &s.key);
+        for (i, k) in s.extra_keys.iter().enumerate() {
+            cmd.env(format!("{}_K{}", key_env(&s.provider_id), i + 2), k);
+        }
     }
     cmd.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped()).kill_on_drop(true);
     let mut child = cmd.spawn().map_err(|e| format!("Could not start the gateway engine: {e}"))?;
@@ -445,7 +464,7 @@ mod tests {
             engine_type: "openai_chat_completions",
             base_url: "https://integrate.api.nvidia.com/v1".into(),
             models: vec!["meta/llama-3.3-70b-instruct".into()],
-            key: "nvapi-supersecretvalue".into(), codex_oauth: false, headers: vec![] };
+            key: "nvapi-supersecretvalue".into(), codex_oauth: false, headers: vec![], extra_keys: vec![] };
         let cfg = render_config(std::slice::from_ref(&spec), &crate::gateway::RuntimeSettings::default());
         let text = cfg.to_string();
         assert!(!text.contains("supersecret"));

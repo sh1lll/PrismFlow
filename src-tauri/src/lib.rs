@@ -1,3 +1,4 @@
+pub mod accounts;
 pub mod adapters;
 pub mod bots;
 pub mod cli;
@@ -55,6 +56,56 @@ async fn usage_view(svc: State<'_, Arc<Service>>, since: String, limit: usize) -
 #[tauri::command]
 async fn try_chat(svc: State<'_, Arc<Service>>, provider_id: String, model: String, messages: Vec<serde_json::Value>) -> Cmd<String> {
     svc.try_chat(&provider_id, &model, messages).await
+}
+
+#[tauri::command]
+async fn keys_add(svc: State<'_, Arc<Service>>, provider_id: String, secret: String) -> Cmd<usize> {
+    let s = svc.inner().clone();
+    let n = blocking(move || s.add_key(&provider_id, &secret)).await??;
+    svc.sync_gateway().await.ok();
+    Ok(n)
+}
+
+#[tauri::command]
+async fn keys_remove_extra(svc: State<'_, Arc<Service>>, provider_id: String) -> Cmd<()> {
+    let s = svc.inner().clone();
+    blocking(move || s.remove_extra_keys(&provider_id)).await??;
+    svc.sync_gateway().await.ok();
+    Ok(())
+}
+
+#[tauri::command]
+async fn keys_scan(svc: State<'_, Arc<Service>>) -> Cmd<Vec<accounts::Found>> {
+    let s = svc.inner().clone();
+    blocking(move || s.scan_keys()).await
+}
+
+#[tauri::command]
+async fn keys_import(svc: State<'_, Arc<Service>>, chosen: Vec<(String, String, String)>) -> Cmd<usize> {
+    let s = svc.inner().clone();
+    let n = blocking(move || s.import_keys(&chosen)).await??;
+    svc.sync_gateway().await.ok();
+    Ok(n)
+}
+
+#[tauri::command]
+fn profiles_get(svc: State<'_, Arc<Service>>) -> accounts::Profiles {
+    svc.profiles()
+}
+
+#[tauri::command]
+fn profile_save(svc: State<'_, Arc<Service>>, name: String) -> Cmd<accounts::Profiles> {
+    svc.save_profile(&name)
+}
+
+#[tauri::command]
+fn profile_delete(svc: State<'_, Arc<Service>>, name: String) -> Cmd<accounts::Profiles> {
+    svc.delete_profile(&name)
+}
+
+#[tauri::command]
+async fn profile_switch(svc: State<'_, Arc<Service>>, name: String) -> Cmd<accounts::Profiles> {
+    svc.switch_profile(&name).await
 }
 
 #[tauri::command]
@@ -635,6 +686,14 @@ pub fn run() {
         .manage(BotState { bots: bots::Bots::default(), dir: dir.clone() })
         .invoke_handler(tauri::generate_handler![
             keychain_waiting,
+            keys_add,
+            keys_remove_extra,
+            keys_scan,
+            keys_import,
+            profiles_get,
+            profile_save,
+            profile_delete,
+            profile_switch,
             try_chat,
             usage_view,
             autostart_get,

@@ -24,6 +24,8 @@ pub struct ProviderView {
     #[serde(flatten)]
     pub def: ProviderDefinition,
     pub has_credential: bool,
+    /// Keys saved for this provider (main + extras).
+    pub key_count: usize,
     /// Codex can talk to this provider without the gateway.
     pub codex_direct: bool,
     /// How each app would reach this provider, or None when it cannot.
@@ -241,12 +243,22 @@ impl Service {
     pub fn providers(&self) -> Vec<ProviderView> {
         providers::registry()
             .into_iter()
-            .map(|def| ProviderView {
-                def: def.clone(),
-                has_credential: if def.credential_source == providers::CredentialSource::Keychain {
+            .map(|def| {
+                let has_credential = if def.credential_source == providers::CredentialSource::Keychain {
                     self.key(def.id).is_some()
                 } else {
                     self.has_signin_consent(def.id) && self.signin_available(def)
+                };
+                (def, has_credential)
+            })
+            .map(|(def, has_credential)| ProviderView {
+                def: def.clone(),
+                has_credential,
+                // Extra keys only matter once there is a main one.
+                key_count: if has_credential && def.credential_source == providers::CredentialSource::Keychain {
+                    1 + self.extra_keys(def.id).len()
+                } else {
+                    usize::from(has_credential)
                 },
                 signin_available: def.credential_source != providers::CredentialSource::Keychain && self.signin_available(def),
                 key_optional: !def.requires_key,
@@ -958,6 +970,7 @@ impl Service {
                         key: ep.api_key,
                         codex_oauth: false,
                         headers: ep.headers,
+                        extra_keys: Vec::new(),
                     }),
                     Err(e) => self.diag.record(Level::Warn, "gateway.copilot", &format!("GitHub Copilot isn't available: {e}")),
                 }
@@ -971,6 +984,7 @@ impl Service {
                 key,
                 codex_oauth: p.credential_source == providers::CredentialSource::CodexLogin,
                 headers: Vec::new(),
+                extra_keys: self.extra_keys(p.id),
             });
         }
         self.broker.start(specs, bindings).await.map_err(|e| e.to_string())
@@ -1388,6 +1402,41 @@ mod tests {
 
     const CODEX: &str = codex::APP_ID;
     const CLAUDE: &str = claude_code::APP_ID;
+
+    #[tokio::test]
+    async fn keys_import_extra_keys_and_profiles() {
+        let dir = tempfile::tempdir().unwrap();
+        let s = service(dir.path());
+        let fx = dir.path().join("import");
+        std::fs::create_dir_all(&fx).unwrap();
+        std::fs::write(fx.join("shell.env"), "OPENROUTER_API_KEY=sk-or-v1-aaaaaaaaaaaa\nHOME=/x\n").unwrap();
+        std::fs::write(fx.join("other.env"), "OPENROUTER_API_KEY=sk-or-v1-bbbbbbbbbbbb\nGROQ_API_KEY=gsk_cccccccccccc\n").unwrap();
+        std::env::set_var("PRISMFLOW_IMPORT_TEST_DIR", &fx);
+        let found = s.scan_keys();
+        assert_eq!(found.len(), 3, "{found:?}");
+        assert!(found.iter().all(|f| !f.masked.contains("aaaaaaaa")), "masked only");
+        let chosen: Vec<_> = found.iter().map(|f| (f.provider_id.clone(), f.variable.clone(), f.source.clone())).collect();
+        assert_eq!(s.import_keys(&chosen).unwrap(), 3);
+        // Two OpenRouter keys: main + one extra; nothing imported twice.
+        assert_eq!(s.key_count("openrouter"), 2);
+        assert_eq!(s.extra_keys("openrouter"), vec!["sk-or-v1-bbbbbbbbbbbb".to_string()]);
+        assert!(s.scan_keys().iter().all(|f| f.already_saved));
+        std::env::remove_var("PRISMFLOW_IMPORT_TEST_DIR");
+        s.remove_extra_keys("openrouter").unwrap();
+        assert_eq!(s.key_count("openrouter"), 1);
+
+        // Profiles: save, change, switch back.
+        s.connect(CODEX, "openrouter", "a/b").await.unwrap();
+        s.save_profile("Work").unwrap();
+        s.disconnect("codex_cli:openrouter").await.unwrap();
+        s.connect(CODEX, "openrouter", "c/d").await.unwrap();
+        s.save_profile("Personal").unwrap();
+        s.switch_profile("Work").await.unwrap();
+        let conns = s.connections().unwrap();
+        assert_eq!(conns.len(), 1);
+        assert_eq!(conns[0].model, "a/b");
+        assert_eq!(s.profiles().active.as_deref(), Some("Work"));
+    }
 
     /// Live: "Try a model" through the real gateway to the local Ollama, which
     /// also creates the 32k-context variant. PRISMFLOW_LIVE_TRY=1 cargo test try_chat_live -- --ignored
