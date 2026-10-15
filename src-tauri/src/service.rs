@@ -1,7 +1,7 @@
 //! Application service: the operations the UI invokes, independent of Tauri
 //! so they are testable with an in-memory credential store and temp dirs.
 
-use crate::adapters::{self, agents, claude_code, claude_desktop, codex, AppDetection};
+use crate::adapters::{self, agents, claude_code, claude_desktop, codex, jetbrains, AppDetection};
 use crate::config_engine;
 use crate::credentials::{account_key, CredentialError, CredentialStore};
 use crate::diagnostics::{now_secs, DiagnosticsLog, Event, Level};
@@ -85,7 +85,7 @@ type R<T> = Result<T, String>;
 
 /// Every application PrismFlow can connect.
 fn app_ids() -> Vec<&'static str> {
-    let mut v = vec![codex::APP_ID, codex::DESKTOP_APP_ID, claude_code::APP_ID, claude_desktop::APP_ID];
+    let mut v = vec![codex::APP_ID, codex::DESKTOP_APP_ID, claude_code::APP_ID, claude_desktop::APP_ID, jetbrains::APP_ID];
     v.extend(agents::AGENTS.iter().map(|a| a.id));
     v
 }
@@ -114,6 +114,7 @@ pub fn route_for(app_id: &str, p: &ProviderDefinition) -> Option<Route> {
         codex::DESKTOP_APP_ID => Some(Route::Gateway),
         claude_code::APP_ID => Some(Route::Gateway),
         claude_desktop::APP_ID => Some(Route::Gateway),
+        jetbrains::APP_ID => Some(Route::Gateway),
         a if agents::spec(a).is_some() && agents::SUPPORTED_HERE => Some(Route::Gateway),
         _ => None,
     }
@@ -131,6 +132,7 @@ pub fn app_name(app_id: &str) -> &'static str {
         claude_code::APP_ID => "Claude Code",
         codex::DESKTOP_APP_ID => "Codex Desktop",
         claude_desktop::APP_ID => "Claude Desktop",
+        jetbrains::APP_ID => "JetBrains IDEs",
         _ => "Codex",
     }
 }
@@ -477,7 +479,7 @@ impl Service {
         let p = provider(provider_id)?;
         let model = validate_model_id(model)?;
         let route = route_for(app_id, p).ok_or_else(|| match app_id {
-            a if a == codex::APP_ID || a == codex::DESKTOP_APP_ID || a == claude_code::APP_ID || a == claude_desktop::APP_ID || agents::spec(a).is_some() => format!(
+            a if a == codex::APP_ID || a == codex::DESKTOP_APP_ID || a == claude_code::APP_ID || a == claude_desktop::APP_ID || a == jetbrains::APP_ID || agents::spec(a).is_some() => format!(
                 "{} needs a base URL; custom providers are not supported in this build.", p.display_name
             ),
             other => format!("Unknown application '{other}'."),
@@ -487,6 +489,16 @@ impl Service {
         if app_id == claude_desktop::APP_ID {
             let steps = claude_desktop::guided_setup(&self.broker.url_for_config(), "(shown after you connect)".into(), model).steps;
             return Ok((p, route, config_engine::EditPlan { file: PathBuf::new(), before: String::new(), after: String::new(), summary: steps }));
+        }
+        if app_id == jetbrains::APP_ID {
+            let jp = self.jetbrains_plan(p, model, &id, &url)?;
+            let summary = vec![
+                format!("Add Claude Code and Codex agents to {}", jp.file.display()),
+                "Your other agents in that file stay as they are".into(),
+                "Your own ~/.claude and ~/.codex settings aren't used or changed".into(),
+                "The key is fetched from PrismFlow when an agent runs; it isn't stored in the file".into(),
+            ];
+            return Ok((p, route, config_engine::EditPlan { file: jp.file, before: jp.before, after: jp.after, summary }));
         }
         if let Some(spec) = agents::spec(app_id) {
             let files = self.agent_files(spec, p, model)?;
@@ -517,6 +529,17 @@ impl Service {
         Ok((p, route, plan))
     }
 
+    fn jetbrains_plan(&self, p: &'static ProviderDefinition, model: &str, id: &str, url: &str) -> R<jetbrains::Plan> {
+        let dir = agents::agent_dir(self.state.dir(), id);
+        let routing = self.state.get(id).ok().flatten().map(|r| r.routing).unwrap_or_default();
+        let claude = claude_code::plan_connect(&dir.join("claude"), p, model, &self.helper, id, url, &routing).map_err(|e| e.to_string())?.after;
+        let args = vec!["token".to_string(), "print".into(), "--connection".into(), id.to_string()];
+        let codex = codex::plan_connect_base(&dir.join("codex"), p, model, &format!("{url}/v1"), &self.helper, args, None).map_err(|e| e.to_string())?.after;
+        let cl = jetbrains::launch(jetbrains::CLAUDE_PKG, jetbrains::CLAUDE_VERSION, "PRISMFLOW_ACP_CLAUDE_JS")?;
+        let cx = jetbrains::launch(jetbrains::CODEX_PKG, jetbrains::CODEX_VERSION, "PRISMFLOW_ACP_CODEX_JS")?;
+        jetbrains::plan(&dir, p.display_name, id, url, claude, codex, cl, cx)
+    }
+
     fn agent_files(&self, spec: &agents::AgentSpec, p: &ProviderDefinition, model: &str) -> R<Vec<(PathBuf, String)>> {
         let bin = agents::find_binary(spec).ok_or_else(|| format!("{} is not installed.", spec.display_name))?;
         let id = connection_id(spec.id, p.id);
@@ -526,7 +549,7 @@ impl Service {
     fn profile_for(&self, app_id: &str, provider_id: &str) -> String {
         if agents::spec(app_id).is_some() {
             connection_id(app_id, provider_id).replace(':', "-")
-        } else if app_id == codex::DESKTOP_APP_ID || app_id == claude_desktop::APP_ID {
+        } else if app_id == codex::DESKTOP_APP_ID || app_id == claude_desktop::APP_ID || app_id == jetbrains::APP_ID {
             String::new() // desktop apps have no PrismFlow profile
         } else if app_id == claude_code::APP_ID {
             claude_code::profile_name(provider_id)
@@ -541,6 +564,9 @@ impl Service {
         }
         if app_id == codex::DESKTOP_APP_ID {
             return format!("open -b {}", codex::DESKTOP_BUNDLE_ID);
+        }
+        if app_id == jetbrains::APP_ID {
+            return String::new();
         }
         if agents::spec(app_id).is_some() {
             return quote(&file.display().to_string());
@@ -576,6 +602,9 @@ impl Service {
         if app_id == claude_desktop::APP_ID {
             warnings.push("After connecting, PrismFlow shows what to enter in Claude Desktop.".into());
             warnings.push("While it's set up this way, Claude Desktop won't use your Claude account. You can switch back any time.".into());
+        } else if app_id == jetbrains::APP_ID {
+            warnings.push("In your JetBrains IDE, open AI Assistant and pick the PrismFlow agent.".into());
+            warnings.push("Your other agents and your own Claude Code and Codex settings stay as they are.".into());
         } else if app_id == codex::DESKTOP_APP_ID {
             if let Some(cur) = codex::read_base_priors(&self.codex_home).unwrap_or_default().get("model_provider").cloned().flatten() {
                 if !cur.starts_with("prismflow_") {
@@ -638,6 +667,10 @@ impl Service {
         }
         if let Some(spec) = agents::spec(app_id) {
             agents::write(&self.agent_files(spec, p, validate_model_id(model)?)?).map_err(|e| format!("Nothing usable was written: {e}"))?;
+        }
+        if app_id == jetbrains::APP_ID {
+            let jp = self.jetbrains_plan(p, validate_model_id(model)?, &id, &self.broker.url_for_config())?;
+            agents::write(&jp.owned).map_err(|e| format!("Nothing usable was written: {e}"))?;
         }
         let applied = if agents::spec(app_id).is_some() || app_id == claude_desktop::APP_ID {
             config_engine::AppliedEdit { file: plan.file.clone(), backup_path: None }
@@ -851,6 +884,11 @@ impl Service {
                 })
         } else if agents::spec(&record.app_id).is_some() {
             agents::remove(&agents::agent_dir(self.state.dir(), &record.id))
+        } else if record.app_id == jetbrains::APP_ID {
+            jetbrains::disconnect(&record.id).map(|()| {
+                let _ = std::fs::remove_dir_all(agents::agent_dir(self.state.dir(), &record.id));
+                None
+            })
         } else if record.app_id == claude_code::APP_ID {
             claude_code::disconnect(&record.managed_file, &self.state.backups_dir()).map_err(|e| e.to_string())
         } else {
@@ -884,7 +922,7 @@ impl Service {
     pub fn running_sessions(&self, id: &str) -> R<Vec<u32>> {
         let record = self.state.get(id).map_err(|e| e.to_string())?.ok_or("Unknown connection.")?;
         let procs = adapters::processes::list();
-        Ok(if record.app_id == claude_desktop::APP_ID || record.app_id == codex::DESKTOP_APP_ID {
+        Ok(if record.app_id == claude_desktop::APP_ID || record.app_id == codex::DESKTOP_APP_ID || record.app_id == jetbrains::APP_ID {
             Vec::new() // desktop apps: restart is shown in the UI instead
         } else if agents::spec(&record.app_id).is_some() {
             let dir = agents::agent_dir(self.state.dir(), &record.id).display().to_string();
@@ -1043,6 +1081,9 @@ impl Service {
             open_app(claude_desktop::BUNDLE_ID)?;
             self.diag.record(Level::Info, "launch", "Opened Claude Desktop.");
             return Ok(());
+        }
+        if record.app_id == jetbrains::APP_ID {
+            return Err("Open your JetBrains IDE. The PrismFlow agents are in AI Assistant's agent list.".into());
         }
         if record.app_id == codex::DESKTOP_APP_ID {
             open_app(codex::DESKTOP_BUNDLE_ID)?;

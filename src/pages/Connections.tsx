@@ -166,7 +166,7 @@ function NewConnection({ providers, onDone }: { providers: Provider[]; onDone: (
           {preview.warnings.map((w, i) => <div key={i} className="small mt-s">• {w}</div>)}
           <details className="mt">
             <summary className="small">Details</summary>
-            <div className="small muted">How to start it: <code className="selectable">{preview.launch_command}</code></div>
+            {preview.launch_command && <div className="small muted">How to start it: <code className="selectable">{preview.launch_command}</code></div>}
             {preview.file && <div className="small muted">File: <code className="selectable">{preview.file}</code></div>}
             <ul className="small muted">{preview.summary.map((s, i) => <li key={i}>{s}</li>)}</ul>
             {preview.after && <pre>{preview.after}</pre>}
@@ -220,7 +220,7 @@ function ConnectionCard({ c, providers, onChange }: { c: Connection; providers: 
         <button className="primary" disabled={busy !== ""} onClick={() => run("verify", () => api.verify(c.id))}>
           {busy === "verify" ? "Testing… (can take a few minutes)" : "Test"}
         </button>
-        <button className="ghost" disabled={busy !== ""} onClick={() => run("launch", () => api.launch(c.id), `Opened ${app}.`)}>{desktop ? "Open app" : "Open in Terminal"}</button>
+        {c.app_id !== "jetbrains" && <button className="ghost" disabled={busy !== ""} onClick={() => run("launch", () => api.launch(c.id), `Opened ${app}.`)}>{desktop ? "Open app" : "Open in Terminal"}</button>}
         <button className="danger" disabled={busy !== ""}
           onClick={() => { if (confirm(`Disconnect ${app}? PrismFlow removes only its own settings.`)) run("disconnect", () => api.disconnect(c.id)); }}>
           Disconnect

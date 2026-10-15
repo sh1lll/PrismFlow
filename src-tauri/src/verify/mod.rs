@@ -257,6 +257,8 @@ async fn run_stages(
     let is_claude = record.app_id == claude_code::APP_ID;
     let stage1 = if record.app_id == crate::adapters::claude_desktop::APP_ID {
         Ok("Gateway connection created. Claude Desktop's own settings hold the address and token you entered; PrismFlow does not read them.".to_string())
+    } else if record.app_id == crate::adapters::jetbrains::APP_ID {
+        check_jetbrains_config(&record.id)
     } else if let Some(a) = agent {
         check_agent_config(a, &record.managed_file)
     } else if record.app_id == codex::DESKTOP_APP_ID {
@@ -362,6 +364,9 @@ async fn run_stages(
     }
     if let Some(a) = agent {
         return terminal_agent_stages(env, a, provider, record, run, &secrets).await;
+    }
+    if record.app_id == crate::adapters::jetbrains::APP_ID {
+        return jetbrains_stages(env, provider, record, run, &secrets).await;
     }
 
     // Stage 5 — end-to-end request through Codex itself.
@@ -651,6 +656,84 @@ async fn terminal_agent_stages(
             ConnectionStatus::PartiallyCompatible
         }
     }
+}
+
+fn check_jetbrains_config(id: &str) -> Result<String, String> {
+    use crate::adapters::jetbrains;
+    for prefix in ["Claude Code (PrismFlow", "Codex (PrismFlow"] {
+        let (cmd, _, env) = jetbrains::entry(id, prefix)
+            .ok_or_else(|| format!("{} no longer has PrismFlow's agents.", jetbrains::acp_file().display()))?;
+        if !Path::new(&cmd).is_file() {
+            return Err(format!("{cmd} is missing. Install Node.js 22 or newer, then connect again."));
+        }
+        for dir in ["CLAUDE_CONFIG_DIR", "CODEX_HOME"].iter().filter_map(|k| env.get(*k)) {
+            if !Path::new(dir).is_dir() {
+                return Err(format!("{dir} is missing. Connect again."));
+            }
+        }
+    }
+    Ok("acp.json has PrismFlow's agents.".into())
+}
+
+/// Stages 5–7 for JetBrains: talk to the agents exactly as written in
+/// acp.json, the way the IDE does (ACP over stdio).
+async fn jetbrains_stages(env: &VerifyEnv<'_>, provider: &ProviderDefinition, record: &ConnectionRecord, run: &mut Run, secrets: &[&str]) -> ConnectionStatus {
+    use crate::adapters::{acp, jetbrains};
+    let work = env.workdir.join(record.id.replace(':', "-"));
+    if let Err(e) = std::fs::create_dir_all(&work) {
+        run.push(5, "End-to-end", StageOutcome::Fail, e.to_string());
+        return ConnectionStatus::RequiresAttention;
+    }
+    let Some((cmd, args, vars)) = jetbrains::entry(&record.id, "Claude Code (PrismFlow") else {
+        run.push(5, "End-to-end", StageOutcome::Fail, "acp.json no longer has PrismFlow's agents. Connect again.");
+        return ConnectionStatus::ConfigurationInvalid;
+    };
+    let prompt = format!("Reply with exactly {E2E_TOKEN} and nothing else.");
+    match acp::prompt(&cmd, &args, &vars, &work, &prompt, env.agent_timeout).await {
+        Ok(r) if r.text.contains(E2E_TOKEN) => run.push(5, "End-to-end", StageOutcome::Pass, "The Claude Code agent answered."),
+        Ok(r) => {
+            let shown = redact_known(&tail(&r.text, 6), secrets);
+            let hint = remediation(&r.text, provider).unwrap_or_else(|| "The Claude Code agent didn't answer as expected.".into());
+            run.push(5, "End-to-end", StageOutcome::Fail, format!("{hint}\n\n{shown}"));
+            return classify_agent_failure(&shown);
+        }
+        Err(e) => {
+            let shown = redact_known(&e, secrets);
+            run.push(5, "End-to-end", StageOutcome::Fail, shown.clone());
+            return classify_agent_failure(&shown);
+        }
+    }
+    let nonce = format!("PF{}", uuid::Uuid::new_v4().simple());
+    let probe = work.join("prismflow_probe.txt");
+    let _ = std::fs::write(&probe, format!("{nonce}\n"));
+    let prompt = "Use your file-reading tool to read the file prismflow_probe.txt in the current directory, then reply with its exact contents and nothing else.";
+    let tools = acp::prompt(&cmd, &args, &vars, &work, prompt, env.agent_timeout).await;
+    let _ = std::fs::remove_file(&probe);
+    let status = match tools {
+        Ok(r) if r.text.contains(&nonce) => {
+            run.push(6, "Tool calling", StageOutcome::Pass, "The model can use tools.");
+            ConnectionStatus::ConnectedAndVerified
+        }
+        Ok(_) => {
+            run.push(6, "Tool calling", StageOutcome::Fail,
+                "The model can chat but couldn't use tools, so coding tasks may not work. Try a different model.");
+            ConnectionStatus::PartiallyCompatible
+        }
+        Err(e) => {
+            run.push(6, "Tool calling", StageOutcome::Fail, redact_known(&e, secrets));
+            ConnectionStatus::PartiallyCompatible
+        }
+    };
+    // The Codex agent shares the connection; check that it answers too.
+    if let Some((cmd, args, vars)) = jetbrains::entry(&record.id, "Codex (PrismFlow") {
+        let prompt = format!("Reply with exactly {E2E_TOKEN} and nothing else.");
+        match acp::prompt(&cmd, &args, &vars, &work, &prompt, env.agent_timeout).await {
+            Ok(r) if r.text.contains(E2E_TOKEN) => run.push(7, "Codex agent", StageOutcome::Pass, "The Codex agent answered."),
+            Ok(r) => run.push(7, "Codex agent", StageOutcome::Warn, format!("The Codex agent didn't answer as expected.\n\n{}", redact_known(&tail(&r.text, 6), secrets))),
+            Err(e) => run.push(7, "Codex agent", StageOutcome::Warn, format!("The Codex agent didn't start.\n\n{}", redact_known(&e, secrets))),
+        }
+    }
+    status
 }
 
 fn check_config(file: &Path, codex_bin: Option<&Path>) -> Result<String, String> {
