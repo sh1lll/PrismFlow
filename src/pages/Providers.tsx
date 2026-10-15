@@ -10,6 +10,12 @@ const STYLE: Record<Protocol, string> = {
 
 type Msg = { tone: string; text: string } | null;
 
+/** Providers whose address includes something of yours (a resource name, an account ID). */
+const PRESETS: Record<string, { name: string; field: string; hint: string; url: (v: string) => string }> = {
+  azure: { name: "Azure OpenAI", field: "Resource name", hint: "The name before .openai.azure.com", url: (v) => `https://${v}.openai.azure.com/openai/v1` },
+  cloudflare: { name: "Cloudflare Workers AI", field: "Account ID", hint: "Shown on your Cloudflare dashboard", url: (v) => `https://api.cloudflare.com/client/v4/accounts/${v}/ai/v1` },
+};
+
 function KeyEditor({ p, onChange, setMsg }: { p: Provider; onChange: () => void; setMsg: (m: Msg) => void }) {
   const [editing, setEditing] = useState(false);
   const [secret, setSecret] = useState("");
@@ -138,8 +144,23 @@ function AddCustom({ onDone }: { onDone: () => void }) {
   const [consent, setConsent] = useState(false);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [preset, setPreset] = useState("");
+  const [presetValue, setPresetValue] = useState("");
 
   useEffect(() => { setCheck(null); setConsent(false); }, [url]);
+  function choosePreset(id: string) {
+    setPreset(id);
+    setPresetValue("");
+    setUrl("");
+    setName(id ? PRESETS[id].name : "");
+    setProtocol("OpenAiChat");
+    setNeedsKey(true);
+  }
+  function setPresetField(v: string) {
+    const clean = v.trim().replace(/[^A-Za-z0-9-]/g, "");
+    setPresetValue(clean);
+    setUrl(clean ? PRESETS[preset].url(clean) : "");
+  }
 
   async function runCheck() {
     setBusy(true);
@@ -154,7 +175,7 @@ function AddCustom({ onDone }: { onDone: () => void }) {
     setError("");
     try {
       await api.addCustomProvider(name, url, protocol, needsKey, consent);
-      setName(""); setUrl(""); setCheck(null); setConsent(false); setNeedsKey(true); setProtocol("OpenAiChat");
+      setName(""); setUrl(""); setCheck(null); setConsent(false); setNeedsKey(true); setProtocol("OpenAiChat"); setPreset(""); setPresetValue("");
       onDone();
     } catch (e) { setError(errText(e)); }
     finally { setBusy(false); }
@@ -164,18 +185,36 @@ function AddCustom({ onDone }: { onDone: () => void }) {
     <div className="card">
       <div className="section-title">Add your own</div>
       <div className="small muted">For a server that isn't listed, like one at work or on this computer.</div>
+      <label className="small muted mt-block">Kind</label>
+      <select value={preset} onChange={(e) => choosePreset(e.target.value)}>
+        <option value="">Any server</option>
+        {Object.entries(PRESETS).map(([id, p]) => <option key={id} value={id}>{p.name}</option>)}
+      </select>
+      {preset && (
+        <>
+          <label className="small muted mt-block">{PRESETS[preset].field}</label>
+          <div className="row">
+            <input value={presetValue} onChange={(e) => setPresetField(e.target.value)} placeholder={PRESETS[preset].hint} />
+            <button className="ghost" disabled={!url || busy} onClick={runCheck}>Check</button>
+          </div>
+        </>
+      )}
       <label className="small muted mt-block">Name</label>
       <input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Work server" />
-      <label className="small muted mt-block">Address</label>
-      <div className="row">
-        <input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://ai.example.com/v1" />
-        <button className="ghost" disabled={!url.trim() || busy} onClick={runCheck}>Check</button>
-      </div>
-      <label className="small muted mt-block">Type</label>
-      <select value={protocol} onChange={(e) => setProtocol(e.target.value as Protocol)}>
-        {(Object.keys(STYLE) as Protocol[]).map((p) => <option key={p} value={p}>{STYLE[p]}</option>)}
-      </select>
-      <label className="small mt-block"><input type="checkbox" className="check" checked={needsKey} onChange={(e) => setNeedsKey(e.target.checked)} /> Needs a key</label>
+      {!preset && (
+        <>
+          <label className="small muted mt-block">Address</label>
+          <div className="row">
+            <input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://ai.example.com/v1" />
+            <button className="ghost" disabled={!url.trim() || busy} onClick={runCheck}>Check</button>
+          </div>
+          <label className="small muted mt-block">Type</label>
+          <select value={protocol} onChange={(e) => setProtocol(e.target.value as Protocol)}>
+            {(Object.keys(STYLE) as Protocol[]).map((p) => <option key={p} value={p}>{STYLE[p]}</option>)}
+          </select>
+          <label className="small mt-block"><input type="checkbox" className="check" checked={needsKey} onChange={(e) => setNeedsKey(e.target.checked)} /> Needs a key</label>
+        </>
+      )}
       {check && (
         <div className="mt">
           {check.warnings.map((w, i) => <div key={i} className="warn small">{w}</div>)}

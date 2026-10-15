@@ -293,7 +293,7 @@ impl Service {
 
     pub async fn discover_models(&self, provider_id: &str) -> R<Vec<ModelInfo>> {
         let p = provider(provider_id)?;
-        let path = p.model_list_path.ok_or("This provider has no model list; enter a model ID manually.")?;
+        let path = p.model_list_path.ok_or("This provider doesn't list its models. Type the model name.")?;
         if p.base_url.is_empty() {
             return Err("Custom providers are not supported in this build.".into());
         }

@@ -364,6 +364,327 @@
       "verified_at": "2026-10-14"
     },
     {
+      "id": "gemini",
+      "display_name": "Google Gemini",
+      "base_url": "https://generativelanguage.googleapis.com/v1beta/openai",
+      "protocols": [
+        "OpenAiChat"
+      ],
+      "model_list_path": "/models",
+      "auth_check_path": "/models",
+      "docs_url": "https://ai.google.dev/gemini-api/docs/openai",
+      "keys_url": "https://aistudio.google.com/apikey",
+      "verified_at": "2026-10-15",
+      "_evidence": "probed 2026-10-15: live, rejects an invalid key (400 \"Please pass a valid API key\")"
+    },
+    {
+      "id": "bedrock",
+      "display_name": "Amazon Bedrock",
+      "base_url": "https://bedrock-mantle.us-east-1.api.aws/v1",
+      "protocols": [
+        "OpenAiChat"
+      ],
+      "model_list_path": "/models",
+      "auth_check_path": "/models",
+      "docs_url": "https://docs.aws.amazon.com/bedrock/",
+      "verified_at": "2026-10-15",
+      "_evidence": "probed 2026-10-15: live, rejects an invalid key; key = Bedrock API key (AWS_BEARER_TOKEN_BEDROCK); us-east-1"
+    },
+    {
+      "id": "alibaba_cloud",
+      "display_name": "Alibaba Cloud (Qwen)",
+      "base_url": "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
+      "protocols": [
+        "OpenAiChat"
+      ],
+      "model_list_path": "/models",
+      "auth_check_path": "/models",
+      "docs_url": "https://www.alibabacloud.com/help/en/model-studio/",
+      "verified_at": "2026-10-15",
+      "_evidence": "probed 2026-10-15: live, rejects an invalid key"
+    },
+    {
+      "id": "qwencloud_coding",
+      "display_name": "Qwen Coding Plan",
+      "base_url": "https://coding-intl.dashscope.aliyuncs.com/v1",
+      "protocols": [
+        "OpenAiChat"
+      ],
+      "model_list_path": "/models",
+      "verified_at": "2026-10-15",
+      "_evidence": "probed 2026-10-15: public model list answers; chat rejects an invalid key"
+    },
+    {
+      "id": "kimi_code",
+      "display_name": "Kimi Code",
+      "base_url": "https://api.kimi.com/coding/v1",
+      "protocols": [
+        "OpenAiChat"
+      ],
+      "model_list_path": "/models",
+      "auth_check_path": "/models",
+      "docs_url": "https://www.kimi.com/coding",
+      "verified_at": "2026-10-15",
+      "_evidence": "probed 2026-10-15: live, rejects an invalid key"
+    },
+    {
+      "id": "zai_coding",
+      "display_name": "Z.ai Coding Plan",
+      "base_url": "https://api.z.ai/api/coding/paas/v4",
+      "protocols": [
+        "OpenAiChat"
+      ],
+      "model_list_path": "/models",
+      "auth_check_path": "/models",
+      "docs_url": "https://docs.z.ai/devpack/overview",
+      "verified_at": "2026-10-15",
+      "_evidence": "probed 2026-10-15: live, rejects an invalid key"
+    },
+    {
+      "id": "mistral_codestral",
+      "display_name": "Mistral Codestral",
+      "base_url": "https://codestral.mistral.ai/v1",
+      "protocols": [
+        "OpenAiChat"
+      ],
+      "docs_url": "https://docs.mistral.ai/capabilities/code_generation/",
+      "keys_url": "https://console.mistral.ai/codestral",
+      "verified_at": "2026-10-15",
+      "_evidence": "probed 2026-10-15: chat rejects an invalid key; no model list (enter the model, e.g. codestral-latest)"
+    },
+    {
+      "id": "opencode_zen",
+      "display_name": "OpenCode Zen",
+      "base_url": "https://opencode.ai/zen/v1",
+      "protocols": [
+        "OpenAiChat"
+      ],
+      "model_list_path": "/models",
+      "auth_check_path": "/models",
+      "docs_url": "https://opencode.ai/docs/zen/",
+      "verified_at": "2026-10-15",
+      "_evidence": "probed 2026-10-15: live, rejects an invalid key"
+    },
+    {
+      "id": "opencode_go",
+      "display_name": "OpenCode Go",
+      "base_url": "https://opencode.ai/zen/go/v1",
+      "protocols": [
+        "OpenAiChat"
+      ],
+      "model_list_path": "/models",
+      "auth_check_path": "/models",
+      "docs_url": "https://opencode.ai/docs/zen/",
+      "verified_at": "2026-10-15",
+      "_evidence": "probed 2026-10-15: live, rejects an invalid key"
+    },
+    {
+      "id": "cline_pass",
+      "display_name": "ClinePass",
+      "base_url": "https://api.cline.bot/api/v1",
+      "protocols": [
+        "OpenAiChat"
+      ],
+      "model_list_path": "/models",
+      "docs_url": "https://cline.bot",
+      "verified_at": "2026-10-15",
+      "_evidence": "probed 2026-10-15: public model list answers; chat rejects an invalid key"
+    },
+    {
+      "id": "kilo",
+      "display_name": "Kilo",
+      "base_url": "https://api.kilo.ai/api/gateway",
+      "protocols": [
+        "OpenAiChat"
+      ],
+      "model_list_path": "/models",
+      "docs_url": "https://kilo.ai",
+      "verified_at": "2026-10-15",
+      "_evidence": "probed 2026-10-15: public model list answers; chat rejects an invalid key"
+    },
+    {
+      "id": "nebius",
+      "display_name": "Nebius Token Factory",
+      "base_url": "https://api.tokenfactory.nebius.com/v1",
+      "protocols": [
+        "OpenAiChat"
+      ],
+      "model_list_path": "/models",
+      "auth_check_path": "/models",
+      "docs_url": "https://tokenfactory.nebius.com",
+      "verified_at": "2026-10-15",
+      "_evidence": "probed 2026-10-15: live, rejects an invalid key"
+    },
+    {
+      "id": "wandb",
+      "display_name": "W&B Inference",
+      "base_url": "https://api.inference.wandb.ai/v1",
+      "protocols": [
+        "OpenAiChat"
+      ],
+      "model_list_path": "/models",
+      "auth_check_path": "/models",
+      "docs_url": "https://docs.wandb.ai/inference/",
+      "keys_url": "https://wandb.ai/authorize",
+      "verified_at": "2026-10-15",
+      "_evidence": "probed 2026-10-15: live, rejects an invalid key"
+    },
+    {
+      "id": "zenmux",
+      "display_name": "ZenMux",
+      "base_url": "https://zenmux.ai/api/v1",
+      "protocols": [
+        "OpenAiChat"
+      ],
+      "model_list_path": "/models",
+      "docs_url": "https://zenmux.ai",
+      "verified_at": "2026-10-15",
+      "_evidence": "probed 2026-10-15: public model list answers; chat rejects an invalid key"
+    },
+    {
+      "id": "agnes",
+      "display_name": "Agnes AI",
+      "base_url": "https://apihub.agnes-ai.com/v1",
+      "protocols": [
+        "OpenAiChat"
+      ],
+      "model_list_path": "/models",
+      "verified_at": "2026-10-15",
+      "_evidence": "probed 2026-10-15: public model list answers; chat rejects an invalid key"
+    },
+    {
+      "id": "wafer",
+      "display_name": "Wafer",
+      "base_url": "https://pass.wafer.ai/v1",
+      "protocols": [
+        "OpenAiChat"
+      ],
+      "model_list_path": "/models",
+      "auth_check_path": "/models",
+      "verified_at": "2026-10-15",
+      "_evidence": "probed 2026-10-15: live, rejects an invalid key"
+    },
+    {
+      "id": "tokenrouter",
+      "display_name": "TokenRouter",
+      "base_url": "https://api.tokenrouter.com/v1",
+      "protocols": [
+        "OpenAiChat"
+      ],
+      "model_list_path": "/models",
+      "auth_check_path": "/models",
+      "verified_at": "2026-10-15",
+      "_evidence": "probed 2026-10-15: live, rejects an invalid key"
+    },
+    {
+      "id": "nararoute",
+      "display_name": "NaraRoute",
+      "base_url": "https://router.bynara.id/v1",
+      "protocols": [
+        "OpenAiChat"
+      ],
+      "model_list_path": "/models",
+      "auth_check_path": "/models",
+      "verified_at": "2026-10-15",
+      "_evidence": "probed 2026-10-15: live, rejects an invalid key"
+    },
+    {
+      "id": "poolside",
+      "display_name": "Poolside",
+      "base_url": "https://inference.poolside.ai/v1",
+      "protocols": [
+        "OpenAiChat"
+      ],
+      "model_list_path": "/models",
+      "docs_url": "https://poolside.ai",
+      "verified_at": "2026-10-15",
+      "_evidence": "probed 2026-10-15: answers 403 without a valid key; first live check needs a key"
+    },
+    {
+      "id": "lightning",
+      "display_name": "Lightning AI",
+      "base_url": "https://lightning.ai/api/v1",
+      "protocols": [
+        "OpenAiChat"
+      ],
+      "model_list_path": "/models",
+      "docs_url": "https://lightning.ai",
+      "verified_at": "2026-10-15",
+      "_evidence": "probed 2026-10-15: public model list answers; chat rejects an invalid key"
+    },
+    {
+      "id": "experiential",
+      "display_name": "Experiential Labs",
+      "base_url": "https://api.experientiallabs.ai/v1",
+      "protocols": [
+        "OpenAiChat"
+      ],
+      "model_list_path": "/models",
+      "auth_check_path": "/models",
+      "verified_at": "2026-10-15",
+      "_evidence": "probed 2026-10-15: live, rejects an invalid key"
+    },
+    {
+      "id": "cheaperinference",
+      "display_name": "Cheaper Inference",
+      "base_url": "https://api.cheaperinference.com/v1",
+      "protocols": [
+        "OpenAiChat"
+      ],
+      "model_list_path": "/models",
+      "auth_check_path": "/models",
+      "verified_at": "2026-10-15",
+      "_evidence": "probed 2026-10-15: live, rejects an invalid key"
+    },
+    {
+      "id": "orcarouter",
+      "display_name": "OrcaRouter",
+      "base_url": "https://api.orcarouter.ai/v1",
+      "protocols": [
+        "OpenAiChat"
+      ],
+      "model_list_path": "/models",
+      "auth_check_path": "/models",
+      "verified_at": "2026-10-15",
+      "_evidence": "probed 2026-10-15: live, rejects an invalid key"
+    },
+    {
+      "id": "atlascloud",
+      "display_name": "Atlas Cloud",
+      "base_url": "https://api.atlascloud.ai/v1",
+      "protocols": [
+        "OpenAiChat"
+      ],
+      "model_list_path": "/models",
+      "docs_url": "https://www.atlascloud.ai",
+      "verified_at": "2026-10-15",
+      "_evidence": "probed 2026-10-15: public model list answers; chat rejects an invalid key"
+    },
+    {
+      "id": "xkiro",
+      "display_name": "xKiro",
+      "base_url": "https://api.xkiro.com/v1",
+      "protocols": [
+        "OpenAiChat"
+      ],
+      "model_list_path": "/models",
+      "verified_at": "2026-10-15",
+      "_evidence": "probed 2026-10-15: public model list answers; chat rejects an invalid key"
+    },
+    {
+      "id": "opper",
+      "display_name": "Opper",
+      "base_url": "https://api.opper.ai/v3/compat",
+      "protocols": [
+        "OpenAiChat"
+      ],
+      "model_list_path": "/models",
+      "auth_check_path": "/models",
+      "docs_url": "https://docs.opper.ai",
+      "verified_at": "2026-10-15",
+      "_evidence": "probed 2026-10-15: live, rejects an invalid key"
+    },
+    {
       "id": "ollama",
       "display_name": "Ollama (local)",
       "base_url": "http://127.0.0.1:11434/v1",

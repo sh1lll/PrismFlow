@@ -341,7 +341,8 @@ mod tests {
             assert!(!p.protocols.is_empty());
             assert!(!p.verified_at.is_empty(), "{} lacks verified_at", p.id);
             assert!(p.docs_url.is_empty() || p.docs_url.starts_with("https://"));
-            assert!(p.model_list_path.is_some() || p.credential_source == CredentialSource::CodexLogin);
+            // Codestral publishes no model list; the user types the model name.
+            assert!(p.model_list_path.is_some() || p.credential_source == CredentialSource::CodexLogin || p.id == "mistral_codestral");
         }
         assert!(!catalog_version().is_empty());
     }
