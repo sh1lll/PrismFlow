@@ -9,3 +9,6 @@ src-tauri/gen/schemas/
 .env.*
 !.env.example
 .superpowers/
+
+# Pinned gateway runtime (installed by scripts/fetch-gateway.sh)
+src-tauri/gateway/node_modules/
