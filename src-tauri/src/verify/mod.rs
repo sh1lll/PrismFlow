@@ -508,7 +508,7 @@ esac"#;
         let home = tempfile::tempdir().unwrap();
         let helper = fake_codex(home.path(), "echo helper"); // any existing file
         let or = providers::get("openrouter").unwrap();
-        let plan = codex::plan_connect(home.path(), or, "a/model", &helper).unwrap();
+        let plan = codex::plan_connect(home.path(), or, "a/model", &helper, None).unwrap();
         config_engine::apply(&plan).unwrap();
         let server = MockServer::start().await;
         Mock::given(method("GET")).and(path("/key"))

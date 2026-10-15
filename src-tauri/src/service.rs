@@ -196,7 +196,50 @@ impl Service {
         adapters::detect_all()
     }
 
+    /// PrismFlow-owned Codex model catalog for a provider (kept in the state
+    /// dir, not in ~/.codex, so the user's Codex home holds only the profile).
+    pub fn codex_catalog_path(&self, provider_id: &str) -> PathBuf {
+        self.state.dir().join("codex-catalogs").join(format!("{provider_id}.json"))
+    }
+
+    /// Write the catalog for `model`. Context window comes from the
+    /// provider's own model list when it reports one; otherwise it is omitted.
+    async fn write_codex_catalog(&self, p: &ProviderDefinition, model: &str) -> R<PathBuf> {
+        let bin = codex::find_binary().ok_or("Codex CLI is not installed.")?;
+        let template = tokio::task::spawn_blocking(move || codex::catalog_template(&bin))
+            .await
+            .map_err(|e| e.to_string())??;
+        let listed = tokio::time::timeout(Duration::from_secs(15), self.discover_models(p.id)).await;
+        let info = match listed {
+            Ok(Ok(models)) => models.into_iter().find(|m| m.id == model),
+            _ => None,
+        };
+        let entry = codex::CatalogEntry {
+            slug: model.into(),
+            context_window: info.as_ref().and_then(|m| m.context_length),
+            images: false,
+        };
+        let path = self.codex_catalog_path(p.id);
+        if let Some(dir) = path.parent() {
+            std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+        }
+        let body = serde_json::to_string_pretty(&codex::render_catalog(&template, &[entry])).map_err(|e| e.to_string())?;
+        config_engine::atomic_write(&path, &body).map_err(|e| e.to_string())?;
+        Ok(path)
+    }
+
     fn plan(&self, app_id: &str, provider_id: &str, model: &str) -> R<(&'static ProviderDefinition, Route, config_engine::EditPlan)> {
+        let catalog = (app_id == codex::APP_ID).then(|| self.codex_catalog_path(provider_id));
+        self.plan_with(app_id, provider_id, model, catalog.as_deref())
+    }
+
+    fn plan_with(
+        &self,
+        app_id: &str,
+        provider_id: &str,
+        model: &str,
+        catalog: Option<&std::path::Path>,
+    ) -> R<(&'static ProviderDefinition, Route, config_engine::EditPlan)> {
         let p = provider(provider_id)?;
         let model = validate_model_id(model)?;
         let route = route_for(app_id, p).ok_or_else(|| match app_id {
@@ -208,8 +251,8 @@ impl Service {
         let id = connection_id(app_id, p.id);
         let url = self.broker.url_for_config();
         let plan = match (app_id, route) {
-            (codex::APP_ID, Route::Direct) => codex::plan_connect(&self.codex_home, p, model, &self.helper).map_err(|e| e.to_string())?,
-            (codex::APP_ID, Route::Gateway) => codex::plan_connect_gateway(&self.codex_home, p, model, &self.helper, &id, &url)
+            (codex::APP_ID, Route::Direct) => codex::plan_connect(&self.codex_home, p, model, &self.helper, catalog).map_err(|e| e.to_string())?,
+            (codex::APP_ID, Route::Gateway) => codex::plan_connect_gateway(&self.codex_home, p, model, &self.helper, &id, &url, catalog)
                 .map_err(|e| e.to_string())?,
             _ => claude_code::plan_connect(&self.claude_dir, p, model, &self.helper, &id, &url).map_err(|e| e.to_string())?,
         };
@@ -270,7 +313,16 @@ impl Service {
     }
 
     pub async fn connect(&self, app_id: &str, provider_id: &str, model: &str) -> R<ConnectionRecord> {
-        let (p, route, plan) = self.plan(app_id, provider_id, model)?;
+        let (p, route, mut plan) = self.plan(app_id, provider_id, model)?;
+        if app_id == codex::APP_ID && self.key(p.id).is_some() {
+            if let Err(e) = self.write_codex_catalog(p, validate_model_id(model)?).await {
+                // Codex still works without a catalog (it falls back to defaults).
+                self.diag.record(Level::Warn, "connect.catalog", &format!(
+                    "No Codex model catalog for {}: {e}. Codex will use default model metadata.", p.display_name
+                ));
+                plan = self.plan_with(app_id, provider_id, model, None)?.2;
+            }
+        }
         if self.key(p.id).is_none() {
             return Err(format!("Add a {} key under Providers first.", p.display_name));
         }
@@ -418,6 +470,9 @@ impl Service {
             self.diag.record(Level::Error, "disconnect.failed", &msg);
             msg
         })?;
+        if record.app_id == codex::APP_ID {
+            let _ = std::fs::remove_file(self.codex_catalog_path(&record.provider_id));
+        }
         if record.route == Route::Gateway {
             tokens::revoke(self.store.as_ref(), id).map_err(|e| format!("Could not revoke the local token: {e}"))?;
         }
@@ -431,6 +486,18 @@ impl Service {
             }
         }
         Ok(backup.map(|b| b.display().to_string()))
+    }
+
+    /// Interactive agent sessions still running on this connection's
+    /// profile; they keep their old settings until restarted (SPEC §9).
+    pub fn running_sessions(&self, id: &str) -> R<Vec<u32>> {
+        let record = self.state.get(id).map_err(|e| e.to_string())?.ok_or("Unknown connection.")?;
+        let procs = adapters::processes::list();
+        Ok(if record.app_id == claude_code::APP_ID {
+            adapters::processes::claude_sessions(&procs, &record.managed_file.display().to_string())
+        } else {
+            adapters::processes::codex_sessions(&procs, &record.profile)
+        })
     }
 
     pub fn connections(&self) -> R<Vec<ConnectionRecord>> {
@@ -511,7 +578,8 @@ mod tests {
             claude_dir,
             helper: PathBuf::from("/bin/echo"),
             agent_timeout: Duration::from_secs(5),
-            upstream_overrides: HashMap::new(),
+            // Unit tests never reach a real provider.
+            upstream_overrides: providers::registry().iter().map(|p| (p.id.to_string(), "http://127.0.0.1:9".to_string())).collect(),
         }
     }
 

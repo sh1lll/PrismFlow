@@ -134,6 +134,7 @@ pub fn plan_connect(
     provider: &ProviderDefinition,
     model: &str,
     helper: &Path,
+    catalog: Option<&Path>,
 ) -> Result<EditPlan, CodexError> {
     if !provider.protocols.contains(&Protocol::OpenAiResponses) {
         return Err(CodexError::ProtocolUnsupported(provider.display_name.into()));
@@ -142,7 +143,7 @@ pub fn plan_connect(
         return Err(CodexError::MissingBaseUrl(provider.display_name.into()));
     }
     let args = vec!["credential".into(), "print".into(), "--provider".into(), provider.id.into()];
-    plan_profile(home, provider, model, provider.base_url, helper, args)
+    plan_profile(home, provider, model, provider.base_url, helper, args, catalog)
 }
 
 /// Plan a profile that reaches `provider` through PrismFlow's gateway
@@ -156,12 +157,13 @@ pub fn plan_connect_gateway(
     helper: &Path,
     connection_id: &str,
     broker_url: &str,
+    catalog: Option<&Path>,
 ) -> Result<EditPlan, CodexError> {
     if provider.base_url.is_empty() {
         return Err(CodexError::MissingBaseUrl(provider.display_name.into()));
     }
     let args = vec!["token".into(), "print".into(), "--connection".into(), connection_id.into()];
-    plan_profile(home, provider, model, &format!("{broker_url}/v1"), helper, args)
+    plan_profile(home, provider, model, &format!("{broker_url}/v1"), helper, args, catalog)
 }
 
 fn plan_profile(
@@ -171,6 +173,7 @@ fn plan_profile(
     base_url: &str,
     helper: &Path,
     auth_args: Vec<String>,
+    catalog: Option<&Path>,
 ) -> Result<EditPlan, CodexError> {
     let file = profile_file(home, provider.id);
     if let Ok(existing) = std::fs::read_to_string(&file) {
@@ -179,14 +182,15 @@ fn plan_profile(
         }
     }
     let table = provider_table(provider.id);
+    let mut top = vec![
+        ("model".to_string(), TomlVal::Str(model.into())),
+        ("model_provider".to_string(), TomlVal::Str(table.clone())),
+    ];
+    if let Some(c) = catalog {
+        top.push(("model_catalog_json".to_string(), TomlVal::Str(c.display().to_string())));
+    }
     let tables = vec![
-        (
-            vec![],
-            vec![
-                ("model".to_string(), TomlVal::Str(model.into())),
-                ("model_provider".to_string(), TomlVal::Str(table.clone())),
-            ],
-        ),
+        (vec![], top),
         (
             vec!["model_providers".to_string(), table.clone()],
             vec![
@@ -235,6 +239,102 @@ pub fn disconnect(file: &Path, backup_dir: &Path) -> Result<Option<PathBuf>, Cod
     Ok(Some(backup))
 }
 
+// ---- Model catalog (`model_catalog_json`) -------------------------------
+//
+// Without a catalog entry Codex logs "Model metadata ... not found" and
+// guesses limits. Verified against 0.162.1 (2026-10-14):
+// - Required per model: slug, display_name, priority, visibility,
+//   supported_in_api, shell_type, support_verbosity,
+//   supported_reasoning_levels, experimental_supported_tools,
+//   truncation_policy, and base_instructions (the agent's system prompt).
+// - `context_window` is optional, so an unknown window is left out, never guessed.
+// - Copying a whole OpenAI entry switches Codex to OpenAI-only `custom` tools
+//   and code mode. A minimal entry keeps the plain `function` tool surface
+//   Codex uses for unknown models, which is what translated providers handle.
+// The system prompt and shell settings come from the installed Codex
+// (`codex debug models`), so they track Codex updates instead of a copy.
+
+#[derive(Debug, Clone)]
+pub struct CatalogTemplate {
+    pub base_instructions: String,
+    pub shell_type: serde_json::Value,
+    pub truncation_policy: serde_json::Value,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct CatalogEntry {
+    pub slug: String,
+    pub context_window: Option<u64>,
+    pub images: bool,
+}
+
+/// Pick the template from `codex debug models` output: the highest-priority
+/// listed model that carries base instructions.
+pub fn template_from_models(raw: &str) -> Result<CatalogTemplate, String> {
+    let v: serde_json::Value = serde_json::from_str(raw).map_err(|e| format!("unreadable model list: {e}"))?;
+    let models = v["models"].as_array().ok_or("no `models` array")?;
+    let best = models
+        .iter()
+        .filter(|m| m["visibility"] == "list" && m["base_instructions"].as_str().is_some_and(|s| !s.is_empty()))
+        .min_by_key(|m| m["priority"].as_i64().unwrap_or(i64::MAX))
+        .ok_or("no listed model with base instructions")?;
+    Ok(CatalogTemplate {
+        base_instructions: best["base_instructions"].as_str().unwrap_or_default().to_string(),
+        shell_type: best["shell_type"].clone(),
+        truncation_policy: best["truncation_policy"].clone(),
+    })
+}
+
+/// Ask the installed Codex for its built-in catalog. A throwaway
+/// `CODEX_HOME` keeps the user's own config and catalogs out of it.
+pub fn catalog_template(bin: &Path) -> Result<CatalogTemplate, String> {
+    let scratch = std::env::temp_dir().join(format!("prismflow-codex-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&scratch).map_err(|e| e.to_string())?;
+    let out = Command::new(bin)
+        .args(["debug", "models"])
+        .env("CODEX_HOME", &scratch)
+        .env("PATH", child_path(bin))
+        .stdin(std::process::Stdio::null())
+        .output()
+        .map_err(|e| format!("could not run codex: {e}"));
+    let _ = std::fs::remove_dir_all(&scratch);
+    let out = out?;
+    if !out.status.success() {
+        return Err(format!("`codex debug models` failed ({})", out.status));
+    }
+    template_from_models(&String::from_utf8_lossy(&out.stdout))
+}
+
+pub fn render_catalog(t: &CatalogTemplate, entries: &[CatalogEntry]) -> serde_json::Value {
+    let models: Vec<_> = entries
+        .iter()
+        .enumerate()
+        .map(|(i, e)| {
+            let mut m = serde_json::json!({
+                "slug": e.slug,
+                "display_name": e.slug,
+                "description": "Connected by PrismFlow",
+                "priority": i,
+                "visibility": "list",
+                "supported_in_api": true,
+                "shell_type": t.shell_type,
+                "support_verbosity": false,
+                "supported_reasoning_levels": [],
+                "experimental_supported_tools": [],
+                "truncation_policy": t.truncation_policy,
+                "input_modalities": if e.images { serde_json::json!(["text", "image"]) } else { serde_json::json!(["text"]) },
+                "base_instructions": t.base_instructions,
+            });
+            if let Some(cw) = e.context_window {
+                m["context_window"] = cw.into();
+                m["max_context_window"] = cw.into();
+            }
+            m
+        })
+        .collect();
+    serde_json::json!({ "models": models })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -263,7 +363,7 @@ mod tests {
         let home = tempfile::tempdir().unwrap();
         let base = home.path().join("config.toml");
         fs::write(&base, "# mine\nmodel = \"gpt-5.4-mini\"\n").unwrap();
-        let plan = plan_connect(home.path(), providers::get("openrouter").unwrap(), "openai/gpt-oss-20b", &helper()).unwrap();
+        let plan = plan_connect(home.path(), providers::get("openrouter").unwrap(), "openai/gpt-oss-20b", &helper(), None).unwrap();
         assert_eq!(plan.file, home.path().join("prismflow-openrouter.config.toml"));
         config_engine::apply(&plan).unwrap();
 
@@ -285,10 +385,10 @@ mod tests {
     fn reconnect_updates_model_idempotently() {
         let home = tempfile::tempdir().unwrap();
         let or = providers::get("openrouter").unwrap();
-        config_engine::apply(&plan_connect(home.path(), or, "a/one", &helper()).unwrap()).unwrap();
-        let again = plan_connect(home.path(), or, "a/one", &helper()).unwrap();
+        config_engine::apply(&plan_connect(home.path(), or, "a/one", &helper(), None).unwrap()).unwrap();
+        let again = plan_connect(home.path(), or, "a/one", &helper(), None).unwrap();
         assert_eq!(again.before, again.after);
-        let switched = plan_connect(home.path(), or, "b/two", &helper()).unwrap();
+        let switched = plan_connect(home.path(), or, "b/two", &helper(), None).unwrap();
         assert!(switched.after.contains("\"b/two\""));
         assert_eq!(switched.after.matches(MANAGED_MARKER).count(), 1);
     }
@@ -298,15 +398,15 @@ mod tests {
         let home = tempfile::tempdir().unwrap();
         fs::write(home.path().join("prismflow-openrouter.config.toml"), "model = \"user's\"\n").unwrap();
         assert!(matches!(
-            plan_connect(home.path(), providers::get("openrouter").unwrap(), "m", &helper()),
+            plan_connect(home.path(), providers::get("openrouter").unwrap(), "m", &helper(), None),
             Err(CodexError::NotOurs(_))
         ));
         assert!(matches!(
-            plan_connect(home.path(), providers::get("nvidia_nim").unwrap(), "m", &helper()),
+            plan_connect(home.path(), providers::get("nvidia_nim").unwrap(), "m", &helper(), None),
             Err(CodexError::ProtocolUnsupported(_))
         ));
         assert!(matches!(
-            plan_connect(home.path(), providers::get("custom_openai").unwrap(), "m", &helper()),
+            plan_connect(home.path(), providers::get("custom_openai").unwrap(), "m", &helper(), None),
             Err(CodexError::MissingBaseUrl(_))
         ));
     }
@@ -315,7 +415,7 @@ mod tests {
     fn gateway_profile_points_at_broker_with_token_helper() {
         let home = tempfile::tempdir().unwrap();
         let nim = providers::get("nvidia_nim").unwrap();
-        let plan = plan_connect_gateway(home.path(), nim, "meta/llama-3.3-70b-instruct", &helper(), "codex_cli:nvidia_nim", "http://127.0.0.1:47821").unwrap();
+        let plan = plan_connect_gateway(home.path(), nim, "meta/llama-3.3-70b-instruct", &helper(), "codex_cli:nvidia_nim", "http://127.0.0.1:47821", None).unwrap();
         config_engine::apply(&plan).unwrap();
         let doc: toml_edit::DocumentMut = std::fs::read_to_string(&plan.file).unwrap().parse().unwrap();
         let p = &doc["model_providers"]["prismflow_nvidia_nim"];
@@ -330,7 +430,7 @@ mod tests {
     fn disconnect_backs_up_and_removes_only_our_file() {
         let home = tempfile::tempdir().unwrap();
         let backups = tempfile::tempdir().unwrap();
-        let plan = plan_connect(home.path(), providers::get("openrouter").unwrap(), "m", &helper()).unwrap();
+        let plan = plan_connect(home.path(), providers::get("openrouter").unwrap(), "m", &helper(), None).unwrap();
         config_engine::apply(&plan).unwrap();
         let backup = disconnect(&plan.file, backups.path()).unwrap().unwrap();
         assert!(!plan.file.exists());
@@ -341,5 +441,44 @@ mod tests {
         fs::write(&foreign, "model = \"user's\"\n").unwrap();
         assert!(matches!(disconnect(&foreign, backups.path()), Err(CodexError::NotOurs(_))));
         assert!(foreign.exists());
+    }
+
+    #[test]
+    fn template_picks_highest_priority_listed_model() {
+        let raw = r#"{"models":[
+            {"slug":"hidden","visibility":"hide","priority":0,"base_instructions":"H"},
+            {"slug":"b","visibility":"list","priority":5,"base_instructions":"B","shell_type":"x","truncation_policy":{}},
+            {"slug":"a","visibility":"list","priority":1,"base_instructions":"A","shell_type":"unified_exec","truncation_policy":{"mode":"tokens","limit":10}}
+        ]}"#;
+        let t = template_from_models(raw).unwrap();
+        assert_eq!(t.base_instructions, "A");
+        assert_eq!(t.shell_type, "unified_exec");
+        assert!(template_from_models(r#"{"models":[]}"#).is_err());
+    }
+
+    #[test]
+    fn catalog_has_required_fields_and_never_invents_a_window() {
+        let t = CatalogTemplate { base_instructions: "P".into(), shell_type: "unified_exec".into(), truncation_policy: serde_json::json!({}) };
+        let v = render_catalog(&t, &[
+            CatalogEntry { slug: "a/b".into(), context_window: Some(131072), images: false },
+            CatalogEntry { slug: "c/d".into(), context_window: None, images: true },
+        ]);
+        let m = &v["models"];
+        for k in ["slug", "display_name", "priority", "visibility", "supported_in_api", "shell_type", "support_verbosity",
+                  "supported_reasoning_levels", "experimental_supported_tools", "truncation_policy", "base_instructions"] {
+            assert!(!m[0][k].is_null(), "missing {k}");
+        }
+        assert_eq!(m[0]["context_window"], 131072);
+        assert!(m[1].get("context_window").is_none());
+        assert_eq!(m[1]["input_modalities"], serde_json::json!(["text", "image"]));
+        assert!(m[0].get("apply_patch_tool_type").is_none(), "freeform patch is OpenAI-only");
+    }
+
+    #[test]
+    fn profile_points_at_catalog_when_given() {
+        let home = tempfile::tempdir().unwrap();
+        let cat = home.path().join("cat.json");
+        let plan = plan_connect(home.path(), providers::get("openrouter").unwrap(), "m", &helper(), Some(&cat)).unwrap();
+        assert!(plan.after.contains(&format!("model_catalog_json = \"{}\"", cat.display())));
     }
 }

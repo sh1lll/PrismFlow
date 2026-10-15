@@ -161,6 +161,8 @@ function NewConnection({ providers, onDone }: { providers: Provider[]; onDone: (
 function ConnectionCard({ c, onChange }: { c: Connection; onChange: () => void }) {
   const [busy, setBusy] = useState("");
   const [msg, setMsg] = useState<{ tone: string; text: string } | null>(null);
+  const [running, setRunning] = useState<number[]>([]);
+  useEffect(() => { api.runningSessions(c.id).then(setRunning).catch(() => setRunning([])); }, [c]);
 
   async function run(label: string, f: () => Promise<unknown>, ok?: string) {
     setBusy(label);
@@ -186,7 +188,12 @@ function ConnectionCard({ c, onChange }: { c: Connection; onChange: () => void }
         <code>{launchHint(c)}</code> · {c.managed_file}
       </div>
       {c.status === "Unverified" && (
-        <div className="warn small mt">Written but not verified. Run verification before relying on it. Sessions that were already running keep their old settings until restarted.</div>
+        <div className="warn small mt">Written but not verified. Run verification before relying on it.</div>
+      )}
+      {running.length > 0 && (
+        <div className="warn small mt">
+          {running.length} session{running.length > 1 ? "s are" : " is"} running on this profile (pid {running.join(", ")}). Any started before your last change still use the old settings; restart to apply it.
+        </div>
       )}
       {c.last_report && (
         <details className="mt" open={c.status !== "ConnectedAndVerified"}>

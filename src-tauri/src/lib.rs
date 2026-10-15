@@ -77,6 +77,11 @@ async fn restart_gateway(svc: State<'_, Service>) -> Cmd<gateway::BrokerStatus> 
 }
 
 #[tauri::command]
+fn running_sessions(svc: State<'_, Service>, id: String) -> Cmd<Vec<u32>> {
+    svc.running_sessions(&id)
+}
+
+#[tauri::command]
 fn list_connections(svc: State<'_, Service>) -> Cmd<Vec<state::ConnectionRecord>> {
     svc.connections()
 }
@@ -139,6 +144,7 @@ pub fn run() {
             verify_connection,
             disconnect,
             list_connections,
+            running_sessions,
             launch_connection,
             get_diagnostics,
             export_diagnostics,

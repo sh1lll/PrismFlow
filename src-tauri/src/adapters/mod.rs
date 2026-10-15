@@ -3,6 +3,7 @@
 
 pub mod claude_code;
 pub mod codex;
+pub mod processes;
 
 use std::path::PathBuf;
 

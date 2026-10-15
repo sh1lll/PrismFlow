@@ -113,6 +113,7 @@ export const api = {
   verify: (id: string) => invoke<VerificationReport>("verify_connection", { id }),
   disconnect: (id: string) => invoke<string | null>("disconnect", { id }),
   connections: () => invoke<Connection[]>("list_connections"),
+  runningSessions: (id: string) => invoke<number[]>("running_sessions", { id }),
   launch: (id: string) => invoke<void>("launch_connection", { id }),
   diagnostics: () => invoke<DiagEvent[]>("get_diagnostics"),
   exportDiagnostics: () => invoke<string>("export_diagnostics"),
