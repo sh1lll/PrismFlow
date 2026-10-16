@@ -121,7 +121,7 @@ pub fn route_for(app_id: &str, p: &ProviderDefinition) -> Option<Route> {
         claude_desktop::APP_ID => Some(Route::Gateway),
         jetbrains::APP_ID | vscode::CLAUDE_APP_ID | vscode::CHAT_APP_ID => Some(Route::Gateway),
         a if editors::ALL.contains(&a) => Some(Route::Gateway),
-        a if agents::spec(a).is_some() && agents::SUPPORTED_HERE => Some(Route::Gateway),
+        a if agents::spec(a).is_some() => Some(Route::Gateway),
         _ => None,
     }
 }
@@ -709,7 +709,7 @@ impl Service {
             return String::new();
         }
         if agents::spec(app_id).is_some() {
-            return quote(&file.display().to_string());
+            return agents::launch_command_line(file);
         }
         if app_id == claude_code::APP_ID {
             let bin = claude_code::find_binary().map(|b| b.display().to_string()).unwrap_or_else(|| "claude".into());

@@ -642,8 +642,9 @@ fn check_agent_config(a: &crate::adapters::agents::AgentSpec, script: &Path) -> 
 
 async fn run_script(script: &Path, args: &[String], workdir: &Path, timeout: Duration) -> Result<(bool, String), String> {
     std::fs::create_dir_all(workdir).map_err(|e| e.to_string())?;
-    let mut cmd = tokio::process::Command::new("/bin/sh");
-    cmd.arg(script).args(args).current_dir(workdir)
+    let (prog, lead) = crate::adapters::agents::script_runner(script);
+    let mut cmd = tokio::process::Command::new(prog);
+    cmd.args(lead).args(args).current_dir(workdir)
         .stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped()).kill_on_drop(true);
     let child = cmd.spawn().map_err(|e| format!("could not start the agent: {e}"))?;
     match tokio::time::timeout(timeout, child.wait_with_output()).await {

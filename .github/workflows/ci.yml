@@ -39,3 +39,10 @@ jobs:
       - name: Updater feature compiles
         working-directory: src-tauri
         run: cargo check --locked --features updater
+      - name: Real terminal agents start through the Windows launcher
+        if: runner.os == 'Windows'
+        working-directory: src-tauri
+        shell: bash
+        run: |
+          npm install -g @qwen-code/qwen-code@0.25.2 opencode-ai@1.19.0 @continuedev/cli@1.5.47
+          PRISMFLOW_WIN_AGENTS="qwen opencode continue_cli" cargo test --locked --test windows_agents -- --ignored --nocapture
