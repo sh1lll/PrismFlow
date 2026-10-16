@@ -55,10 +55,10 @@ pub fn detect_separate() -> AppDetection {
 pub fn open_separate(state_dir: &Path) -> Result<(), String> {
     let app = find_app().ok_or("Claude Desktop isn't installed.")?;
     let data = separate_data_dir(state_dir);
-    std::fs::create_dir_all(&data).map_err(|e| e.to_string())?;
+    std::fs::create_dir_all(&data).map_err(|_| "PrismFlow couldn't set up the second Claude Desktop's folder.")?;
     let ok = Command::new("open").arg("-n").arg("-a").arg(&app)
         .arg("--args").arg(format!("--user-data-dir={}", data.display()))
-        .status().map_err(|e| e.to_string())?.success();
+        .status().is_ok_and(|s| s.success());
     if ok { Ok(()) } else { Err("Claude Desktop could not be opened.".into()) }
 }
 
@@ -123,7 +123,7 @@ pub fn guided_setup(gateway_url: &str, token: String, model: &str) -> GuidedSetu
         steps: vec![
             "In Claude Desktop, turn on Developer Mode: Help → Troubleshooting → Enable Developer Mode.".into(),
             "Open Developer → Configure Third-Party Inference, and choose Gateway.".into(),
-            format!("Paste the address below."),
+            "Paste the address below.".into(),
             "Paste the key below.".into(),
             format!("Enter the model name: {model}"),
             "Press Test connection, then Save. Restart Claude Desktop if it asks.".into(),

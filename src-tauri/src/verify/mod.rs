@@ -421,9 +421,7 @@ async fn run_stages(
     // Gateway connections also need the local broker + engine up.
     if let Some(g) = &env.gateway {
         if g.phase == Phase::Ready {
-            run.push(3, "Gateway", StageOutcome::Pass, format!(
-                "Running."
-            ));
+            run.push(3, "Gateway", StageOutcome::Pass, "Running.");
             let _ = (&g.url, &g.engine);
         } else {
             run.push(3, "Gateway", StageOutcome::Fail, format!(

@@ -20,13 +20,14 @@ pub const APP_ID: &str = "codex_cli";
 /// Codex CLI with its own CODEX_HOME inside PrismFlow's data (own chats, settings).
 pub const CLI_SEPARATE_APP_ID: &str = "codex_cli_separate";
 
-pub fn is_cli(app_id: &str) -> bool {
-    app_id == APP_ID || app_id == CLI_SEPARATE_APP_ID
-}
 pub const MANAGED_MARKER: &str = "# Managed by PrismFlow";
 /// Versions this adapter has been verified against (SPEC §21.2).
 pub const VERIFIED_MIN: (u32, u32, u32) = (0, 162, 0);
 pub const VERIFIED_MAX: (u32, u32, u32) = (0, 162, u32::MAX);
+
+pub fn is_cli(app_id: &str) -> bool {
+    app_id == APP_ID || app_id == CLI_SEPARATE_APP_ID
+}
 
 /// PATH for Codex child processes: its own directory first, then the
 /// common install locations, then the inherited PATH.
@@ -355,6 +356,7 @@ pub const DESKTOP_BUNDLE_ID: &str = "com.openai.codex";
 /// The Codex app in a space of its own: PrismFlow opens it with a private
 /// CODEX_HOME, so its chats and settings stay apart from your usual Codex.
 pub const DESKTOP_SEPARATE_APP_ID: &str = "codex_desktop_separate";
+pub const BASE_KEYS: &[&str] = &["model", "model_provider", "model_catalog_json"];
 
 /// The shared or the separate Codex app connection.
 pub fn is_desktop(app_id: &str) -> bool {
@@ -386,7 +388,6 @@ pub fn detect_separate() -> AppDetection {
     ];
     d
 }
-pub const BASE_KEYS: &[&str] = &["model", "model_provider", "model_catalog_json"];
 
 pub fn base_config(home: &Path) -> PathBuf {
     home.join("config.toml")

@@ -1,8 +1,10 @@
 import { useEffect, useState } from "react";
 import { api, STEP_NAME, StageResult } from "../api";
 
+const MARK: Record<StageResult["outcome"], string> = { Pass: "✓", Warn: "!", Fail: "✗", Skipped: "–" };
+
 /** Live view of a running test: finished steps, what it's waiting on, and Skip. */
-export default function TestRunning({ id, skipLabel = "Skip test" }: { id: string; skipLabel?: string }) {
+export default function TestRunning({ id }: { id: string }) {
   const [done, setDone] = useState<StageResult[]>([]);
   const [secs, setSecs] = useState(0);
   useEffect(() => {
@@ -20,11 +22,11 @@ export default function TestRunning({ id, skipLabel = "Skip test" }: { id: strin
   return (
     <div className="mt">
       {done.map((s, i) => (
-        <div key={i} className="small">{s.outcome === "Fail" ? "✗" : "✓"} {STEP_NAME[s.name] ?? s.name}</div>
+        <div key={i} className="small">{MARK[s.outcome]} {STEP_NAME[s.name] ?? s.name}</div>
       ))}
       <div className="small"><b>{now}</b> <span className="muted">{secs}s</span></div>
       {secs >= 20 && <div className="small muted mt-s">Some models take a minute or more to reply. You can skip the test and use the app now.</div>}
-      <button className="ghost mt-s" onClick={() => api.cancelVerify(id)}>{skipLabel}</button>
+      <button className="ghost mt-s" onClick={() => api.cancelVerify(id)}>Skip test</button>
     </div>
   );
 }

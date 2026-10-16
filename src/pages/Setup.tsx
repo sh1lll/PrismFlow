@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import TestRunning from "./TestRunning";
-import { api, modePair, MODE_PAIRS, priceText, APP_NAME, AppDetection, AppId, ConnectPreview, ModelInfo, Provider, STATUS_LABEL, VerificationReport, errText } from "../api";
+import { api, modePair, MODE_PAIRS, priceText, APP_NAME, AppDetection, AppId, ConnectPreview, ModelInfo, Provider, STATUS_LABEL, TEST_SKIPPED, VerificationReport, errText } from "../api";
 
 const POPULAR = ["openrouter", "anthropic", "openai", "gemini", "groq", "deepseek", "nvidia_nim", "mistral", "xai"];
 const notForChat = /embed|rerank|whisper|tts|moderation|image|vision-only/i;
@@ -39,6 +39,15 @@ export default function Setup({ onDone }: { onDone: () => void }) {
     try { await f(); } catch (e) { setError(errText(e)); } finally { setBusy(""); }
   }
   const go = (n: number) => { setError(""); setStep(n); };
+  async function connect() {
+    const c = await api.connect(app as AppId, pid, model.trim());
+    setConnId(c.id);
+    return c;
+  }
+  const pair = app ? modePair(app) : undefined;
+  const installed = (id: string) => apps.some((a) => a.app_id === id && a.installed);
+  /** The separate twin is shown through its shared button, if that one is installed. */
+  const hiddenTwin = (id: string) => MODE_PAIRS.some((p) => p.separate === id && installed(p.shared));
   const [codingOnly, setCodingOnly] = useState(true);
   const shown = (models ?? []).filter((m) => !notForChat.test(m.id) && (!codingOnly || m.coding) && (!filter || m.id.toLowerCase().includes(filter.toLowerCase()))).slice(0, 100);
 
@@ -52,22 +61,19 @@ export default function Setup({ onDone }: { onDone: () => void }) {
           <div className="section-title">Which app do you want to use?</div>
           {apps.length === 0 && <div className="small muted mt-s">Looking for apps on this computer…</div>}
           <div className="choices">
-            {apps.filter((a) => a.installed && !MODE_PAIRS.some((p) => p.separate === a.app_id && apps.some((b) => b.app_id === p.shared))).map((a) => {
-              const pair = modePair(a.app_id);
-              const picked = pair ? app === pair.shared || app === pair.separate : app === a.app_id;
-              return <button key={a.app_id} className={picked ? "primary" : "ghost"} onClick={() => setApp(a.app_id as AppId)}>{pair?.name ?? APP_NAME[a.app_id] ?? a.display_name}</button>;
+            {apps.filter((a) => a.installed && !hiddenTwin(a.app_id)).map((a) => {
+              const p = modePair(a.app_id);
+              const picked = p ? app === p.shared || app === p.separate : app === a.app_id;
+              return <button key={a.app_id} className={picked ? "primary" : "ghost"} onClick={() => setApp(a.app_id as AppId)}>{p?.name ?? APP_NAME[a.app_id] ?? a.display_name}</button>;
             })}
           </div>
-          {app && modePair(app) && (() => {
-            const pair = modePair(app)!;
-            return (
-              <div className="mt">
-                <div className="small muted">How should it run?</div>
-                <label className="small mt-block"><input type="radio" className="check" checked={app === pair.shared} onChange={() => setApp(pair.shared)} /> <b>Shared</b> · {pair.sharedText ?? "uses your usual chats and settings"}</label>
-                <label className="small mt-block"><input type="radio" className="check" checked={app === pair.separate} onChange={() => setApp(pair.separate)} /> <b>Separate</b> · {pair.separateText ?? "its own chats and settings, just for PrismFlow"}</label>
-              </div>
-            );
-          })()}
+          {pair && (
+            <div className="mt">
+              <div className="small muted">How should it run?</div>
+              <label className="small mt-block"><input type="radio" className="check" checked={app === pair.shared} onChange={() => setApp(pair.shared)} /> <b>Shared</b> · {pair.sharedText ?? "uses your usual chats and settings"}</label>
+              <label className="small mt-block"><input type="radio" className="check" checked={app === pair.separate} onChange={() => setApp(pair.separate)} /> <b>Separate</b> · {pair.separateText ?? "its own chats and settings, just for PrismFlow"}</label>
+            </div>
+          )}
           {apps.length > 0 && apps.every((a) => !a.installed) && <div className="muted small">None of the supported apps were found. Install one (for example Claude Code or Codex) and come back.</div>}
           <div className="row mt"><button className="primary" disabled={!app} onClick={() => go(2)}>Next</button><button className="ghost" onClick={onDone}>Skip</button></div>
         </div>
@@ -150,15 +156,11 @@ export default function Setup({ onDone }: { onDone: () => void }) {
             <div className="row mt">
               <button className="ghost" disabled={busy !== ""} onClick={() => go(4)}>Back</button>
               <button className="primary" disabled={busy !== ""} onClick={() => run("connect", async () => {
-                const c = await api.connect(app as AppId, p.id, model.trim());
-                setConnId(c.id);
+                const c = await connect();
                 setBusy("test");
-                try { setReport(await api.verify(c.id)); } catch (e) { if (errText(e).includes("skipped")) setSkipped(true); else throw e; }
+                try { setReport(await api.verify(c.id)); } catch (e) { if (errText(e) === TEST_SKIPPED) setSkipped(true); else throw e; }
               })}>{busy === "connect" ? "Connecting…" : busy === "test" ? "Testing…" : "Connect and test"}</button>
-              {busy === "" && <button className="ghost" onClick={() => run("connect", async () => {
-                const c = await api.connect(app as AppId, p.id, model.trim());
-                setConnId(c.id); setSkipped(true);
-              })}>Connect without testing</button>}
+              {busy === "" && <button className="ghost" onClick={() => run("connect", async () => { await connect(); setSkipped(true); })}>Connect without testing</button>}
             </div>
           )}
           {busy === "test" && connId && <TestRunning id={connId} />}

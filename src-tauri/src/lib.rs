@@ -344,7 +344,7 @@ async fn verify_connection(svc: State<'_, Arc<Service>>, id: String) -> Cmd<stat
     }
 }
 
-/// What a skipped test reports (the setup screen checks for it).
+/// What a skipped test reports (src/api.ts TEST_SKIPPED, checked by setup).
 const TEST_SKIPPED: &str = "Test skipped.";
 
 /// Stops a running test. Programs the test started are stopped with it.
@@ -698,8 +698,8 @@ fn session_delete(sessions: State<'_, sessions::Sessions>, id: String) -> Cmd<()
 }
 
 #[tauri::command]
-fn launch_command(svc: State<'_, Arc<Service>>, id: String) -> Cmd<String> {
-    svc.launch_command(&id)
+fn launch_info(svc: State<'_, Arc<Service>>, id: String) -> Cmd<service::LaunchInfo> {
+    svc.launch_info(&id)
 }
 
 #[tauri::command]
@@ -861,7 +861,7 @@ pub fn run() {
         .manage(BotState { bots: bots::Bots::default(), dir: dir.clone() })
         .invoke_handler(tauri::generate_handler![
             cancel_verify,
-            launch_command,
+            launch_info,
             verify_progress,
             keychain_waiting,
             editor_guide,

@@ -37,11 +37,10 @@ export interface UrlCheck {
 
 export type AppId = "codex_cli" | "codex_cli_separate" | "claude_code_separate" | "vscode_claude_shared" | "vscode_separate" | "zed_separate" | "codex_desktop" | "codex_desktop_separate" | "claude_code" | "claude_desktop" | "claude_desktop_separate" | "jetbrains" | "vscode_claude" | "vscode_chat" | "aider" | "cline" | "pi" | "hermes" | "opencode" | "dsh" | "grok" | "muse" | "qwen" | "goose" | "crush" | "droid" | "continue_cli" | "copilot_cli" | "roo_code" | "kilo_code" | "zed" | "continue_ide" | "aider_separate" | "cline_shared" | "pi_shared" | "opencode_separate" | "dsh_shared" | "grok_shared" | "muse_separate" | "qwen_separate" | "goose_separate" | "crush_shared" | "droid_separate" | "continue_cli_shared" | "copilot_cli_separate";
 export const APP_IDS: AppId[] = ["codex_cli", "codex_cli_separate", "codex_desktop", "codex_desktop_separate", "claude_code", "claude_code_separate", "claude_desktop", "claude_desktop_separate", "jetbrains", "vscode_claude", "vscode_claude_shared", "vscode_chat", "vscode_separate", "aider", "cline", "pi", "hermes", "roo_code", "kilo_code", "zed", "zed_separate", "continue_ide", "opencode", "dsh", "grok", "muse", "qwen", "goose", "crush", "droid", "continue_cli", "copilot_cli", "aider_separate", "cline_shared", "pi_shared", "opencode_separate", "dsh_shared", "grok_shared", "muse_separate", "qwen_separate", "goose_separate", "crush_shared", "droid_separate", "continue_cli_shared", "copilot_cli_separate"];
-export const TERMINAL_AGENTS: AppId[] = ["aider", "cline", "pi", "hermes", "opencode", "dsh", "grok", "muse", "qwen", "goose", "crush", "droid", "continue_cli", "copilot_cli", "aider_separate", "cline_shared", "pi_shared", "opencode_separate", "dsh_shared", "grok_shared", "muse_separate", "qwen_separate", "goose_separate", "crush_shared", "droid_separate", "continue_cli_shared", "copilot_cli_separate"];
 export type Route = "direct" | "gateway";
 
 export const APP_NAME: Record<string, string> = {
-  codex_cli: "Codex CLI", codex_cli_separate: "Codex CLI (separate)", claude_code_separate: "Claude Code (separate)", vscode_claude_shared: "Claude Code for VS Code (shared)", vscode_separate: "VS Code (separate)", codex_desktop: "Codex app & VS Code", codex_desktop_separate: "Codex app (separate)", claude_code: "Claude Code CLI", claude_desktop: "Claude Desktop", claude_desktop_separate: "Claude Desktop (separate)", jetbrains: "JetBrains IDEs", vscode_claude: "Claude Code for VS Code (separate)", vscode_chat: "VS Code Chat", aider: "Aider", cline: "Cline CLI", pi: "Pi", hermes: "Hermes Agent", playground: "Try a model", opencode: "OpenCode", dsh: "DeepSeek Harness", grok: "Grok Build", muse: "Muse Code", qwen: "Qwen Code", goose: "Goose", crush: "Crush", droid: "Factory Droid", continue_cli: "Continue CLI", copilot_cli: "GitHub Copilot CLI", aider_separate: "Aider (separate)", cline_shared: "Cline CLI (shared)", pi_shared: "Pi (shared)", opencode_separate: "OpenCode (separate)", dsh_shared: "DeepSeek Harness (shared)", grok_shared: "Grok Build (shared)", muse_separate: "Muse Code (separate)", qwen_separate: "Qwen Code (separate)", goose_separate: "Goose (separate)", crush_shared: "Crush (shared)", droid_separate: "Factory Droid (separate)", continue_cli_shared: "Continue CLI (shared)", copilot_cli_separate: "GitHub Copilot CLI (separate)", roo_code: "Roo Code", kilo_code: "Kilo Code", zed: "Zed", zed_separate: "Zed (separate)", continue_ide: "Continue (VS Code / JetBrains)",
+  codex_cli: "Codex CLI", codex_cli_separate: "Codex CLI (separate)", claude_code_separate: "Claude Code CLI (separate)", vscode_claude_shared: "Claude Code for VS Code (shared)", vscode_separate: "VS Code (separate)", codex_desktop: "Codex app & VS Code", codex_desktop_separate: "Codex app (separate)", claude_code: "Claude Code CLI", claude_desktop: "Claude Desktop", claude_desktop_separate: "Claude Desktop (separate)", jetbrains: "JetBrains IDEs", vscode_claude: "Claude Code for VS Code (separate)", vscode_chat: "VS Code Chat", aider: "Aider", cline: "Cline CLI", pi: "Pi", hermes: "Hermes Agent", playground: "Try a model", opencode: "OpenCode", dsh: "DeepSeek Harness", grok: "Grok Build", muse: "Muse Code", qwen: "Qwen Code", goose: "Goose", crush: "Crush", droid: "Factory Droid", continue_cli: "Continue CLI", copilot_cli: "GitHub Copilot CLI", aider_separate: "Aider (separate)", cline_shared: "Cline CLI (shared)", pi_shared: "Pi (shared)", opencode_separate: "OpenCode (separate)", dsh_shared: "DeepSeek Harness (shared)", grok_shared: "Grok Build (shared)", muse_separate: "Muse Code (separate)", qwen_separate: "Qwen Code (separate)", goose_separate: "Goose (separate)", crush_shared: "Crush (shared)", droid_separate: "Factory Droid (separate)", continue_cli_shared: "Continue CLI (shared)", copilot_cli_separate: "GitHub Copilot CLI (separate)", roo_code: "Roo Code", kilo_code: "Kilo Code", zed: "Zed", zed_separate: "Zed (separate)", continue_ide: "Continue (VS Code / JetBrains)",
 };
 
 export const ROUTE_LABEL: Record<Route, string> = {
@@ -101,6 +100,12 @@ export type ConnectionStatus =
   | "Disconnected" | "RequiresAttention" | "Unverified";
 
 export type StageOutcome = "Pass" | "Warn" | "Fail" | "Skipped";
+
+/** How an app starts with a connection: the command to type ("" when there is none) and the button PrismFlow offers. */
+/** What a skipped test reports (TEST_SKIPPED in src-tauri/src/lib.rs). */
+export const TEST_SKIPPED = "Test skipped.";
+
+export interface LaunchInfo { line: string; opens: "Terminal" | "App" | "Nothing" }
 
 export interface StageResult { stage: number; name: string; outcome: StageOutcome; detail: string }
 
@@ -242,7 +247,8 @@ export const api = {
   preview: (appId: AppId, providerId: string, model: string) => invoke<ConnectPreview>("preview_connection", { appId, providerId, model }),
   connect: (appId: AppId, providerId: string, model: string) => invoke<Connection>("connect", { appId, providerId, model }),
   verify: (id: string) => invoke<VerificationReport>("verify_connection", { id }),
-  launchCommand: (id: string) => invoke<string>("launch_command", { id }),
+  launchInfo: (id: string) => invoke<LaunchInfo>("launch_info", { id }),
+  /** Stops a running test; its `verify` call then fails with TEST_SKIPPED. */
   cancelVerify: (id: string) => invoke<void>("cancel_verify", { id }),
   verifyProgress: (id: string) => invoke<StageResult[] | null>("verify_progress", { id }),
   disconnect: (id: string) => invoke<string | null>("disconnect", { id }),
@@ -315,7 +321,6 @@ export function providerName(providers: Provider[], id: string): string {
   return providers.find((p) => p.id === id)?.display_name ?? id;
 }
 
-/** The command a user runs to start the app with a connection. */
 /** Apps that come in two ways: with your usual chats and settings, or a space of their own. */
 export const MODE_PAIRS: { name: string; shared: AppId; separate: AppId; sharedText?: string; separateText?: string }[] = [
   { name: "Claude Desktop", shared: "claude_desktop", separate: "claude_desktop_separate",
@@ -345,7 +350,6 @@ export const MODE_PAIRS: { name: string; shared: AppId; separate: AppId; sharedT
 export function modePair(id: string) {
   return MODE_PAIRS.find((p) => p.shared === id || p.separate === id);
 }
-
 
 export const STATUS_LABEL: Record<ConnectionStatus, string> = {
   NotConfigured: "Not set up",

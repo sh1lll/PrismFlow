@@ -127,6 +127,19 @@ pub fn route_for(app_id: &str, p: &ProviderDefinition) -> Option<Route> {
     }
 }
 
+#[derive(Debug, Clone, Copy, serde::Serialize)]
+pub enum Opens {
+    Terminal,
+    App,
+    Nothing,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct LaunchInfo {
+    pub line: String,
+    pub opens: Opens,
+}
+
 /// Connections being tested now (from the app or the companion): one test
 /// per connection at a time, so their progress views don't mix.
 static RUNNING_TESTS: std::sync::Mutex<std::collections::BTreeSet<String>> = std::sync::Mutex::new(std::collections::BTreeSet::new());
@@ -800,7 +813,7 @@ impl Service {
             let dir = agents::agent_dir(self.state.dir(), id);
             let user = vscode::separate_data_dir(self.state.dir()).join("User");
             let mut plan = vscode::plan_claude_in(&user, &dir, id, claude_settings(&dir.join("claude"))?)?;
-            let chat = vscode::plan_chat_in(&user, id, p.display_name, model, url, token.unwrap_or("(added when you connect)"), None)?;
+            let chat = vscode::plan_chat_in(&user, id, p.display_name, model, url, token.unwrap_or(editors::KEY_PLACEHOLDER), None)?;
             plan.owned.push((chat.file, chat.after));
             return Ok(plan);
         }
@@ -810,7 +823,7 @@ impl Service {
             let settings = claude_code::plan_connect(&dir.join("claude"), p, model, &self.helper, id, url, &routing).map_err(|e| e.to_string())?.after;
             vscode::plan_claude(&dir, id, settings)
         } else {
-            vscode::plan_chat(id, p.display_name, model, url, token.unwrap_or("(added when you connect)"), None)
+            vscode::plan_chat(id, p.display_name, model, url, token.unwrap_or(editors::KEY_PLACEHOLDER), None)
         }
     }
 
@@ -1581,9 +1594,20 @@ impl Service {
 
     /// The command that starts the app with this connection ("" when the
     /// app is opened from its own window).
-    pub fn launch_command(&self, id: &str) -> R<String> {
+    /// How the app starts with this connection: the command (empty when
+    /// there's none to type) and which button PrismFlow offers.
+    pub fn launch_info(&self, id: &str) -> R<LaunchInfo> {
         let record = self.state.get(id).map_err(|e| e.to_string())?.ok_or("Unknown connection.")?;
-        Ok(self.launch_line(&record.app_id, &record.profile, &record.managed_file))
+        let a = record.app_id.as_str();
+        let opens = if agents::spec(a).is_some() || codex::is_cli(a) || claude_code::is_cli(a) {
+            Opens::Terminal
+        } else if [vscode::SEPARATE_APP_ID, editors::ZED_SEPARATE].contains(&a)
+            || (cfg!(target_os = "macos") && (codex::is_desktop(a) || claude_desktop::is_claude_desktop(a))) {
+            Opens::App
+        } else {
+            Opens::Nothing // opened from its own window (IDEs, editors)
+        };
+        Ok(LaunchInfo { line: self.launch_line(a, &record.profile, &record.managed_file), opens })
     }
 
     pub fn launch(&self, id: &str) -> R<()> {
@@ -1655,7 +1679,7 @@ impl Service {
 
 #[cfg(target_os = "macos")]
 fn open_app(bundle_id: &str) -> R<()> {
-    let ok = std::process::Command::new("open").args(["-b", bundle_id]).status().map_err(|e| e.to_string())?.success();
+    let ok = std::process::Command::new("open").args(["-b", bundle_id]).status().is_ok_and(|s| s.success());
     if ok { Ok(()) } else { Err("The app could not be opened.".into()) }
 }
 
@@ -1669,10 +1693,10 @@ fn open_separate_codex(home: &std::path::Path) -> R<()> {
     if running {
         return Err("The Codex app is already open. Quit it (Codex → Quit), then press Open again.".into());
     }
-    std::fs::create_dir_all(home).map_err(|e| e.to_string())?;
+    std::fs::create_dir_all(home).map_err(|_| "PrismFlow couldn't set up the Codex app's own folder.")?;
     let ok = std::process::Command::new("open")
         .args(["-n", "-b", codex::DESKTOP_BUNDLE_ID, "--env", &format!("CODEX_HOME={}", home.display())])
-        .status().map_err(|e| e.to_string())?.success();
+        .status().is_ok_and(|s| s.success());
     if ok { Ok(()) } else { Err("The app could not be opened.".into()) }
 }
 

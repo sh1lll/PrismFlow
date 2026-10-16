@@ -23,6 +23,9 @@ pub const CONTINUE_IDE: &str = "continue_ide";
 /// Zed with its own data and settings (`zed --user-data-dir`), opened by PrismFlow.
 pub const ZED_SEPARATE: &str = "zed_separate";
 pub const ALL: [&str; 5] = [ROO, KILO, ZED, ZED_SEPARATE, CONTINUE_IDE];
+pub const MARKER: &str = "prismflowConnection";
+/// Shown in a preview where the connection's key will go.
+pub const KEY_PLACEHOLDER: &str = "(added when you connect)";
 
 /// The separate Zed's data folder; its settings are in `config/settings.json`
 /// (Zed's paths.rs: a custom data dir moves config_dir to `<dir>/config`).
@@ -52,14 +55,13 @@ pub fn open_zed_separate(state_dir: &Path, token: &str) -> Result<(), String> {
     }
     cmd.arg("--user-data-dir").arg(zed_separate_dir(state_dir))
         .stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null());
-    cmd.spawn().map_err(|e| format!("Could not open Zed: {e}"))?;
+    cmd.spawn().map_err(|_| "Zed could not be opened.")?;
     Ok(())
 }
 
 fn zed_file_for(id: &str, state_dir: &Path) -> PathBuf {
     if id == ZED_SEPARATE { zed_separate_dir(state_dir).join("config/settings.json") } else { zed_file() }
 }
-pub const MARKER: &str = "prismflowConnection";
 
 pub fn name(id: &str) -> &'static str {
     match id {
@@ -114,7 +116,7 @@ pub struct Plan {
 
 /// `token` is None for a preview (a placeholder is shown instead).
 pub fn plan(id: &str, owned_dir: &Path, state_dir: &Path, connection_id: &str, base: &str, model: &str, token: Option<&str>) -> Result<Plan, String> {
-    let key = token.unwrap_or("(added when you connect)");
+    let key = token.unwrap_or(KEY_PLACEHOLDER);
     match id {
         ROO => {
             let import = owned_dir.join("roo-import.json");

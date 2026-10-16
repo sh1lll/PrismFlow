@@ -61,7 +61,7 @@ pub fn open_separate(data_dir: &Path) -> Result<(), String> {
     };
     cmd.arg("--user-data-dir").arg(data_dir).arg("--new-window")
         .stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null());
-    cmd.spawn().map_err(|e| format!("Could not open VS Code: {e}"))?;
+    cmd.spawn().map_err(|_| "VS Code could not be opened.")?;
     Ok(())
 }
 

@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
 import { api, AppDetection, errText } from "../api";
 
-/** One plain sentence per app: what connecting it does. */
+/** One plain sentence per app: what connecting it does. Terminal agents
+ *  use the first note from detection, which already says which mode it is. */
 const WHAT: Record<string, string> = {
   codex_cli: "Uses your usual Codex chats. PrismFlow adds its own Codex profile; your Codex settings stay as they are.",
   codex_desktop: "Uses your usual Codex app, chats and all. PrismFlow switches its model and puts your old setting back when you disconnect.",
@@ -15,10 +16,6 @@ const WHAT: Record<string, string> = {
   zed_separate: "A Zed of its own with PrismFlow ready. Your usual Zed stays as it is.",
   claude_desktop: "PrismFlow switches your Claude Desktop to PrismFlow, and back to your Claude account when you disconnect.",
   claude_desktop_separate: "A second Claude Desktop just for PrismFlow. Your usual one stays signed in.",
-  aider: "PrismFlow starts Aider with its own settings. Your Aider setup stays as it is.",
-  cline: "PrismFlow starts Cline with its own settings. Your Cline setup stays as it is.",
-  pi: "PrismFlow starts Pi with its own settings. Your Pi setup stays as it is.",
-  hermes: "PrismFlow starts Hermes with its own settings. Your Hermes setup stays as it is.",
 };
 
 export default function Applications() {
@@ -44,13 +41,13 @@ export default function Applications() {
             <b>{a.display_name}</b>
             <span className={`badge ${a.installed ? "ok" : "muted"}`}>{a.installed ? "Found" : "Not installed"}</span>
           </div>
-          {a.installed && <div className="small muted">{WHAT[a.app_id] ?? ""}</div>}
+          {a.installed && <div className="small muted">{WHAT[a.app_id] ?? a.notes[0]}</div>}
           {a.installed && !a.version_verified && <div className="small warn">This version is newer than the one PrismFlow was tested with. Press Test after connecting.</div>}
           {a.installed && (
             <details className="mt-s">
               <summary className="small">Details</summary>
               <div className="small muted selectable">{a.version} · {a.path}</div>
-              {a.notes.map((n, i) => <div key={i} className="small muted">{n}</div>)}
+              {a.notes.slice(WHAT[a.app_id] ? 0 : 1).map((n, i) => <div key={i} className="small muted">{n}</div>)}
             </details>
           )}
         </div>
