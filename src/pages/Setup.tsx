@@ -63,8 +63,8 @@ export default function Setup({ onDone }: { onDone: () => void }) {
             return (
               <div className="mt">
                 <div className="small muted">How should it run?</div>
-                <label className="small mt-block"><input type="radio" className="check" checked={app === pair.shared} onChange={() => setApp(pair.shared)} /> <b>Shared</b> · uses your usual chats and settings</label>
-                <label className="small mt-block"><input type="radio" className="check" checked={app === pair.separate} onChange={() => setApp(pair.separate)} /> <b>Separate</b> · its own chats and settings, just for PrismFlow</label>
+                <label className="small mt-block"><input type="radio" className="check" checked={app === pair.shared} onChange={() => setApp(pair.shared)} /> <b>Shared</b> · {pair.sharedText ?? "uses your usual chats and settings"}</label>
+                <label className="small mt-block"><input type="radio" className="check" checked={app === pair.separate} onChange={() => setApp(pair.separate)} /> <b>Separate</b> · {pair.separateText ?? "its own chats and settings, just for PrismFlow"}</label>
               </div>
             );
           })()}

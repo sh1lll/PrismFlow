@@ -211,7 +211,7 @@ async fn proxy(State(inner): State<Arc<Inner>>, req: Request) -> Response {
     if path == "/muse-code/models" {
         return muse_models(&binding);
     }
-    if path == "/v1/models" && binding.connection_id.starts_with("claude_desktop:") {
+    if path == "/v1/models" && (binding.connection_id.starts_with("claude_desktop:") || binding.connection_id.starts_with("claude_desktop_separate:")) {
         return claude_desktop_models(&binding);
     }
     let upstream = match inner.upstream() {

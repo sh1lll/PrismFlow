@@ -3,7 +3,7 @@ import TestRunning from "./TestRunning";
 import { useEffect, useMemo, useState } from "react";
 import {
   api, priceText, APP_IDS, APP_NAME, AppId, Connection, ConnectPreview, ModelInfo, Provider, STATUS_LABEL, STEP_NAME, StageResult,
-  errText, launchHint, providerName, statusTone, when,
+  errText, providerName, statusTone, when,
 } from "../api";
 
 const OUTCOME: Record<string, { label: string; tone: string }> = {
@@ -12,6 +12,13 @@ const OUTCOME: Record<string, { label: string; tone: string }> = {
   Fail: { label: "Failed", tone: "err" },
   Skipped: { label: "Skipped", tone: "muted" },
 };
+
+/** How to start the app yourself, as PrismFlow would. */
+function StartCommand({ id }: { id: string }) {
+  const [line, setLine] = useState("");
+  useEffect(() => { api.launchCommand(id).then(setLine).catch(() => setLine("")); }, [id]);
+  return line ? <div className="small muted">How to start it yourself: <code className="selectable">{line}</code></div> : null;
+}
 
 function Stages({ stages }: { stages: StageResult[] }) {
   return (
@@ -179,7 +186,7 @@ function ConnectionCard({ c, providers, onChange }: { c: Connection; providers: 
   const [running, setRunning] = useState<number[]>([]);
   useEffect(() => { api.runningSessions(c.id).then(setRunning).catch(() => setRunning([])); }, [c]);
   const app = APP_NAME[c.app_id];
-  const desktop = c.app_id.endsWith("_desktop") || ["codex_desktop_separate", "vscode_separate", "zed_separate"].includes(c.app_id);
+  const desktop = c.app_id.endsWith("_desktop") || ["codex_desktop_separate", "vscode_separate", "zed_separate", "claude_desktop_separate"].includes(c.app_id);
 
   async function run(label: string, f: () => Promise<unknown>, ok?: string) {
     setBusy(label);
@@ -223,7 +230,7 @@ function ConnectionCard({ c, providers, onChange }: { c: Connection; providers: 
       {msg && <div className={`small mt pre-wrap ${msg.tone}`}>{msg.text}</div>}
       <details className="mt">
         <summary className="small">Details</summary>
-        <div className="small muted">How to start it yourself: <code className="selectable">{launchHint(c)}</code></div>
+        <StartCommand id={c.id} />
         {c.managed_file && <div className="small muted">PrismFlow's file: <code className="selectable">{c.managed_file}</code></div>}
         <div className="small muted">{c.route === "gateway" ? "Goes through PrismFlow (keep PrismFlow open)." : "Talks to the provider directly."}</div>
       </details>

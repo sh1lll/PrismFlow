@@ -89,7 +89,7 @@ type R<T> = Result<T, String>;
 
 /// Every application PrismFlow can connect.
 fn app_ids() -> Vec<&'static str> {
-    let mut v = vec![codex::APP_ID, codex::CLI_SEPARATE_APP_ID, codex::DESKTOP_APP_ID, codex::SEPARATE_APP_ID, claude_code::APP_ID, claude_code::SEPARATE_APP_ID, claude_desktop::APP_ID, jetbrains::APP_ID, vscode::CLAUDE_APP_ID, vscode::CLAUDE_SHARED_APP_ID, vscode::CHAT_APP_ID, vscode::SEPARATE_APP_ID];
+    let mut v = vec![codex::APP_ID, codex::CLI_SEPARATE_APP_ID, codex::DESKTOP_APP_ID, codex::SEPARATE_APP_ID, claude_code::APP_ID, claude_code::SEPARATE_APP_ID, claude_desktop::APP_ID, claude_desktop::SEPARATE_APP_ID, jetbrains::APP_ID, vscode::CLAUDE_APP_ID, vscode::CLAUDE_SHARED_APP_ID, vscode::CHAT_APP_ID, vscode::SEPARATE_APP_ID];
     v.extend(editors::ALL);
     v.extend(agents::AGENTS.iter().map(|a| a.id));
     v
@@ -118,7 +118,7 @@ pub fn route_for(app_id: &str, p: &ProviderDefinition) -> Option<Route> {
         a if codex::is_desktop(a) && codex_direct(p) && p.requires_key => Some(Route::Direct),
         a if codex::is_desktop(a) => Some(Route::Gateway),
         a if claude_code::is_cli(a) => Some(Route::Gateway),
-        claude_desktop::APP_ID => Some(Route::Gateway),
+        a if claude_desktop::is_claude_desktop(a) => Some(Route::Gateway),
         jetbrains::APP_ID => Some(Route::Gateway),
         a if vscode::is_vscode(a) => Some(Route::Gateway),
         a if editors::ALL.contains(&a) => Some(Route::Gateway),
@@ -145,6 +145,7 @@ pub fn app_name(app_id: &str) -> &'static str {
         codex::DESKTOP_APP_ID => "Codex app & VS Code",
         codex::SEPARATE_APP_ID => "Codex app (separate)",
         claude_desktop::APP_ID => "Claude Desktop",
+        claude_desktop::SEPARATE_APP_ID => "Claude Desktop (separate)",
         jetbrains::APP_ID => "JetBrains IDEs",
         vscode::CLAUDE_APP_ID => "Claude Code for VS Code (separate)",
         vscode::CLAUDE_SHARED_APP_ID => "Claude Code for VS Code (shared)",
@@ -644,13 +645,18 @@ impl Service {
         let p = provider(provider_id)?;
         let model = validate_model_id(model)?;
         let route = route_for(app_id, p).ok_or_else(|| match app_id {
-            a if codex::is_cli(a) || codex::is_desktop(a) || claude_code::is_cli(a) || a == claude_desktop::APP_ID || a == jetbrains::APP_ID || vscode::is_vscode(a) || editors::ALL.contains(&a) || agents::spec(a).is_some() => format!(
+            a if codex::is_cli(a) || codex::is_desktop(a) || claude_code::is_cli(a) || claude_desktop::is_claude_desktop(a) || a == jetbrains::APP_ID || vscode::is_vscode(a) || editors::ALL.contains(&a) || agents::spec(a).is_some() => format!(
                 "{} needs a base URL; custom providers are not supported in this build.", p.display_name
             ),
             other => format!("Unknown application '{other}'."),
         })?;
         let id = connection_id(app_id, p.id);
         let url = self.broker.url_for_config();
+        if app_id == claude_desktop::SEPARATE_APP_ID {
+            let root = claude_desktop::separate_root(self.state.dir());
+            let summary = claude_desktop::describe_separate(&root);
+            return Ok((p, route, config_engine::EditPlan { file: root, before: String::new(), after: String::new(), summary }));
+        }
         if app_id == claude_desktop::APP_ID {
             let summary = claude_desktop::describe_auto();
             return Ok((p, route, config_engine::EditPlan { file: claude_desktop::config_root(), before: String::new(), after: String::new(), summary }));
@@ -789,7 +795,7 @@ impl Service {
     fn profile_for(&self, app_id: &str, provider_id: &str) -> String {
         if agents::spec(app_id).is_some() {
             connection_id(app_id, provider_id).replace(':', "-")
-        } else if codex::is_desktop(app_id) || app_id == claude_desktop::APP_ID || app_id == jetbrains::APP_ID || vscode::is_vscode(app_id) || editors::ALL.contains(&app_id) {
+        } else if codex::is_desktop(app_id) || claude_desktop::is_claude_desktop(app_id) || app_id == jetbrains::APP_ID || vscode::is_vscode(app_id) || editors::ALL.contains(&app_id) {
             String::new() // desktop apps have no PrismFlow profile
         } else if claude_code::is_cli(app_id) {
             claude_code::profile_name(provider_id)
@@ -799,6 +805,13 @@ impl Service {
     }
 
     fn launch_line(&self, app_id: &str, profile: &str, file: &std::path::Path) -> String {
+        // The desktop apps are opened with macOS's `open`.
+        if !cfg!(target_os = "macos") && (codex::is_desktop(app_id) || claude_desktop::is_claude_desktop(app_id)) {
+            return String::new();
+        }
+        if app_id == claude_desktop::SEPARATE_APP_ID {
+            return format!("open -n -a Claude --args --user-data-dir={}", quote(&claude_desktop::separate_data_dir(self.state.dir()).display().to_string()));
+        }
         if app_id == claude_desktop::APP_ID {
             return format!("open -b {}", claude_desktop::BUNDLE_ID);
         }
@@ -847,7 +860,10 @@ impl Service {
             warnings.push(format!("Usage is charged to your {} account.", p.display_name));
         }
         let app = app_name(app_id);
-        if app_id == claude_desktop::APP_ID {
+        if app_id == claude_desktop::SEPARATE_APP_ID {
+            warnings.push("A second Claude Desktop, just for PrismFlow. Open it from PrismFlow.".into());
+            warnings.push("Your usual Claude Desktop stays signed in to your Claude account; both can be open at once.".into());
+        } else if app_id == claude_desktop::APP_ID {
             warnings.push("PrismFlow sets up Claude Desktop for you. Quit and reopen Claude Desktop afterwards.".into());
             warnings.push("While it's set up this way, Claude Desktop won't use your Claude account. Disconnect switches it back.".into());
         } else if app_id == vscode::CLAUDE_APP_ID {
@@ -938,6 +954,10 @@ impl Service {
             let jp = self.jetbrains_plan(p, validate_model_id(model)?, &id, &self.broker.url_for_config())?;
             agents::write(&jp.owned).map_err(|e| format!("Nothing usable was written: {e}"))?;
         }
+        if app_id == claude_desktop::SEPARATE_APP_ID {
+            let token = tokens::ensure(self.store.as_ref(), &id).map_err(|e| format!("Couldn't save a key for this app: {e}"))?;
+            claude_desktop::connect_auto_in(&claude_desktop::separate_root(self.state.dir()), &self.broker.url_for_config(), &token, &id)?;
+        }
         if app_id == claude_desktop::APP_ID {
             let token = tokens::ensure(self.store.as_ref(), &id).map_err(|e| format!("Couldn't save a key for this app: {e}"))?;
             if let Err(e) = claude_desktop::connect_auto(&self.broker.url_for_config(), &token, &id) {
@@ -957,7 +977,7 @@ impl Service {
             agents::write(&vp.owned).map_err(|e| format!("Nothing usable was written: {e}"))?;
             plan = config_engine::EditPlan { file: vp.file, before: vp.before, after: vp.after, summary: plan.summary };
         }
-        let applied = if agents::spec(app_id).is_some() || app_id == claude_desktop::APP_ID || app_id == editors::CONTINUE_IDE {
+        let applied = if agents::spec(app_id).is_some() || claude_desktop::is_claude_desktop(app_id) || app_id == editors::CONTINUE_IDE {
             config_engine::AppliedEdit { file: plan.file.clone(), backup_path: None }
         } else { config_engine::apply(&plan).map_err(|e| {
             let msg = format!("Writing {} failed; nothing was changed: {e}", plan.file.display());
@@ -1006,7 +1026,7 @@ impl Service {
         if record.route != Route::Gateway {
             return Err("These options only work when the app goes through PrismFlow.".into());
         }
-        if !claude_code::is_cli(&record.app_id) && record.app_id != claude_desktop::APP_ID && !routing.tiers.is_empty() {
+        if !claude_code::is_cli(&record.app_id) && !claude_desktop::is_claude_desktop(&record.app_id) && !routing.tiers.is_empty() {
             return Err("Different models per slot work with Claude Code and Claude Desktop only.".into());
         }
         if routing.fallbacks.len() > 5 {
@@ -1266,7 +1286,10 @@ impl Service {
 
     pub async fn disconnect(&self, id: &str) -> R<Option<String>> {
         let record = self.state.get(id).map_err(|e| e.to_string())?.ok_or("Unknown connection.")?;
-        let removed = if record.app_id == claude_desktop::APP_ID {
+        let removed = if record.app_id == claude_desktop::SEPARATE_APP_ID {
+            // The copy's chats stay in its folder; only PrismFlow's setup goes.
+            claude_desktop::disconnect_auto_in(&claude_desktop::separate_root(self.state.dir())).map(|()| None)
+        } else if record.app_id == claude_desktop::APP_ID {
             // Automatic setup: back to the Claude account, PrismFlow's entry removed.
             // Guided setup wrote nothing; revoking the token below is the disconnect.
             claude_desktop::disconnect_auto().map(|()| None)
@@ -1347,7 +1370,7 @@ impl Service {
     pub fn running_sessions(&self, id: &str) -> R<Vec<u32>> {
         let record = self.state.get(id).map_err(|e| e.to_string())?.ok_or("Unknown connection.")?;
         let procs = adapters::processes::list();
-        Ok(if record.app_id == claude_desktop::APP_ID || codex::is_desktop(&record.app_id) || record.app_id == jetbrains::APP_ID || vscode::is_vscode(&record.app_id) || editors::ALL.contains(&record.app_id.as_str()) {
+        Ok(if claude_desktop::is_claude_desktop(&record.app_id) || codex::is_desktop(&record.app_id) || record.app_id == jetbrains::APP_ID || vscode::is_vscode(&record.app_id) || editors::ALL.contains(&record.app_id.as_str()) {
             Vec::new() // desktop apps: restart is shown in the UI instead
         } else if agents::spec(&record.app_id).is_some() {
             let dir = agents::agent_dir(self.state.dir(), &record.id).display().to_string();
@@ -1500,8 +1523,20 @@ impl Service {
         Ok(path.display().to_string())
     }
 
+    /// The command that starts the app with this connection ("" when the
+    /// app is opened from its own window).
+    pub fn launch_command(&self, id: &str) -> R<String> {
+        let record = self.state.get(id).map_err(|e| e.to_string())?.ok_or("Unknown connection.")?;
+        Ok(self.launch_line(&record.app_id, &record.profile, &record.managed_file))
+    }
+
     pub fn launch(&self, id: &str) -> R<()> {
         let record = self.state.get(id).map_err(|e| e.to_string())?.ok_or("Unknown connection.")?;
+        if record.app_id == claude_desktop::SEPARATE_APP_ID {
+            claude_desktop::open_separate(self.state.dir())?;
+            self.diag.record(Level::Info, "launch", "Opened Claude Desktop (separate).");
+            return Ok(());
+        }
         if record.app_id == claude_desktop::APP_ID {
             open_app(claude_desktop::BUNDLE_ID)?;
             self.diag.record(Level::Info, "launch", "Opened Claude Desktop.");

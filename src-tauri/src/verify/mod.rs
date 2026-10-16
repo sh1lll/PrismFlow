@@ -294,7 +294,11 @@ async fn run_stages(
     // Stage 1 — configuration validation.
     let agent = crate::adapters::agents::spec(&record.app_id);
     let is_claude = claude_code::is_cli(&record.app_id);
-    let stage1 = if record.app_id == crate::adapters::claude_desktop::APP_ID {
+    let stage1 = if record.app_id == crate::adapters::claude_desktop::SEPARATE_APP_ID {
+        crate::adapters::claude_desktop::auto_active(&record.managed_file, &record.id)
+            .then(|| "The separate Claude Desktop is set up for PrismFlow.".to_string())
+            .ok_or_else(|| "The separate Claude Desktop is no longer set up for PrismFlow. Connect it again.".to_string())
+    } else if record.app_id == crate::adapters::claude_desktop::APP_ID {
         Ok("Gateway connection created. Claude Desktop's own settings hold the address and token you entered; PrismFlow does not read them.".to_string())
     } else if record.app_id == crate::adapters::jetbrains::APP_ID {
         check_jetbrains_config(&record.id)
@@ -420,7 +424,7 @@ async fn run_stages(
     if is_claude {
         return claude_agent_stages(env, provider, record, run, &secrets).await;
     }
-    if record.app_id == crate::adapters::claude_desktop::APP_ID {
+    if crate::adapters::claude_desktop::is_claude_desktop(&record.app_id) {
         return claude_desktop_stages(env, provider, record, run, &secrets).await;
     }
     if let Some(a) = agent {
@@ -612,8 +616,10 @@ async fn claude_desktop_stages(
         return ConnectionStatus::NeedsCredentials;
     };
     // Automatic setup: test with exactly what Claude Desktop holds.
-    let auto = crate::adapters::claude_desktop::auto_active(&record.id);
-    let (base, token) = match crate::adapters::claude_desktop::auto_profile().filter(|_| auto) {
+    // managed_file is the third-party settings folder this connection set up.
+    let root = &record.managed_file;
+    let auto = crate::adapters::claude_desktop::auto_active(root, &record.id);
+    let (base, token) = match crate::adapters::claude_desktop::auto_profile(root).filter(|_| auto) {
         Some(p) => (
             p["inferenceGatewayBaseUrl"].as_str().unwrap_or(&gw.url).to_string(),
             p["inferenceGatewayApiKey"].as_str().unwrap_or(&token).to_string(),

@@ -18,6 +18,54 @@ use std::process::Command;
 
 pub const APP_ID: &str = "claude_desktop";
 pub const BUNDLE_ID: &str = "com.anthropic.claudefordesktop";
+/// A second Claude Desktop just for PrismFlow, next to your signed-in one.
+/// Electron keeps one running copy per `--user-data-dir`, and in third-party
+/// mode Claude Desktop uses `<data dir>-3p` (checked 2026-10-16 with Claude
+/// Desktop 2.42304.0: both copies ran at once and the usual folders were
+/// not touched).
+pub const SEPARATE_APP_ID: &str = "claude_desktop_separate";
+
+pub fn is_claude_desktop(app_id: &str) -> bool {
+    app_id == APP_ID || app_id == SEPARATE_APP_ID
+}
+
+/// The separate copy's `--user-data-dir`.
+pub fn separate_data_dir(state_dir: &Path) -> PathBuf {
+    state_dir.join("claude-desktop-separate").join("data")
+}
+
+/// Where the separate copy keeps its third-party setup.
+pub fn separate_root(state_dir: &Path) -> PathBuf {
+    state_dir.join("claude-desktop-separate").join("data-3p")
+}
+
+pub fn detect_separate() -> AppDetection {
+    let mut d = detect();
+    d.app_id = SEPARATE_APP_ID.into();
+    d.display_name = "Claude Desktop (separate)".into();
+    d.notes = vec![
+        "A second Claude Desktop just for PrismFlow. Your usual one stays signed in to your Claude account.".into(),
+        "Open it from PrismFlow; both can be open at once.".into(),
+    ];
+    d
+}
+
+/// Opens the separate copy.
+#[cfg(target_os = "macos")]
+pub fn open_separate(state_dir: &Path) -> Result<(), String> {
+    let app = find_app().ok_or("Claude Desktop isn't installed.")?;
+    let data = separate_data_dir(state_dir);
+    std::fs::create_dir_all(&data).map_err(|e| e.to_string())?;
+    let ok = Command::new("open").arg("-n").arg("-a").arg(&app)
+        .arg("--args").arg(format!("--user-data-dir={}", data.display()))
+        .status().map_err(|e| e.to_string())?.success();
+    if ok { Ok(()) } else { Err("Claude Desktop could not be opened.".into()) }
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn open_separate(_state_dir: &Path) -> Result<(), String> {
+    Err("The separate Claude Desktop is macOS-only in this build.".into())
+}
 
 pub fn find_app() -> Option<PathBuf> {
     ["/Applications/Claude.app"]
@@ -186,9 +234,21 @@ pub fn describe_auto() -> Vec<String> {
     ]
 }
 
+/// What the separate copy's setup will write (for the preview).
+pub fn describe_separate(root: &Path) -> Vec<String> {
+    vec![
+        format!("Set up a second Claude Desktop in {}", root.parent().unwrap_or(root).display()),
+        "It uses PrismFlow; your usual Claude Desktop stays signed in to your Claude account".into(),
+    ]
+}
+
 /// Adds and selects PrismFlow's gateway configuration.
 pub fn connect_auto(gateway_url: &str, token: &str, connection_id: &str) -> Result<(), String> {
-    let lib = Library::load(&config_root())?;
+    connect_auto_in(&config_root(), gateway_url, token, connection_id)
+}
+
+pub fn connect_auto_in(root: &Path, gateway_url: &str, token: &str, connection_id: &str) -> Result<(), String> {
+    let lib = Library::load(root)?;
     if let Some(existing) = read(&lib.profile_path())? {
         if existing["inferenceCustomHeaders"][OWNER_HEADER].is_null() && !existing.as_object().is_some_and(|o| o.is_empty()) {
             return Err("Claude Desktop already has a configuration in PrismFlow's place. Remove it in Claude Desktop first.".into());
@@ -230,8 +290,8 @@ pub fn connect_auto(gateway_url: &str, token: &str, connection_id: &str) -> Resu
 }
 
 /// True when PrismFlow's configuration is the one Claude Desktop will use.
-pub fn auto_active(connection_id: &str) -> bool {
-    let Ok(lib) = Library::load(&config_root()) else { return false };
+pub fn auto_active(root: &Path, connection_id: &str) -> bool {
+    let Ok(lib) = Library::load(root) else { return false };
     let profile = read(&lib.profile_path()).ok().flatten();
     lib.meta.as_ref().is_some_and(|m| m["appliedId"] == PRISMFLOW_ID)
         && lib.mode["deploymentMode"] == "3p"
@@ -239,13 +299,17 @@ pub fn auto_active(connection_id: &str) -> bool {
 }
 
 /// The gateway values written for this connection (for testing them).
-pub fn auto_profile() -> Option<Value> {
-    read(&config_root().join(format!("configLibrary/{PRISMFLOW_ID}.json"))).ok().flatten()
+pub fn auto_profile(root: &Path) -> Option<Value> {
+    read(&root.join(format!("configLibrary/{PRISMFLOW_ID}.json"))).ok().flatten()
 }
 
 /// Removes PrismFlow's configuration; back to the Claude account if it was selected.
 pub fn disconnect_auto() -> Result<(), String> {
-    let lib = Library::load(&config_root())?;
+    disconnect_auto_in(&config_root())
+}
+
+pub fn disconnect_auto_in(root: &Path) -> Result<(), String> {
+    let lib = Library::load(root)?;
     let ours_listed = lib.meta.as_ref().is_some_and(|m| m["entries"].as_array().is_some_and(|e| e.iter().any(|x| x["id"] == PRISMFLOW_ID)));
     if !ours_listed && !lib.profile_path().exists() {
         return Ok(()); // nothing of PrismFlow's there; leave the files untouched
@@ -295,15 +359,15 @@ mod tests {
         std::fs::write(dir.path().join("claude_desktop_config.json"), r#"{"deploymentMode":"1p","keepMe":true}"#).unwrap();
 
         connect_auto("http://127.0.0.1:47821/", "pft_tok", "claude_desktop:ollama").unwrap();
-        assert!(auto_active("claude_desktop:ollama"));
-        let p = auto_profile().unwrap();
+        assert!(auto_active(dir.path(), "claude_desktop:ollama"));
+        let p = auto_profile(dir.path()).unwrap();
         assert_eq!(p["inferenceGatewayBaseUrl"], "http://127.0.0.1:47821");
         assert_eq!(p["inferenceGatewayAuthScheme"], "bearer");
         let mode: Value = serde_json::from_str(&std::fs::read_to_string(dir.path().join("claude_desktop_config.json")).unwrap()).unwrap();
         assert_eq!(mode, json!({"deploymentMode": "3p", "keepMe": true}));
 
         disconnect_auto().unwrap();
-        assert!(!auto_active("claude_desktop:ollama"));
+        assert!(!auto_active(dir.path(), "claude_desktop:ollama"));
         let meta: Value = serde_json::from_str(&std::fs::read_to_string(dir.path().join("configLibrary/_meta.json")).unwrap()).unwrap();
         assert_eq!(meta, json!({"entries": [{"id": DEFAULT_ID, "name": "Default"}], "appliedId": DEFAULT_ID}));
         let mode: Value = serde_json::from_str(&std::fs::read_to_string(dir.path().join("claude_desktop_config.json")).unwrap()).unwrap();
@@ -319,5 +383,15 @@ mod tests {
         assert_eq!(meta["entries"].as_array().unwrap().len(), 2);
         disconnect_auto().unwrap();
         std::env::remove_var("PRISMFLOW_CLAUDE_3P_DIR");
+
+        // The separate copy: its own root, the same library layout.
+        let state = tempfile::tempdir().unwrap();
+        let root = separate_root(state.path());
+        connect_auto_in(&root, "http://127.0.0.1:1", "t", "claude_desktop_separate:x").unwrap();
+        assert!(auto_active(&root, "claude_desktop_separate:x"));
+        assert_eq!(root.file_name().unwrap(), "data-3p");
+        assert_eq!(separate_data_dir(state.path()).parent(), root.parent(), "Claude Desktop looks for <data dir>-3p");
+        disconnect_auto_in(&root).unwrap();
+        assert!(!auto_active(&root, "claude_desktop_separate:x"));
     }
 }

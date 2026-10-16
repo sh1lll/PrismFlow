@@ -25,8 +25,8 @@ async fn claude_desktop_gateway_profile() {
     std::fs::write(lib.path().join("claude_desktop_config.json"), r#"{"deploymentMode":"1p"}"#).unwrap();
 
     cd::connect_auto(&url, &token, "claude_desktop:ollama").unwrap();
-    assert!(cd::auto_active("claude_desktop:ollama"));
-    let p = cd::auto_profile().unwrap();
+    assert!(cd::auto_active(&cd::config_root(), "claude_desktop:ollama"));
+    let p = cd::auto_profile(&cd::config_root()).unwrap();
     let base = p["inferenceGatewayBaseUrl"].as_str().unwrap().to_string();
     let key = p["inferenceGatewayApiKey"].as_str().unwrap().to_string();
     let client = reqwest::Client::new();

@@ -38,9 +38,9 @@ export default function RoutingPanel({ c, providers, onSaved }: { c: Connection;
   const [r, setR] = useState<Routing>(c.routing);
   const [msg, setMsg] = useState<{ tone: string; text: string } | null>(null);
   const [busy, setBusy] = useState(false);
-  const claude = c.app_id === "claude_code";
+  const claude = c.app_id === "claude_code" || c.app_id === "claude_code_separate";
   // Claude Desktop shows Claude model names; each name uses its slot's model.
-  const slots = claude || c.app_id === "claude_desktop";
+  const slots = claude || c.app_id === "claude_desktop" || c.app_id === "claude_desktop_separate";
   const tierList = claude ? TIERS : TIERS.filter((t) => t.tier !== "subagent");
   const usable = providers.filter((p) => (p.has_credential || p.key_optional) && p.routes[c.app_id as AppId]);
 

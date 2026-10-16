@@ -685,6 +685,11 @@ fn session_delete(sessions: State<'_, sessions::Sessions>, id: String) -> Cmd<()
 }
 
 #[tauri::command]
+fn launch_command(svc: State<'_, Arc<Service>>, id: String) -> Cmd<String> {
+    svc.launch_command(&id)
+}
+
+#[tauri::command]
 fn list_connections(svc: State<'_, Arc<Service>>) -> Cmd<Vec<state::ConnectionRecord>> {
     svc.connections()
 }
@@ -843,6 +848,7 @@ pub fn run() {
         .manage(BotState { bots: bots::Bots::default(), dir: dir.clone() })
         .invoke_handler(tauri::generate_handler![
             cancel_verify,
+            launch_command,
             verify_progress,
             keychain_waiting,
             editor_guide,

@@ -72,7 +72,7 @@ pub struct AppDetection {
 }
 
 pub fn detect_all() -> Vec<AppDetection> {
-    let mut all = vec![codex::detect(), codex::detect_cli_separate(), codex::detect_desktop(), codex::detect_separate(), claude_code::detect(), claude_code::detect_separate(), claude_desktop::detect(), jetbrains::detect(), vscode::detect(vscode::CLAUDE_APP_ID), vscode::detect(vscode::CHAT_APP_ID)];
+    let mut all = vec![codex::detect(), codex::detect_cli_separate(), codex::detect_desktop(), codex::detect_separate(), claude_code::detect(), claude_code::detect_separate(), claude_desktop::detect(), claude_desktop::detect_separate(), jetbrains::detect(), vscode::detect(vscode::CLAUDE_APP_ID), vscode::detect(vscode::CHAT_APP_ID)];
     all.extend(editors::ALL.iter().map(|id| editors::detect(id)));
     all.extend(agents::AGENTS.iter().map(agents::detect));
     all
