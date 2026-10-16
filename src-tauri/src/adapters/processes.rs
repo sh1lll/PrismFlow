@@ -1,4 +1,4 @@
-//! Running-agent awareness (SPEC §9): a config change does not reach an agent
+//! Running-agent awareness: a config change does not reach an agent
 //! process that is already running, so after Connect, Switch or Disconnect
 //! PrismFlow finds sessions still on the old settings and says so.
 

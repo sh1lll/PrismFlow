@@ -1,4 +1,4 @@
-//! Local broker tokens (ADR-006 BROKER route). One token per gateway
+//! Local broker tokens. One token per gateway
 //! connection: 32 random bytes, stored only in the secure store, handed to
 //! agents at runtime by `prismflow token print`. The broker keeps SHA-256
 //! digests, never the tokens themselves.

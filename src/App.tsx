@@ -30,7 +30,7 @@ export default function App() {
       try { localStorage.setItem("prismflow.setupSeen", "1"); } catch { /* ignore */ }
     }).catch(() => {});
   }, []);
-  // Remote access must be visibly on at all times (ADR-013).
+  // Remote access must be visibly on at all times.
   const [remoteUrl, setRemoteUrl] = useState<string | null>(null);
   const refreshRemote = () => api.companionState().then((s) => setRemoteUrl(s.enabled ? s.url : null)).catch(() => setRemoteUrl(null));
   useEffect(() => { refreshRemote(); const t = setInterval(refreshRemote, 15000); return () => clearInterval(t); }, []);

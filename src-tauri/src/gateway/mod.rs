@@ -1,4 +1,4 @@
-//! PrismFlow's gateway (SPEC §5, ADR-005): a loopback-only Rust broker that
+//! PrismFlow's gateway: a loopback-only Rust broker that
 //! owns the trust boundary, plus a supervised translation engine behind it.
 //!
 //! Agents → broker (local token) → engine (internal key, `x-target-provider`)
@@ -20,7 +20,7 @@ use supervisor::{EngineChild, GatewayRuntime, UpstreamSpec};
 use tokio::sync::{oneshot, watch};
 use tokio::task::JoinHandle;
 
-/// Fixed so agent configs keep a stable URL (plan D3).
+/// Fixed so agent configs keep a stable URL.
 pub const DEFAULT_PORT: u16 = 47821;
 const MAX_RESTARTS: u32 = 5;
 const STABLE_AFTER: Duration = Duration::from_secs(60);
@@ -30,7 +30,7 @@ pub fn configured_port() -> u16 {
     std::env::var("PRISMFLOW_BROKER_PORT").ok().and_then(|p| p.parse().ok()).unwrap_or(DEFAULT_PORT)
 }
 
-/// User-tunable gateway limits (another tool runtime settings parity). Persisted by
+/// User-tunable gateway limits. Persisted by
 /// the service; `0` disables a limit.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, serde::Deserialize)]
 #[serde(default)]
@@ -254,7 +254,7 @@ impl Broker {
     }
 
     /// The URL written into agent configs. Stable across restarts because
-    /// the production port is fixed (plan D3).
+    /// the production port is fixed.
     pub fn url_for_config(&self) -> String {
         self.url()
     }

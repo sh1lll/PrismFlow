@@ -1,7 +1,7 @@
 {
   "schema": 1,
   "catalog_version": "2026.10.14",
-  "_note": "Verified facts only (SPEC §3.3). Every entry's base_url answered GET {base_url}{model_list_path} on verified_at: 200 with an OpenAI-style list, or 401/403 without a key. Protocols list only what PrismFlow has evidence for. Capabilities are never stored here.",
+  "_note": "Verified facts only. Every entry's base_url answered GET {base_url}{model_list_path} on verified_at: 200 with an OpenAI-style list, or 401/403 without a key. Protocols list only what PrismFlow has evidence for. Capabilities are never stored here.",
   "providers": [
     {
       "id": "openrouter",

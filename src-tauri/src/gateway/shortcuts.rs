@@ -1,12 +1,11 @@
 //! Local answers for Claude Code's background requests.
 //!
 //! Next to every real turn, Claude Code sends side requests: a session title
-//! and a "suggest the next prompt" call (captured from 2.1.207,
-//! `docs/evidence/2026-10-15-claude-code-background-calls.md`). Older
+//! and a "suggest the next prompt" call (captured from 2.1.207). Older
 //! versions also sent a quota probe, a bash command-prefix check and a
 //! file-path extraction. Each one costs a full-context call to the user's
 //! model, and on a single local model they queue in front of the real turn.
-//! another tool answers these locally; PrismFlow answers them itself.
+//! PrismFlow answers these itself.
 //!
 //! Detection matches only the exact request shapes Claude Code sends, so an
 //! ordinary request never takes this path.

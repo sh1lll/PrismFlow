@@ -220,7 +220,7 @@ function ImportKeys({ onDone }: { onDone: () => void }) {
   return (
     <div className="card">
       <div className="section-title">Import keys you already have</div>
-      <div className="small muted">PrismFlow looks for keys in your terminal settings (like OPENAI_API_KEY) and in another tool's settings. You choose which to import.</div>
+      <div className="small muted">PrismFlow looks for keys in your terminal settings (like OPENAI_API_KEY) and in a .env file in your home folder. You choose which to import.</div>
       {!found && <button className="ghost mt" disabled={busy} onClick={scan}>{busy ? "Looking…" : "Look for keys"}</button>}
       {found && found.length === 0 && <div className="small mt">No keys found.</div>}
       {found && found.length > 0 && (

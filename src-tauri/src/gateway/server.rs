@@ -91,7 +91,7 @@ fn muse_models(binding: &Binding) -> Response {
     }]})).into_response()
 }
 
-/// The Claude model names Claude Desktop shows, like another tool's list. Each name
+/// The Claude model names Claude Desktop shows. Each name
 /// routes to the model set for its slot (Fable/Opus/Sonnet/Haiku), or to
 /// the connection's own model when that slot isn't set.
 pub const CLAUDE_DESKTOP_MODELS: &[(&str, &str, &str)] = &[

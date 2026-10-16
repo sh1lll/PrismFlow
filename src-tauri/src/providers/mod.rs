@@ -1,7 +1,7 @@
-//! Provider registry (SPEC §3). Built-in entries come from the versioned
-//! catalog `catalog/providers.json` (the data layer of SPEC §21.2); custom
+//! Provider registry. Built-in entries come from the versioned
+//! catalog `catalog/providers.json`; custom
 //! providers are added at runtime by the user, after URL validation and
-//! explicit consent (SPEC §6.3).
+//! explicit consent.
 //!
 //! Entries are parsed once and leaked into `'static` so every caller keeps a
 //! cheap `&'static ProviderDefinition`. Custom providers leak a few hundred
@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use std::net::{IpAddr, ToSocketAddrs};
 use std::sync::{OnceLock, RwLock};
 
-/// Supported wire protocols (SPEC §5.2 — these are NOT interchangeable).
+/// Supported wire protocols (these are not interchangeable).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Protocol {
     OpenAiChat,
@@ -49,7 +49,7 @@ pub enum CredentialSource {
     CopilotCli,
 }
 
-/// A provider definition. Only verified facts live here (SPEC §3.3):
+/// A provider definition. Only verified facts live here:
 /// identity, base URL, protocol family, docs. Capabilities are discovered
 /// and verified at runtime, never asserted statically.
 #[derive(Debug, Clone, Serialize)]
@@ -59,8 +59,8 @@ pub struct ProviderDefinition {
     pub base_url: &'static str,
     pub protocols: &'static [Protocol],
     pub model_list_path: Option<&'static str>,
-    /// A documented, side-effect-free endpoint that fails on a bad key
-    /// (SPEC §9 Stage 2). None = no safe check known; Stage 2 is skipped.
+    /// A documented, side-effect-free endpoint that fails on a bad key.
+    /// None = no safe check known; the key check is skipped.
     pub auth_check_path: Option<&'static str>,
     pub auth_style: AuthStyle,
     /// Empty = no public page; the UI renders "—" rather than a dead link.
@@ -71,10 +71,10 @@ pub struct ProviderDefinition {
     pub requires_key: bool,
     /// Added by the user, not part of the shipped catalog.
     pub custom: bool,
-    /// Date the facts were last checked (SPEC §21.3); empty for custom.
+    /// Date the facts were last checked; empty for custom.
     pub verified_at: &'static str,
     pub credential_source: CredentialSource,
-    /// A model to suggest (another tool's example for this provider); empty = none.
+    /// A model to suggest for this provider; empty = none.
     pub example_model: &'static str,
 }
 
@@ -259,7 +259,7 @@ pub fn is_loopback_host(host: &str) -> bool {
 }
 
 /// Private, link-local, CGNAT, unique-local and unspecified addresses: the
-/// SSRF-sensitive ranges (SPEC §6.3). Loopback is reported separately.
+/// SSRF-sensitive ranges. Loopback is reported separately.
 pub fn is_private_ip(ip: IpAddr) -> bool {
     match ip {
         IpAddr::V4(v4) => {
@@ -289,7 +289,7 @@ pub struct UrlCheck {
     pub warnings: Vec<String>,
 }
 
-/// Validate a custom provider base URL (SPEC §6.3). DNS is resolved so a
+/// Validate a custom provider base URL. DNS is resolved so a
 /// public-looking name that points into the LAN is caught.
 pub fn check_custom_url(raw: &str) -> Result<UrlCheck, String> {
     let url = reqwest::Url::parse(raw.trim()).map_err(|_| "Enter the full address, like https://ai.example.com/v1".to_string())?;
@@ -362,12 +362,12 @@ mod tests {
         assert!(!catalog_version().is_empty());
     }
 
-    /// The owner's another tool provider list (2026-10-15): every entry
-    /// must stay available (Azure, Vertex and Cloudflare are presets in Add your own).
+    /// Providers people rely on must stay available (Azure, Vertex and
+    /// Cloudflare are presets in Add your own).
     #[test]
-    fn other_list_is_covered() {
+    fn core_provider_list_is_covered() {
         for id in ["nvidia_nim", "openrouter", "groq", "cline_pass", "chatgpt", "openai", "github_copilot", "xai", "alibaba_cloud", "qwencloud", "qwencloud_coding", "together", "deepinfra", "siliconflow", "nebius", "chutes", "featherless", "agnes", "zenmux", "wandb", "anthropic", "gemini", "deepseek", "mistral", "mistral_codestral", "opencode_zen", "opencode_go", "vercel", "bedrock", "huggingface", "cohere", "wafer", "moonshot", "kimi_code", "minimax", "cerebras", "sambanova", "kilo", "fireworks", "novita", "zai_coding", "zai", "tokenrouter", "nararoute", "poolside", "llm7", "scaleway", "lightning", "experiential", "cheaperinference", "orcarouter", "atlascloud", "xkiro", "opper", "ollama_cloud", "lmstudio", "llamacpp", "ollama"] {
-            assert!(get(id).is_some(), "{id} from another tool's list is missing");
+            assert!(get(id).is_some(), "{id} is missing");
         }
     }
 

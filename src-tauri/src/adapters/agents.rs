@@ -1,7 +1,7 @@
 //! Terminal coding agents launched through PrismFlow (Aider, Cline, Pi,
 //! Hermes, OpenCode, DeepSeek Harness, Grok Build, Muse Code, Qwen Code,
 //! Goose, Crush, Factory Droid, Continue CLI, GitHub Copilot CLI).
-//! Mechanisms verified 2026-10-14..16 (research/agent-mechanisms-…md).
+//! Mechanisms verified 2026-10-14..16 against each agent's own release.
 //!
 //! Each connection owns a directory in PrismFlow's state dir holding a
 //! launch script and whatever config the agent needs from PrismFlow. Two

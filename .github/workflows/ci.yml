@@ -1,4 +1,4 @@
-# Build and test PrismFlow on every supported desktop platform (SPEC §17).
+# Build and test PrismFlow on every supported desktop platform.
 name: ci
 on:
   push:

@@ -1,7 +1,6 @@
 //! Code sessions: Codex runs in a folder the user picks, driven from
 //! PrismFlow's window, and each turn may use a different Codex connection
-//! (another tool's "browser sessions", ADR-018). Built on documented CLI behaviour
-//! (research/agent-mechanisms-…md): `codex exec --json` for the first turn,
+//! Built on documented CLI behaviour: `codex exec --json` for the first turn,
 //! `codex exec -p <profile> resume --json <thread>` for the next ones.
 //! Turns keep running when the user looks at another page.
 

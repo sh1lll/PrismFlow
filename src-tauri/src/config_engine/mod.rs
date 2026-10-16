@@ -1,5 +1,5 @@
 //! Comment-preserving, atomic TOML editing for managed configuration blocks.
-//! SPEC §7: structured parsers only (toml_edit preserves comments and
+//! Structured parsers only (toml_edit preserves comments and
 //! formatting); backup before write; atomic rename; managed content lives
 //! under the `prismflow_` prefix so removal never touches user content.
 
@@ -42,7 +42,7 @@ fn toml_value(v: &TomlVal) -> Item {
     }
 }
 
-/// A planned, previewable edit to one TOML file (SPEC §7: diff previews).
+/// A planned, previewable edit to one TOML file.
 #[derive(Debug)]
 pub struct EditPlan {
     pub file: PathBuf,
@@ -51,7 +51,7 @@ pub struct EditPlan {
     pub summary: Vec<String>,
 }
 
-/// What a successful apply did — the rollback record (SPEC §6.4).
+/// What a successful apply did — the rollback record.
 #[derive(Debug)]
 pub struct AppliedEdit {
     pub file: PathBuf,

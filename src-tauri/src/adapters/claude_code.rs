@@ -1,4 +1,4 @@
-//! Claude Code CLI adapter (SPEC §4.1). Always brokered: Claude Code speaks
+//! Claude Code CLI adapter. Always brokered: Claude Code speaks
 //! Anthropic Messages, so every provider is reached through the gateway's
 //! Anthropic front (GATEWAY-A).
 //!
@@ -35,7 +35,7 @@ pub const VERIFIED_MAX: (u32, u32, u32) = (2, 1, u32::MAX);
 /// Every model slot Claude Code may use (2.1.207 strings), each set to a
 /// PrismFlow alias the broker resolves (`routing`). Unknown slots fall back
 /// to the connection's own model at the broker, never to a model the user
-/// did not pick (plan D4).
+/// did not pick.
 pub const MODEL_ENV: &[(&str, Tier)] = &[
     ("ANTHROPIC_MODEL", Tier::Default),
     ("ANTHROPIC_DEFAULT_FABLE_MODEL", Tier::Fable),

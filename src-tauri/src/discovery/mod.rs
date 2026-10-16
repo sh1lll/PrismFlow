@@ -1,6 +1,6 @@
-//! Provider HTTP probes: model discovery (SPEC §8) and credential checks
-//! (SPEC §9 Stage 2). Redirects are never followed, so a credential is
-//! never forwarded to a host the user did not choose (SPEC §6.3).
+//! Provider HTTP probes: model discovery and credential checks.
+//! Redirects are never followed, so a credential is
+//! never forwarded to a host the user did not choose.
 
 use crate::providers::AuthStyle;
 use serde::Serialize;
@@ -30,7 +30,7 @@ impl std::fmt::Display for ProbeError {
     }
 }
 
-/// A discovered model. Listing is not availability (SPEC §8): these fields
+/// A discovered model. Listing is not availability: these fields
 /// are provider-reported metadata, never verified capabilities.
 #[derive(Debug, Clone, Serialize, PartialEq)]
 pub struct ModelInfo {

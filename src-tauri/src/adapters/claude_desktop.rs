@@ -1,13 +1,13 @@
 //! Claude Desktop (third-party inference).
 //!
-//! Two ways, like another tool:
+//! Two ways:
 //! - **Automatic** (default): PrismFlow adds a "PrismFlow" gateway entry to
 //!   Claude Desktop's third-party configuration library (`Claude-3p/
 //!   configLibrary`), selects it and switches the app to third-party mode.
 //!   Claude Desktop picks it up when reopened. Disconnect selects the empty
 //!   "Default" entry, switches back to your Claude account, and removes
 //!   PrismFlow's entry. Layout checked 2026-10-15 against Claude Desktop
-//!   2.37337.1's library on this Mac and another tool's integration (facts only).
+//!   2.37337.1's library.
 //! - **Guided**: the values to enter in Developer → Configure Third-Party
 //!   Inference yourself (`guided_setup`).
 
@@ -134,8 +134,8 @@ pub fn guided_setup(gateway_url: &str, token: String, model: &str) -> GuidedSetu
 
 /// PrismFlow's entry id in the library (stable, PrismFlow's own namespace).
 pub const PRISMFLOW_ID: &str = "8b6c2f1e-5a3d-5c7e-9f10-7072697366ff";
-/// The empty "Default" entry Claude Desktop falls back to (shared with another tool,
-/// so both tools agree on the neutral profile).
+/// The empty "Default" entry Claude Desktop falls back to, the same id
+/// other tools use, so they agree on the neutral profile.
 pub const DEFAULT_ID: &str = "dfa3d5c4-9f50-5e40-8aac-a12c8c32a0e0";
 pub const OWNER_HEADER: &str = "X-PrismFlow-Connection";
 
@@ -357,7 +357,7 @@ mod tests {
     fn auto_setup_round_trip_keeps_the_library_valid() {
         let dir = tempfile::tempdir().unwrap();
         std::env::set_var("PRISMFLOW_CLAUDE_3P_DIR", dir.path());
-        // This Mac's starting point: another tool left a neutral Default, account mode on.
+        // A library another tool set up: a neutral Default, account mode on.
         std::fs::create_dir_all(dir.path().join("configLibrary")).unwrap();
         std::fs::write(dir.path().join("configLibrary/_meta.json"), format!(r#"{{"entries":[{{"id":"{DEFAULT_ID}","name":"Default"}}],"appliedId":"{DEFAULT_ID}"}}"#)).unwrap();
         std::fs::write(dir.path().join(format!("configLibrary/{DEFAULT_ID}.json")), "{}").unwrap();

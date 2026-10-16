@@ -1,7 +1,6 @@
 # Third-party components — embedded gateway runtime
 
-Generated from `package-lock.json` on 2026-10-14. Regenerate on every upgrade
-(ADR-005 amendment: pin, review, re-test).
+Generated from `package-lock.json` on 2026-10-14. Regenerate on every upgrade.
 
 **Engine:** `@the-next-ai/ai-gateway` 1.0.21. MIT License, Copyright (c) 2026
 musistudio. Tarball sha256 `21732fa5d077390ae1f92a42d7cce9cfe94500f8ea9c2a2be15df62ad7ef5990`.

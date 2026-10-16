@@ -1,4 +1,4 @@
-//! Persistent, nonsecret connection state (SPEC §11 persistence, §13.13).
+//! Persistent, nonsecret connection state.
 //! No secret ever lands here: credentials live only in the secure store.
 
 use crate::config_engine::{atomic_write, ConfigError};
@@ -6,8 +6,8 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-/// Connection statuses — SPEC §9 vocabulary, plus `Unverified`, which
-/// SPEC §13.14 requires: configured but not yet (re)verified.
+/// Connection statuses, plus `Unverified`: configured but not yet
+/// (re)verified.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ConnectionStatus {
     NotConfigured,
@@ -48,7 +48,7 @@ pub struct VerificationReport {
     pub status: ConnectionStatus,
 }
 
-/// How the app reaches the provider (COMPATIBILITY-MATRIX §C paths).
+/// How the app reaches the provider.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Route {

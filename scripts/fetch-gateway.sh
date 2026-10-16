@@ -1,6 +1,6 @@
 #!/bin/sh
 # Install the pinned ai-gateway runtime into src-tauri/gateway/node_modules
-# and verify it (ADR-005 hardening amendment). Safe to re-run.
+# and verify it. Safe to re-run.
 set -eu
 cd "$(dirname "$0")/../src-tauri/gateway"
 

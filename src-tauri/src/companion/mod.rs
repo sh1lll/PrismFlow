@@ -1,4 +1,4 @@
-//! Companion API for remote devices (docs/security/remote-access.md).
+//! Companion API for remote devices.
 //! Default off. When on, it listens with TLS on one user-chosen address,
 //! pairs devices with one-time codes, and gives them read-only access (plus
 //! a few actions if the user allows them per device). It never exposes keys,

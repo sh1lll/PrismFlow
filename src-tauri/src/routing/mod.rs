@@ -1,5 +1,5 @@
 //! Model routing for gateway connections: per-tier models, a reasoning
-//! policy, and ordered fallbacks (another tool parity, ADR-018). Everything here is
+//! policy, and ordered fallbacks. Everything here is
 //! pure; the broker applies it per request.
 //!
 //! Claude Code's model slots are set to stable aliases (`prismflow-opus`,
@@ -59,7 +59,7 @@ impl Tier {
     }
 
     /// A Claude model name (`claude-opus-4-…`, `claude-3-5-haiku-…`) → its
-    /// slot, the way another tool maps them; Claude Desktop sends these names.
+    /// slot; Claude Desktop sends these names.
     pub fn from_claude_name(model: &str) -> Option<Tier> {
         let m = model.to_ascii_lowercase();
         if !m.starts_with("claude") {
@@ -69,7 +69,7 @@ impl Tier {
     }
 }
 
-/// Reasoning policy (another tool's Off / From client / Low…Max, per-tier Inherit).
+/// Reasoning policy (Off / From client / Low…Max, per-tier Inherit).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Effort {
@@ -255,7 +255,7 @@ mod tests {
         r.tiers.insert(Tier::Haiku, ModelRef::new("groq", "small"));
         assert_eq!(r.plan(&primary(), Some("prismflow-haiku")).1, vec![ModelRef::new("groq", "small")]);
         assert_eq!(r.plan(&primary(), Some("prismflow-opus")).1, vec![primary()]);
-        // Claude names map to their slot (OTHER-style); an unset slot uses the primary.
+        // Claude names map to their slot; an unset slot uses the primary.
         assert_eq!(r.plan(&primary(), Some("claude-sonnet-x")), (Tier::Sonnet, vec![primary()]));
         assert_eq!(r.plan(&primary(), Some("gpt-4o")), (Tier::Default, vec![primary()]));
         assert_eq!(r.plan(&primary(), None).1, vec![primary()]);

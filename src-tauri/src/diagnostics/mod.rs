@@ -1,4 +1,4 @@
-//! Sanitized diagnostics (SPEC §6, §13.12). Every message is redacted before
+//! Sanitized diagnostics. Every message is redacted before
 //! it is stored; known secrets are scrubbed verbatim and anything shaped like
 //! a provider key or bearer token is masked heuristically.
 

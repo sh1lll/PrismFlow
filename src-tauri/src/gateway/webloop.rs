@@ -1,4 +1,4 @@
-//! Local WebSearch/WebFetch for the Anthropic front (ADR-018).
+//! Local WebSearch/WebFetch for the Anthropic front.
 //!
 //! Claude Code's WebSearch is an Anthropic *server* tool: Anthropic runs it.
 //! Other providers cannot, so when web tools are on, the broker swaps the

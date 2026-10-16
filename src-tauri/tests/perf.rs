@@ -1,4 +1,4 @@
-//! Gateway performance harness for the SPEC §21.4 budgets:
+//! Gateway performance harness for PrismFlow's budgets:
 //! - added time-to-first-token ≤ 150 ms at p95,
 //! - streaming throughput degradation ≤ 5 %,
 //! - idle memory (this process + engine child) ≤ 250 MB.
@@ -166,7 +166,7 @@ async fn run() -> serde_json::Value {
     let mem_ok = idle <= BUDGET_IDLE_MB;
     let pass = mem_ok && scenarios.values().all(|s| s["pass"].as_bool() == Some(true));
     serde_json::json!({
-        "spec": "SPEC §21.4",
+        "budgets": "prismflow-v1",
         "samples": SAMPLES,
         "upstream": {"first_token_ms": FIRST_TOKEN_DELAY.as_millis(), "chunk_interval_ms": CHUNK_INTERVAL.as_millis(), "chunks": CHUNKS},
         "scenarios": scenarios,

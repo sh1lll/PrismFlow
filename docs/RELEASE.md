@@ -28,7 +28,7 @@ Linux packages (`.deb`, `.rpm`, AppImage) are signed by the updater key; distro 
 scripts/release.sh
 ```
 
-The script refuses to run if any required secret is missing; there are no unsigned release builds (SPEC §21.1). CI runs the same script per platform in `.github/workflows/release.yml` when a `v*` tag is pushed, reading the secrets from the repository's Actions secrets.
+The script refuses to run if any required secret is missing; there are no unsigned release builds. CI runs the same script per platform in `.github/workflows/release.yml` when a `v*` tag is pushed, reading the secrets from the repository's Actions secrets.
 
 ## Verified locally (2026-10-14)
 

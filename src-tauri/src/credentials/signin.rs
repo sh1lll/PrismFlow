@@ -1,5 +1,5 @@
 //! Sign-ins the user already made with a vendor's own tool, read at the
-//! moment of use and never stored by PrismFlow (ADR-018 guardrails).
+//! moment of use and never stored by PrismFlow.
 //!
 //! - GitHub: `gh auth token` (the GitHub CLI's official sign-in).
 //! - ChatGPT: the access token `codex login` saved in `$CODEX_HOME/auth.json`.

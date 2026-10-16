@@ -47,7 +47,7 @@ pub struct UninstallItem {
     pub detail: String,
 }
 
-/// SPEC §23. `complete` is false when a step failed; nothing after a failed
+/// What uninstall did. `complete` is false when a step failed; nothing after a failed
 /// restore is removed, so the user keeps keys and state to fix it.
 #[derive(Debug, Clone, Serialize)]
 pub struct UninstallReport {
@@ -100,7 +100,7 @@ fn provider(id: &str) -> R<&'static ProviderDefinition> {
 /// The matrix decision for an (app, provider) pair; None = unsupported.
 pub fn route_for(app_id: &str, p: &ProviderDefinition) -> Option<Route> {
     if p.base_url.is_empty() {
-        return None; // custom providers wait for URL validation + consent (SPEC §6.3)
+        return None; // custom providers wait for URL validation + consent
     }
     // Codex signs in to ChatGPT itself; routing it through PrismFlow adds nothing.
     if p.credential_source == providers::CredentialSource::CodexLogin && (codex::is_cli(app_id) || codex::is_desktop(app_id)) {
@@ -525,7 +525,7 @@ impl Service {
     }
 
     /// Save a custom provider. `consent` must be true: the user has read the
-    /// URL check's warnings and agreed to send data to that host (SPEC §6.3).
+    /// URL check's warnings and agreed to send data to that host.
     pub async fn add_custom_provider(
         &self,
         name: &str,
@@ -1107,7 +1107,7 @@ impl Service {
     }
 
     /// Bring the broker in line with the gateway connections in state:
-    /// start it, reconfigure it, or stop it when none remain (SPEC §13.6).
+    /// start it, reconfigure it, or stop it when none remain.
     /// True when a gateway connection uses a sign-in whose token expires
     /// (gcloud): the gateway then needs a fresh token regularly.
     pub fn needs_token_refresh(&self) -> bool {
@@ -1438,7 +1438,7 @@ impl Service {
     }
 
     /// Interactive agent sessions still running on this connection's
-    /// profile; they keep their old settings until restarted (SPEC §9).
+    /// profile; they keep their old settings until restarted.
     pub fn running_sessions(&self, id: &str) -> R<Vec<u32>> {
         let record = self.state.get(id).map_err(|e| e.to_string())?.ok_or("Unknown connection.")?;
         let procs = adapters::processes::list();
@@ -1458,7 +1458,7 @@ impl Service {
         })
     }
 
-    /// Remove everything PrismFlow added (SPEC §23, acceptance §13.15):
+    /// Remove everything PrismFlow added:
     /// managed agent files (via disconnect, which also revokes tokens), every
     /// secure-store entry, the gateway, and the state directory.
     pub async fn uninstall(&self, dry_run: bool) -> R<UninstallReport> {
@@ -1850,7 +1850,7 @@ mod tests {
         let fx = dir.path().join("import");
         std::fs::create_dir_all(&fx).unwrap();
         std::fs::write(fx.join("shell.env"), "OPENROUTER_API_KEY=sk-or-v1-aaaaaaaaaaaa\nHOME=/x\n").unwrap();
-        std::fs::write(fx.join("other.env"), "OPENROUTER_API_KEY=sk-or-v1-bbbbbbbbbbbb\nGROQ_API_KEY=gsk_cccccccccccc\n").unwrap();
+        std::fs::write(fx.join("home.env"), "OPENROUTER_API_KEY=sk-or-v1-bbbbbbbbbbbb\nGROQ_API_KEY=gsk_cccccccccccc\n").unwrap();
         std::env::set_var("PRISMFLOW_IMPORT_TEST_DIR", &fx);
         let found = s.scan_keys();
         assert_eq!(found.len(), 3, "{found:?}");
@@ -2092,19 +2092,19 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let s = service(dir.path());
         let base = s.codex_home.join("config.toml");
-        let original = "# mine\nmodel = \"nvidia_nim/z-ai/glm\"\nmodel_provider = \"other\"\n\n[model_providers.other]\nbase_url = \"http://127.0.0.1:9090/v1\"\n";
+        let original = "# mine\nmodel = \"nvidia_nim/z-ai/glm\"\nmodel_provider = \"myproxy\"\n\n[model_providers.myproxy]\nbase_url = \"http://127.0.0.1:9090/v1\"\n";
         std::fs::write(&base, original).unwrap();
         s.set_credential("openrouter", "sk-or-v1-abcdefabcdef").unwrap();
         let preview = s.preview(codex::DESKTOP_APP_ID, "openrouter", "a/b").unwrap();
-        assert!(preview.warnings.iter().any(|w| w.contains("\"other\"")), "{:?}", preview.warnings);
+        assert!(preview.warnings.iter().any(|w| w.contains("\"myproxy\"")), "{:?}", preview.warnings);
         let rec = s.connect(codex::DESKTOP_APP_ID, "openrouter", "a/b").await.unwrap();
-        assert_eq!(rec.priors["model_provider"].as_deref(), Some("other"));
+        assert_eq!(rec.priors["model_provider"].as_deref(), Some("myproxy"));
         assert!(std::fs::read_to_string(&base).unwrap().contains("model_provider = \"prismflow_openrouter\""));
         s.set_credential("groq", "gsk_abcdefabcdefabcdef").unwrap();
         assert!(s.connect(codex::DESKTOP_APP_ID, "groq", "x").await.unwrap_err().contains("Disconnect it first"));
         // A model switch keeps the original priors.
         let rec = s.connect(codex::DESKTOP_APP_ID, "openrouter", "c/d").await.unwrap();
-        assert_eq!(rec.priors["model_provider"].as_deref(), Some("other"));
+        assert_eq!(rec.priors["model_provider"].as_deref(), Some("myproxy"));
         s.disconnect(&rec.id).await.unwrap();
         let restored = std::fs::read_to_string(&base).unwrap();
         let (r, o): (toml_edit::DocumentMut, toml_edit::DocumentMut) = (restored.parse().unwrap(), original.parse().unwrap());

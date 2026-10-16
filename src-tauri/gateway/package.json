@@ -1,7 +1,7 @@
 {
   "name": "prismflow-gateway-runtime",
   "private": true,
-  "description": "Pinned runtime for the embedded @the-next-ai/ai-gateway translation engine (ADR-005). Install with scripts/fetch-gateway.sh.",
+  "description": "Pinned runtime for the embedded @the-next-ai/ai-gateway translation engine. Install with scripts/fetch-gateway.sh.",
   "license": "MIT",
   "dependencies": {
     "@the-next-ai/ai-gateway": "1.0.21"

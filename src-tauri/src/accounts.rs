@@ -4,8 +4,8 @@
 //! - Extra keys live in the secure store next to the main one
 //!   (`provider/k2`, `provider/k3`, …); the gateway spreads requests across
 //!   them. `key_slots.json` only records how many there are.
-//! - Import looks at your login shell's environment and another tool's
-//!   `.env` files for the usual variable names (`OPENAI_API_KEY`, …). The
+//! - Import looks at your login shell's environment and a `.env` file in
+//!   your home folder for the usual variable names (`OPENAI_API_KEY`, …). The
 //!   scan returns masked keys only; the real values go straight from the
 //!   source into the secure store when you choose Import.
 //! - A profile is a saved list of (app, provider, model, routing); switching
@@ -25,7 +25,7 @@ pub const MAX_KEYS: usize = 5;
 #[cfg(test)]
 pub static TEST_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
-/// Environment variable → PrismFlow provider id (another tool's names plus the common ones).
+/// Environment variable → PrismFlow provider id (the usual names).
 pub const ENV_KEYS: &[(&str, &str)] = &[
     ("OPENAI_API_KEY", "openai"), ("ANTHROPIC_API_KEY", "anthropic"), ("OPENROUTER_API_KEY", "openrouter"),
     ("GROQ_API_KEY", "groq"), ("DEEPSEEK_API_KEY", "deepseek"), ("GEMINI_API_KEY", "gemini"), ("GOOGLE_API_KEY", "gemini"),
@@ -54,7 +54,7 @@ pub struct Found {
     pub provider_id: String,
     pub provider_name: String,
     pub variable: String,
-    /// Where it was found ("Your shell", "another tool").
+    /// Where it was found ("Your shell", "Your .env file").
     pub source: String,
     /// e.g. `sk-or…a1b2`; the real value is never sent to the window.
     pub masked: String,
@@ -94,7 +94,7 @@ fn sources() -> Vec<(String, BTreeMap<String, String>)> {
     let mut out = Vec::new();
     if let Ok(dir) = std::env::var("PRISMFLOW_IMPORT_TEST_DIR") {
         // Tests: fixed files instead of the real shell and home.
-        for (label, f) in [("Your shell", "shell.env"), ("another tool", "other.env")] {
+        for (label, f) in [("Your shell", "shell.env"), ("Your .env file", "home.env")] {
             if let Ok(t) = std::fs::read_to_string(PathBuf::from(&dir).join(f)) {
                 out.push((label.to_string(), parse_env(&t)));
             }
@@ -107,10 +107,8 @@ fn sources() -> Vec<(String, BTreeMap<String, String>)> {
         out.push(("Your shell".into(), parse_env(&String::from_utf8_lossy(&o.stdout))));
     }
     if let Some(home) = dirs::home_dir() {
-        for f in [home.join(".other/.env"), home.join("other-tool/.env"), home.join(".config/other-tool/.env")] {
-            if let Ok(t) = std::fs::read_to_string(&f) {
-                out.push(("another tool".into(), parse_env(&t)));
-            }
+        if let Ok(t) = std::fs::read_to_string(home.join(".env")) {
+            out.push(("Your .env file".into(), parse_env(&t)));
         }
     }
     out

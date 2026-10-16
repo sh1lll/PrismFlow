@@ -1,7 +1,7 @@
 #!/bin/sh
 # Build a signed, updatable PrismFlow release for the current platform.
-# Refuses to run without the owner's signing material: no unsigned releases
-# (SPEC §21.1). See docs/RELEASE.md for how to create each secret.
+# Refuses to run without the owner's signing material: no unsigned releases.
+# See docs/RELEASE.md for how to create each secret.
 #
 # Required:
 #   TAURI_SIGNING_PRIVATE_KEY (+ TAURI_SIGNING_PRIVATE_KEY_PASSWORD)  update signing

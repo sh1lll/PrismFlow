@@ -1,4 +1,4 @@
-//! Application adapters (SPEC §4). Provider and application support stay
+//! Application adapters. Provider and application support stay
 //! independent: an adapter consumes a `ProviderDefinition`, never owns one.
 
 pub mod acp;
@@ -66,7 +66,7 @@ pub struct AppDetection {
     pub path: Option<String>,
     pub version: Option<String>,
     /// True only when the installed version is inside the adapter's
-    /// verified range (SPEC §21.2).
+    /// verified range.
     pub version_verified: bool,
     pub notes: Vec<String>,
 }

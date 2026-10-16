@@ -1,4 +1,4 @@
-//! Codex CLI adapter (SPEC §4.1).
+//! Codex CLI adapter.
 //!
 //! Mechanism (verified against codex-cli 0.162.1, 2026-10-14):
 //! - `codex -p <name>` layers `$CODEX_HOME/<name>.config.toml` over the base
@@ -21,7 +21,7 @@ pub const APP_ID: &str = "codex_cli";
 pub const CLI_SEPARATE_APP_ID: &str = "codex_cli_separate";
 
 pub const MANAGED_MARKER: &str = "# Managed by PrismFlow";
-/// Versions this adapter has been verified against (SPEC §21.2).
+/// Versions this adapter has been verified against.
 pub const VERIFIED_MIN: (u32, u32, u32) = (0, 162, 0);
 pub const VERIFIED_MAX: (u32, u32, u32) = (0, 162, u32::MAX);
 
@@ -632,10 +632,10 @@ mod tests {
     #[test]
     fn desktop_base_edit_restores_priors_exactly() {
         let home = tempfile::tempdir().unwrap();
-        let original = "# my codex\nmodel = \"nvidia_nim/z-ai/glm\"\nmodel_provider = \"other\"\n\n[model_providers.other]\nbase_url = \"http://127.0.0.1:9090/v1\"\n\n[mcp_servers.x]\ncommand = \"node\"\n";
+        let original = "# my codex\nmodel = \"nvidia_nim/z-ai/glm\"\nmodel_provider = \"myproxy\"\n\n[model_providers.myproxy]\nbase_url = \"http://127.0.0.1:9090/v1\"\n\n[mcp_servers.x]\ncommand = \"node\"\n";
         std::fs::write(base_config(home.path()), original).unwrap();
         let priors = read_base_priors(home.path()).unwrap();
-        assert_eq!(priors["model_provider"].as_deref(), Some("other"));
+        assert_eq!(priors["model_provider"].as_deref(), Some("myproxy"));
         assert_eq!(priors["model_catalog_json"], None);
         let cat = home.path().join("cat.json");
         let plan = plan_connect_base(home.path(), providers::get("openrouter").unwrap(), "a/b", "http://127.0.0.1:1/v1",
@@ -643,14 +643,14 @@ mod tests {
         config_engine::apply(&plan).unwrap();
         let doc: toml_edit::DocumentMut = std::fs::read_to_string(base_config(home.path())).unwrap().parse().unwrap();
         assert_eq!(doc["model_provider"].as_str(), Some("prismflow_openrouter"));
-        assert_eq!(doc["model_providers"]["other"]["base_url"].as_str(), Some("http://127.0.0.1:9090/v1"), "other tables untouched");
+        assert_eq!(doc["model_providers"]["myproxy"]["base_url"].as_str(), Some("http://127.0.0.1:9090/v1"), "other tables untouched");
         for p in plan_disconnect_base(home.path(), "openrouter", &priors).unwrap() {
             config_engine::apply(&p).unwrap();
         }
         let restored: toml_edit::DocumentMut = std::fs::read_to_string(base_config(home.path())).unwrap().parse().unwrap();
         let orig: toml_edit::DocumentMut = original.parse().unwrap();
         assert_eq!(restored["model"].as_str(), orig["model"].as_str());
-        assert_eq!(restored["model_provider"].as_str(), Some("other"));
+        assert_eq!(restored["model_provider"].as_str(), Some("myproxy"));
         assert!(restored.get("model_catalog_json").is_none());
         assert!(restored["model_providers"].get("prismflow_openrouter").is_none());
         let text = std::fs::read_to_string(base_config(home.path())).unwrap();

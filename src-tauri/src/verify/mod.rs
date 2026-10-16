@@ -1,4 +1,4 @@
-//! Staged connection verification (SPEC §9). A connection is reported as
+//! Staged connection verification. A connection is reported as
 //! verified only when a real request has gone through the real integration
 //! path; writing a file or reaching an endpoint is never enough.
 
@@ -79,7 +79,7 @@ fn number_after(text: &str, key: &str) -> Option<u64> {
 }
 
 /// A specific, actionable explanation for well-known failures, appended to
-/// the stage detail (SPEC §9: clear errors with remediation).
+/// the stage detail.
 pub fn remediation(output: &str, provider: &ProviderDefinition) -> Option<String> {
     let o = output.to_lowercase();
     if o.contains("exceed_context_size") || o.contains("exceeds the available context") || o.contains("context length")
@@ -206,7 +206,7 @@ fn claude_dir_for(record: &ConnectionRecord) -> Option<&Path> {
 }
 
 /// Run `claude -p` against the connection's settings file. Only `plan` mode:
-/// verification never grants write or bypass permissions (matrix §E).
+/// verification never grants write or bypass permissions.
 /// Inherited `ANTHROPIC_*` / `CLAUDE_CODE_*` variables are removed so the
 /// run sees exactly what the settings file configures.
 async fn run_claude(bin: &Path, config_dir: Option<&Path>, settings: &Path, workdir: &Path, prompt: &str, timeout: Duration) -> Result<(bool, String), String> {

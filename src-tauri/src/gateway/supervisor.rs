@@ -1,5 +1,5 @@
 //! The embedded translation engine: `@the-next-ai/ai-gateway` (MIT, pinned in
-//! `src-tauri/gateway/`) run as a child process (ADR-005).
+//! `src-tauri/gateway/`) run as a child process.
 //!
 //! Hardening applied at spawn, each closing an observed gap (plan E3–E5):
 //! - `HOST=127.0.0.1`, because the engine defaults to `0.0.0.0`.
@@ -141,7 +141,7 @@ impl GatewayRuntime {
     }
 }
 
-/// The engine's upstream protocol for a provider (plan D5).
+/// The engine's upstream protocol for a provider.
 pub fn engine_type(p: &ProviderDefinition) -> &'static str {
     if p.protocols.contains(&Protocol::AnthropicMessages) {
         "anthropic_messages"

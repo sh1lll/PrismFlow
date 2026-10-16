@@ -1,4 +1,4 @@
-//! Local web tools for gateway connections (ADR-018): search through a
+//! Local web tools for gateway connections: search through a
 //! user-chosen backend with a sanctioned API, and fetch pages with SSRF
 //! protection. Off by default.
 
@@ -88,7 +88,7 @@ pub async fn search(s: &WebToolsSettings, brave_key: Option<&str>, query: &str) 
     }
 }
 
-/// Resolve and vet a URL before any request (SPEC §6.3).
+/// Resolve and vet a URL before any request.
 pub fn vet_url(raw: &str, allow_private: bool) -> Result<reqwest::Url, String> {
     let url = reqwest::Url::parse(raw.trim()).map_err(|_| format!("not a valid URL: {raw}"))?;
     if !matches!(url.scheme(), "http" | "https") {
