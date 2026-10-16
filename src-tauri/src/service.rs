@@ -549,13 +549,16 @@ impl Service {
         }
     }
 
-    pub fn codex_catalog_path(&self, provider_id: &str) -> PathBuf {
-        self.state.dir().join("codex-catalogs").join(format!("{provider_id}.json"))
+    /// One model list per Codex connection (the CLI, shared and separate app
+    /// can each use a different model of the same provider).
+    pub fn codex_catalog_path(&self, app_id: &str, provider_id: &str) -> PathBuf {
+        let name = if app_id == codex::APP_ID { provider_id.to_string() } else { format!("{app_id}-{provider_id}") };
+        self.state.dir().join("codex-catalogs").join(format!("{name}.json"))
     }
 
     /// Write the catalog for `model`. Context window comes from the
     /// provider's own model list when it reports one; otherwise it is omitted.
-    async fn write_codex_catalog(&self, p: &ProviderDefinition, model: &str) -> R<PathBuf> {
+    async fn write_codex_catalog(&self, app_id: &str, p: &ProviderDefinition, model: &str) -> R<PathBuf> {
         let bin = codex::find_binary().ok_or("Codex CLI is not installed.")?;
         let template = tokio::task::spawn_blocking(move || codex::catalog_template(&bin))
             .await
@@ -570,7 +573,7 @@ impl Service {
             context_window: info.as_ref().and_then(|m| m.context_length),
             images: false,
         };
-        let path = self.codex_catalog_path(p.id);
+        let path = self.codex_catalog_path(app_id, p.id);
         if let Some(dir) = path.parent() {
             std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
         }
@@ -580,7 +583,7 @@ impl Service {
     }
 
     fn plan(&self, app_id: &str, provider_id: &str, model: &str) -> R<(&'static ProviderDefinition, Route, config_engine::EditPlan)> {
-        let catalog = (app_id == codex::APP_ID || codex::is_desktop(app_id)).then(|| self.codex_catalog_path(provider_id));
+        let catalog = (app_id == codex::APP_ID || codex::is_desktop(app_id)).then(|| self.codex_catalog_path(app_id, provider_id));
         self.plan_with(app_id, provider_id, model, catalog.as_deref())
     }
 
@@ -811,8 +814,8 @@ impl Service {
             Default::default()
         };
         let (p, route, mut plan) = self.plan(app_id, provider_id, model)?;
-        if (app_id == codex::APP_ID || app_id == codex::DESKTOP_APP_ID) && self.usable_key(p).is_some() {
-            if let Err(e) = self.write_codex_catalog(p, validate_model_id(model)?).await {
+        if (app_id == codex::APP_ID || codex::is_desktop(app_id)) && self.usable_key(p).is_some() {
+            if let Err(e) = self.write_codex_catalog(app_id, p, validate_model_id(model)?).await {
                 // Codex still works without a catalog (it falls back to defaults).
                 self.diag.record(Level::Warn, "connect.catalog", &format!(
                     "No Codex model catalog for {}: {e}. Codex will use default model metadata.", p.display_name
@@ -1214,10 +1217,8 @@ impl Service {
             self.diag.record(Level::Error, "disconnect.failed", &msg);
             msg
         })?;
-        let catalog_shared = self.connections().unwrap_or_default().iter()
-            .any(|r| r.id != record.id && r.provider_id == record.provider_id && (r.app_id == codex::APP_ID || codex::is_desktop(&r.app_id)));
-        if (record.app_id == codex::APP_ID || codex::is_desktop(&record.app_id)) && !catalog_shared {
-            let _ = std::fs::remove_file(self.codex_catalog_path(&record.provider_id));
+        if record.app_id == codex::APP_ID || codex::is_desktop(&record.app_id) {
+            let _ = std::fs::remove_file(self.codex_catalog_path(&record.app_id, &record.provider_id));
         }
         if record.route == Route::Gateway {
             tokens::revoke(self.store.as_ref(), id).map_err(|e| format!("Couldn't remove this app's key: {e}"))?;
@@ -1877,12 +1878,14 @@ mod tests {
         let cfg = std::fs::read_to_string(&sep.managed_file).unwrap();
         assert!(cfg.contains("model = \"c/d\"") && cfg.contains("model_provider = \"prismflow_openrouter\""), "{cfg}");
         assert!(s.preview(codex::SEPARATE_APP_ID, "openrouter", "c/d").unwrap().launch_command.contains("--env CODEX_HOME="));
-        // Disconnecting one keeps the shared model list the other uses.
+        // Each has its own model list (written when the Codex CLI is installed).
+        assert_ne!(s.codex_catalog_path(codex::DESKTOP_APP_ID, "openrouter"), s.codex_catalog_path(codex::SEPARATE_APP_ID, "openrouter"));
         s.disconnect(&sep.id).await.unwrap();
-        assert!(s.codex_catalog_path("openrouter").exists());
+        assert!(!s.codex_catalog_path(codex::SEPARATE_APP_ID, "openrouter").exists());
         assert!(!std::fs::read_to_string(&sep.managed_file).unwrap_or_default().contains("prismflow_openrouter"));
+        assert!(std::fs::read_to_string(&base).unwrap().contains("prismflow_openrouter"), "the shared one is still connected");
         s.disconnect(&shared.id).await.unwrap();
-        assert!(!s.codex_catalog_path("openrouter").exists());
+        assert!(!s.codex_catalog_path(codex::DESKTOP_APP_ID, "openrouter").exists());
     }
 
     #[test]
