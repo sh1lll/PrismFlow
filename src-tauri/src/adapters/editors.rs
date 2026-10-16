@@ -34,27 +34,23 @@ pub fn zed_separate_dir(state_dir: &Path) -> PathBuf {
 /// derive it from the provider name; both spellings are set).
 pub const ZED_KEY_VARS: [&str; 2] = ["PRISMFLOW_API_KEY", "PRISM_FLOW_API_KEY"];
 
-/// Opens the separate Zed with the key in its environment, so nothing is pasted.
+/// Opens the separate Zed with the key in its environment, so nothing is
+/// pasted. The key goes in the environment, never on the command line
+/// (command lines are visible to every user through `ps`).
 pub fn open_zed_separate(state_dir: &Path, token: &str) -> Result<(), String> {
-    let dir = zed_separate_dir(state_dir);
-    let mut cmd = if cfg!(target_os = "macos") {
-        let app = ["/Applications/Zed.app", "/Applications/Zed Preview.app"].into_iter().find(|p| Path::new(p).exists()).ok_or("Zed isn't installed.")?;
-        let mut c = std::process::Command::new("open");
-        c.args(["-n", "-a", app]);
-        for k in ZED_KEY_VARS {
-            c.arg("--env").arg(format!("{k}={token}"));
-        }
-        c.arg("--args");
-        c
+    let zed = if cfg!(target_os = "macos") {
+        ["/Applications/Zed.app", "/Applications/Zed Preview.app"].into_iter()
+            .map(|app| Path::new(app).join("Contents/MacOS/zed"))
+            .find(|p| p.is_file())
+            .ok_or("Zed isn't installed.")?
     } else {
-        let zed = super::find_exe("zed").or_else(|| super::find_exe("zeditor")).ok_or("Zed's `zed` command wasn't found.")?;
-        let mut c = std::process::Command::new(zed);
-        for k in ZED_KEY_VARS {
-            c.env(k, token);
-        }
-        c
+        super::find_exe("zed").or_else(|| super::find_exe("zeditor")).ok_or("Zed's `zed` command wasn't found.")?
     };
-    cmd.arg("--user-data-dir").arg(&dir)
+    let mut cmd = std::process::Command::new(zed);
+    for k in ZED_KEY_VARS {
+        cmd.env(k, token);
+    }
+    cmd.arg("--user-data-dir").arg(zed_separate_dir(state_dir))
         .stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null());
     cmd.spawn().map_err(|e| format!("Could not open Zed: {e}"))?;
     Ok(())

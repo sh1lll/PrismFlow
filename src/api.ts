@@ -35,13 +35,13 @@ export interface UrlCheck {
   warnings: string[];
 }
 
-export type AppId = "codex_cli" | "codex_cli_separate" | "claude_code_separate" | "vscode_claude_shared" | "vscode_separate" | "zed_separate" | "codex_desktop" | "codex_desktop_separate" | "claude_code" | "claude_desktop" | "claude_desktop_separate" | "jetbrains" | "vscode_claude" | "vscode_chat" | "aider" | "cline" | "pi" | "hermes" | "opencode" | "dsh" | "grok" | "muse" | "qwen" | "goose" | "crush" | "droid" | "continue_cli" | "copilot_cli" | "roo_code" | "kilo_code" | "zed" | "continue_ide";
-export const APP_IDS: AppId[] = ["codex_cli", "codex_cli_separate", "codex_desktop", "codex_desktop_separate", "claude_code", "claude_code_separate", "claude_desktop", "claude_desktop_separate", "jetbrains", "vscode_claude", "vscode_claude_shared", "vscode_chat", "vscode_separate", "aider", "cline", "pi", "hermes", "roo_code", "kilo_code", "zed", "zed_separate", "continue_ide", "opencode", "dsh", "grok", "muse", "qwen", "goose", "crush", "droid", "continue_cli", "copilot_cli"];
-export const TERMINAL_AGENTS: AppId[] = ["aider", "cline", "pi", "hermes", "opencode", "dsh", "grok", "muse", "qwen", "goose", "crush", "droid", "continue_cli", "copilot_cli"];
+export type AppId = "codex_cli" | "codex_cli_separate" | "claude_code_separate" | "vscode_claude_shared" | "vscode_separate" | "zed_separate" | "codex_desktop" | "codex_desktop_separate" | "claude_code" | "claude_desktop" | "claude_desktop_separate" | "jetbrains" | "vscode_claude" | "vscode_chat" | "aider" | "cline" | "pi" | "hermes" | "opencode" | "dsh" | "grok" | "muse" | "qwen" | "goose" | "crush" | "droid" | "continue_cli" | "copilot_cli" | "roo_code" | "kilo_code" | "zed" | "continue_ide" | "aider_separate" | "cline_shared" | "pi_shared" | "opencode_separate" | "dsh_shared" | "grok_shared" | "muse_separate" | "qwen_separate" | "goose_separate" | "crush_shared" | "droid_separate" | "continue_cli_shared" | "copilot_cli_separate";
+export const APP_IDS: AppId[] = ["codex_cli", "codex_cli_separate", "codex_desktop", "codex_desktop_separate", "claude_code", "claude_code_separate", "claude_desktop", "claude_desktop_separate", "jetbrains", "vscode_claude", "vscode_claude_shared", "vscode_chat", "vscode_separate", "aider", "cline", "pi", "hermes", "roo_code", "kilo_code", "zed", "zed_separate", "continue_ide", "opencode", "dsh", "grok", "muse", "qwen", "goose", "crush", "droid", "continue_cli", "copilot_cli", "aider_separate", "cline_shared", "pi_shared", "opencode_separate", "dsh_shared", "grok_shared", "muse_separate", "qwen_separate", "goose_separate", "crush_shared", "droid_separate", "continue_cli_shared", "copilot_cli_separate"];
+export const TERMINAL_AGENTS: AppId[] = ["aider", "cline", "pi", "hermes", "opencode", "dsh", "grok", "muse", "qwen", "goose", "crush", "droid", "continue_cli", "copilot_cli", "aider_separate", "cline_shared", "pi_shared", "opencode_separate", "dsh_shared", "grok_shared", "muse_separate", "qwen_separate", "goose_separate", "crush_shared", "droid_separate", "continue_cli_shared", "copilot_cli_separate"];
 export type Route = "direct" | "gateway";
 
 export const APP_NAME: Record<string, string> = {
-  codex_cli: "Codex CLI", codex_cli_separate: "Codex CLI (separate)", claude_code_separate: "Claude Code (separate)", vscode_claude_shared: "Claude Code for VS Code (shared)", vscode_separate: "VS Code (separate)", codex_desktop: "Codex app & VS Code", codex_desktop_separate: "Codex app (separate)", claude_code: "Claude Code CLI", claude_desktop: "Claude Desktop", claude_desktop_separate: "Claude Desktop (separate)", jetbrains: "JetBrains IDEs", vscode_claude: "Claude Code for VS Code (separate)", vscode_chat: "VS Code Chat", aider: "Aider", cline: "Cline CLI", pi: "Pi", hermes: "Hermes Agent", playground: "Try a model", opencode: "OpenCode", dsh: "DeepSeek Harness", grok: "Grok Build", muse: "Muse Code", qwen: "Qwen Code", goose: "Goose", crush: "Crush", droid: "Factory Droid", continue_cli: "Continue CLI", copilot_cli: "GitHub Copilot CLI", roo_code: "Roo Code", kilo_code: "Kilo Code", zed: "Zed", zed_separate: "Zed (separate)", continue_ide: "Continue (VS Code / JetBrains)",
+  codex_cli: "Codex CLI", codex_cli_separate: "Codex CLI (separate)", claude_code_separate: "Claude Code (separate)", vscode_claude_shared: "Claude Code for VS Code (shared)", vscode_separate: "VS Code (separate)", codex_desktop: "Codex app & VS Code", codex_desktop_separate: "Codex app (separate)", claude_code: "Claude Code CLI", claude_desktop: "Claude Desktop", claude_desktop_separate: "Claude Desktop (separate)", jetbrains: "JetBrains IDEs", vscode_claude: "Claude Code for VS Code (separate)", vscode_chat: "VS Code Chat", aider: "Aider", cline: "Cline CLI", pi: "Pi", hermes: "Hermes Agent", playground: "Try a model", opencode: "OpenCode", dsh: "DeepSeek Harness", grok: "Grok Build", muse: "Muse Code", qwen: "Qwen Code", goose: "Goose", crush: "Crush", droid: "Factory Droid", continue_cli: "Continue CLI", copilot_cli: "GitHub Copilot CLI", aider_separate: "Aider (separate)", cline_shared: "Cline CLI (shared)", pi_shared: "Pi (shared)", opencode_separate: "OpenCode (separate)", dsh_shared: "DeepSeek Harness (shared)", grok_shared: "Grok Build (shared)", muse_separate: "Muse Code (separate)", qwen_separate: "Qwen Code (separate)", goose_separate: "Goose (separate)", crush_shared: "Crush (shared)", droid_separate: "Factory Droid (separate)", continue_cli_shared: "Continue CLI (shared)", copilot_cli_separate: "GitHub Copilot CLI (separate)", roo_code: "Roo Code", kilo_code: "Kilo Code", zed: "Zed", zed_separate: "Zed (separate)", continue_ide: "Continue (VS Code / JetBrains)",
 };
 
 export const ROUTE_LABEL: Record<Route, string> = {
@@ -327,6 +327,19 @@ export const MODE_PAIRS: { name: string; shared: AppId; separate: AppId; sharedT
   { name: "Claude Code for VS Code", shared: "vscode_claude_shared", separate: "vscode_claude" },
   { name: "VS Code", shared: "vscode_chat", separate: "vscode_separate" },
   { name: "Zed", shared: "zed", separate: "zed_separate" },
+  { name: "Aider", shared: "aider", separate: "aider_separate" },
+  { name: "Cline CLI", shared: "cline_shared", separate: "cline" },
+  { name: "Pi", shared: "pi_shared", separate: "pi" },
+  { name: "OpenCode", shared: "opencode", separate: "opencode_separate" },
+  { name: "DeepSeek Harness", shared: "dsh_shared", separate: "dsh" },
+  { name: "Grok Build", shared: "grok_shared", separate: "grok" },
+  { name: "Muse Code", shared: "muse", separate: "muse_separate" },
+  { name: "Qwen Code", shared: "qwen", separate: "qwen_separate" },
+  { name: "Goose", shared: "goose", separate: "goose_separate" },
+  { name: "Crush", shared: "crush_shared", separate: "crush" },
+  { name: "Factory Droid", shared: "droid", separate: "droid_separate" },
+  { name: "Continue CLI", shared: "continue_cli_shared", separate: "continue_cli" },
+  { name: "GitHub Copilot CLI", shared: "copilot_cli", separate: "copilot_cli_separate" },
 ];
 
 export function modePair(id: string) {

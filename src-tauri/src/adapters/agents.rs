@@ -1,11 +1,18 @@
 //! Terminal coding agents launched through PrismFlow (Aider, Cline, Pi,
-//! Hermes, OpenCode, DeepSeek Harness, Grok Build, Muse Code). Mechanisms verified 2026-10-14 (research/agent-mechanisms-…md).
+//! Hermes, OpenCode, DeepSeek Harness, Grok Build, Muse Code, Qwen Code,
+//! Goose, Crush, Factory Droid, Continue CLI, GitHub Copilot CLI).
+//! Mechanisms verified 2026-10-14..16 (research/agent-mechanisms-…md).
 //!
 //! Each connection owns a directory in PrismFlow's state dir holding a
-//! launch script and, where the agent needs one, an isolated config. The
-//! user's own agent config is never read or written. No secret is stored:
+//! launch script and whatever config the agent needs from PrismFlow. Two
+//! modes per agent:
+//! - shared: the agent keeps its usual home (chats, settings); only the
+//!   provider comes from PrismFlow, through the environment, flags or a
+//!   PrismFlow-owned file the agent is pointed at.
+//! - separate: the agent's home moves into the connection's directory.
+//! PrismFlow never writes the user's own agent config. No secret is stored:
 //! the script fetches the connection's revocable gateway token at launch
-//! (or the agent runs the token helper itself, for Pi).
+//! (or the agent runs the token helper itself, for Pi's separate mode).
 
 use super::AppDetection;
 use std::path::{Path, PathBuf};
@@ -41,25 +48,46 @@ pub struct AgentSpec {
     pub verified_version: &'static str,
     /// The agent works through tool calls (Stage 6 applies).
     pub tools: bool,
+    /// The agent's base id (`cline` for `cline_shared`).
+    pub family: &'static str,
+    /// Shared: the agent's usual home (chats, settings). Separate: a home of
+    /// its own inside the connection's folder.
+    pub shared: bool,
 }
 
 pub const AGENTS: &[AgentSpec] = &[
-    AgentSpec { id: "aider", display_name: "Aider", binary: "aider", kind: Kind::Aider, verified_version: "0.86.2", tools: false },
-    AgentSpec { id: "cline", display_name: "Cline CLI", binary: "cline", kind: Kind::Cline, verified_version: "3.0.70", tools: true },
-    AgentSpec { id: "pi", display_name: "Pi", binary: "pi", kind: Kind::Pi, verified_version: "1.1.0", tools: true },
-    AgentSpec { id: "hermes", display_name: "Hermes Agent", binary: "hermes", kind: Kind::Hermes, verified_version: "0.21.6", tools: true },
+    // Each agent comes as its own entry (the original id, as first verified)
+    // and the other mode. Home locations checked 2026-10-16 per agent with a
+    // scratch HOME. Hermes has no shared mode: its config.yaml and .env always
+    // win over the environment, and PrismFlow does not rewrite YAML it does not own.
     // OpenCode 1.19.0 and 2.0.29 both verified 2026-10-15; the script picks the config format at launch.
-    AgentSpec { id: "opencode", display_name: "OpenCode", binary: "opencode", kind: Kind::OpenCode, verified_version: "2.0.29", tools: true },
-    AgentSpec { id: "dsh", display_name: "DeepSeek Harness", binary: "dsh", kind: Kind::Dsh, verified_version: "0.2.0-rc.2", tools: true },
-    AgentSpec { id: "grok", display_name: "Grok Build", binary: "grok", kind: Kind::Grok, verified_version: "1.0.52", tools: true },
-    AgentSpec { id: "muse", display_name: "Muse Code", binary: "muse", kind: Kind::Muse, verified_version: "1.4.8", tools: true },
-    // Verified live 2026-10-15 through the broker (nonce read with a tool), except Copilot CLI (see its notes).
-    AgentSpec { id: "qwen", display_name: "Qwen Code", binary: "qwen", kind: Kind::Qwen, verified_version: "0.25.2", tools: true },
-    AgentSpec { id: "goose", display_name: "Goose", binary: "goose", kind: Kind::Goose, verified_version: "1.54.0", tools: true },
-    AgentSpec { id: "crush", display_name: "Crush", binary: "crush", kind: Kind::Crush, verified_version: "0.98.1", tools: true },
-    AgentSpec { id: "droid", display_name: "Factory Droid", binary: "droid", kind: Kind::Droid, verified_version: "0.242.1", tools: true },
-    AgentSpec { id: "continue_cli", display_name: "Continue CLI", binary: "cn", kind: Kind::ContinueCli, verified_version: "1.5.47", tools: true },
-    AgentSpec { id: "copilot_cli", display_name: "GitHub Copilot CLI", binary: "copilot", kind: Kind::CopilotCli, verified_version: "1.0.98", tools: true },
+    AgentSpec { id: "aider", display_name: "Aider", binary: "aider", kind: Kind::Aider, verified_version: "0.86.2", tools: false, family: "aider", shared: true },
+    AgentSpec { id: "cline", display_name: "Cline CLI", binary: "cline", kind: Kind::Cline, verified_version: "3.0.70", tools: true, family: "cline", shared: false },
+    AgentSpec { id: "pi", display_name: "Pi", binary: "pi", kind: Kind::Pi, verified_version: "1.1.0", tools: true, family: "pi", shared: false },
+    AgentSpec { id: "hermes", display_name: "Hermes Agent", binary: "hermes", kind: Kind::Hermes, verified_version: "0.21.6", tools: true, family: "hermes", shared: false },
+    AgentSpec { id: "opencode", display_name: "OpenCode", binary: "opencode", kind: Kind::OpenCode, verified_version: "2.0.29", tools: true, family: "opencode", shared: true },
+    AgentSpec { id: "dsh", display_name: "DeepSeek Harness", binary: "dsh", kind: Kind::Dsh, verified_version: "0.2.0-rc.2", tools: true, family: "dsh", shared: false },
+    AgentSpec { id: "grok", display_name: "Grok Build", binary: "grok", kind: Kind::Grok, verified_version: "1.0.52", tools: true, family: "grok", shared: false },
+    AgentSpec { id: "muse", display_name: "Muse Code", binary: "muse", kind: Kind::Muse, verified_version: "1.4.8", tools: true, family: "muse", shared: true },
+    AgentSpec { id: "qwen", display_name: "Qwen Code", binary: "qwen", kind: Kind::Qwen, verified_version: "0.25.2", tools: true, family: "qwen", shared: true },
+    AgentSpec { id: "goose", display_name: "Goose", binary: "goose", kind: Kind::Goose, verified_version: "1.54.0", tools: true, family: "goose", shared: true },
+    AgentSpec { id: "crush", display_name: "Crush", binary: "crush", kind: Kind::Crush, verified_version: "0.98.1", tools: true, family: "crush", shared: false },
+    AgentSpec { id: "droid", display_name: "Factory Droid", binary: "droid", kind: Kind::Droid, verified_version: "0.242.1", tools: true, family: "droid", shared: true },
+    AgentSpec { id: "continue_cli", display_name: "Continue CLI", binary: "cn", kind: Kind::ContinueCli, verified_version: "1.5.47", tools: true, family: "continue_cli", shared: false },
+    AgentSpec { id: "copilot_cli", display_name: "GitHub Copilot CLI", binary: "copilot", kind: Kind::CopilotCli, verified_version: "1.0.98", tools: true, family: "copilot_cli", shared: true },
+    AgentSpec { id: "aider_separate", display_name: "Aider (separate)", binary: "aider", kind: Kind::Aider, verified_version: "0.86.2", tools: false, family: "aider", shared: false },
+    AgentSpec { id: "cline_shared", display_name: "Cline CLI (shared)", binary: "cline", kind: Kind::Cline, verified_version: "3.0.70", tools: true, family: "cline", shared: true },
+    AgentSpec { id: "pi_shared", display_name: "Pi (shared)", binary: "pi", kind: Kind::Pi, verified_version: "1.1.0", tools: true, family: "pi", shared: true },
+    AgentSpec { id: "opencode_separate", display_name: "OpenCode (separate)", binary: "opencode", kind: Kind::OpenCode, verified_version: "2.0.29", tools: true, family: "opencode", shared: false },
+    AgentSpec { id: "dsh_shared", display_name: "DeepSeek Harness (shared)", binary: "dsh", kind: Kind::Dsh, verified_version: "0.2.0-rc.2", tools: true, family: "dsh", shared: true },
+    AgentSpec { id: "grok_shared", display_name: "Grok Build (shared)", binary: "grok", kind: Kind::Grok, verified_version: "1.0.52", tools: true, family: "grok", shared: true },
+    AgentSpec { id: "muse_separate", display_name: "Muse Code (separate)", binary: "muse", kind: Kind::Muse, verified_version: "1.4.8", tools: true, family: "muse", shared: false },
+    AgentSpec { id: "qwen_separate", display_name: "Qwen Code (separate)", binary: "qwen", kind: Kind::Qwen, verified_version: "0.25.2", tools: true, family: "qwen", shared: false },
+    AgentSpec { id: "goose_separate", display_name: "Goose (separate)", binary: "goose", kind: Kind::Goose, verified_version: "1.54.0", tools: true, family: "goose", shared: false },
+    AgentSpec { id: "crush_shared", display_name: "Crush (shared)", binary: "crush", kind: Kind::Crush, verified_version: "0.98.1", tools: true, family: "crush", shared: true },
+    AgentSpec { id: "droid_separate", display_name: "Factory Droid (separate)", binary: "droid", kind: Kind::Droid, verified_version: "0.242.1", tools: true, family: "droid", shared: false },
+    AgentSpec { id: "continue_cli_shared", display_name: "Continue CLI (shared)", binary: "cn", kind: Kind::ContinueCli, verified_version: "1.5.47", tools: true, family: "continue_cli", shared: true },
+    AgentSpec { id: "copilot_cli_separate", display_name: "GitHub Copilot CLI (separate)", binary: "copilot", kind: Kind::CopilotCli, verified_version: "1.0.98", tools: true, family: "copilot_cli", shared: false },
 ];
 
 pub fn spec(app_id: &str) -> Option<&'static AgentSpec> {
@@ -67,7 +95,7 @@ pub fn spec(app_id: &str) -> Option<&'static AgentSpec> {
 }
 
 pub fn find_binary(spec: &AgentSpec) -> Option<PathBuf> {
-    let env = format!("PRISMFLOW_{}_BIN", spec.id.to_ascii_uppercase());
+    let env = format!("PRISMFLOW_{}_BIN", spec.family.to_ascii_uppercase());
     if let Some(p) = std::env::var_os(env) {
         return Some(PathBuf::from(p));
     }
@@ -82,7 +110,11 @@ pub fn detect(spec: &AgentSpec) -> AppDetection {
         path: None,
         version: None,
         version_verified: false,
-        notes: vec!["PrismFlow opens it for you. Your own settings for it don't change.".into()],
+        notes: vec![if spec.shared {
+            "PrismFlow opens it with your usual chats and settings; only the model comes from PrismFlow.".into()
+        } else {
+            "PrismFlow opens it with its own chats and settings. Your usual setup for it doesn't change.".into()
+        }],
     };
     let Some(bin) = find_binary(spec) else {
         d.notes = vec![format!("{} was not found on PATH or in common install locations.", spec.display_name)];
@@ -197,6 +229,14 @@ fn s(x: &str) -> String {
     x.to_string()
 }
 
+/// A home of its own for agents that follow the XDG folders (OpenCode, Muse;
+/// verified with all four set). Tools the agent runs inherit these too.
+fn xdg_home(l: &mut Launch, root: &Path) {
+    for (k, sub) in [("XDG_CONFIG_HOME", "config"), ("XDG_DATA_HOME", "data"), ("XDG_STATE_HOME", "state"), ("XDG_CACHE_HOME", "cache")] {
+        l.env.push((k.to_string(), root.join(sub).display().to_string()));
+    }
+}
+
 fn env(pairs: &[(&str, &str)]) -> Vec<(String, String)> {
     pairs.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect()
 }
@@ -239,6 +279,18 @@ pub fn plan_files_for(
             l.token_env = Some("OPENAI_API_KEY");
             l.env = env(&[("OPENAI_API_BASE", &base)]);
             l.default_args = vec![s("--model"), format!("openai/{model}"), s("--no-show-model-warnings"), s("--analytics-disable"), s("--no-check-update")];
+            if !spec.shared {
+                // Chat history goes to the project folder by default, and the
+                // project's/home's .aider.conf.yml and .env are read; point all
+                // of them at the connection's folder.
+                let conf = dir.join("aider.conf.yml");
+                let dotenv = dir.join("aider.env");
+                l.files.push((conf.clone(), format!("{MARKER}\ncheck-update: false\n")));
+                l.files.push((dotenv.clone(), format!("{MARKER}\n")));
+                l.env.extend(env(&[("AIDER_CHAT_HISTORY_FILE", &path_of(dir.join("aider.chat.history.md"))),
+                    ("AIDER_INPUT_HISTORY_FILE", &path_of(dir.join("aider.input.history")))]));
+                l.default_args.splice(0..0, [s("-c"), path_of(conf), s("--env-file"), path_of(dotenv)]);
+            }
         }
         Kind::Cline => {
             let providers = serde_json::json!({
@@ -256,8 +308,29 @@ pub fn plan_files_for(
             // Defense in depth: the gateway is plain-http loopback, so a dead
             // HTTPS proxy keeps the token from ever reaching a remote host if
             // Cline falls back to a default endpoint.
-            l.env = env(&[("HTTPS_PROXY", "http://127.0.0.1:9"), ("https_proxy", "http://127.0.0.1:9"), ("NO_PROXY", "127.0.0.1,localhost"), ("no_proxy", "127.0.0.1,localhost")]);
-            l.default_args = vec![s("--data-dir"), path_of(dir.join("cline-data")), s("-P"), s("openai-compatible"), s("-m"), s(model)];
+            l.env = env(&[("HTTPS_PROXY", "http://127.0.0.1:9"), ("https_proxy", "http://127.0.0.1:9"), ("NO_PROXY", "127.0.0.1,localhost"), ("no_proxy", "127.0.0.1,localhost"),
+                // A Cline hub already running (from normal use) would otherwise
+                // take the run and use its own provider (verified 3.0.70).
+                ("CLINE_SESSION_BACKEND_MODE", "local")]);
+            l.default_args = vec![s("-P"), s("openai-compatible"), s("-m"), s(model)];
+            if spec.shared {
+                // Usual ~/.cline (chats); only the provider file is PrismFlow's.
+                l.env.push((s("CLINE_PROVIDER_SETTINGS_PATH"), path_of(dir.join("cline-data/settings/providers.json"))));
+            } else {
+                l.default_args.splice(0..0, [s("--data-dir"), path_of(dir.join("cline-data"))]);
+            }
+        }
+        Kind::Pi if spec.shared => {
+            // Usual ~/.pi/agent (chats, settings); PrismFlow's provider comes
+            // from an extension file, the key from the environment (verified 1.1.0).
+            let ext = format!(
+                "// {MARKER}. Removed on disconnect; edits here are overwritten.\nexport default function (pi: any) {{\n  pi.registerProvider(\"prismflow\", {{\n    baseUrl: {},\n    api: \"openai-completions\",\n    apiKey: \"$PRISMFLOW_API_KEY\",\n    models: [{{ id: {}, name: {}, input: [\"text\"], contextWindow: 32768, maxTokens: 4096, cost: {{ input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }} }}],\n  }});\n}}\n",
+                serde_json::to_string(&base).unwrap(), serde_json::to_string(model).unwrap(), serde_json::to_string(model).unwrap(),
+            );
+            let file = dir.join("pi-prismflow.ts");
+            l.files.push((file.clone(), ext));
+            l.token_env = Some("PRISMFLOW_API_KEY");
+            l.default_args = vec![s("-e"), path_of(file), s("--model"), format!("prismflow/{model}")];
         }
         Kind::Pi => {
             let models = serde_json::json!({ "providers": { "prismflow": {
@@ -308,6 +381,9 @@ pub fn plan_files_for(
             l.token_env = Some("PRISMFLOW_API_KEY");
             l.env = env(&[("OPENCODE_DISABLE_MODELS_FETCH", "1"), ("OPENCODE_DISABLE_AUTOUPDATE", "1"), ("OPENCODE_DISABLE_SHARE", "1"),
                 ("OPENCODE_DISABLE_CLAUDE_CODE", "1"), ("OPENCODE_DISABLE_LSP_DOWNLOAD", "1")]);
+            if !spec.shared {
+                xdg_home(&mut l, &dir.join("opencode-home"));
+            }
             // One-shot runs on 2.x get a private server instead of the background service.
             l.version_switch = Some(VersionSwitch { env_key: "OPENCODE_CONFIG_CONTENT", v2_value: v2.to_string(), v1_value: v1.to_string(), v2_run_flag: "--standalone" });
         }
@@ -333,7 +409,10 @@ pub fn plan_files_for(
             l.files.push((dir.join("dsh-patch.yml"), patch));
             l.files.push((creds, "{}\n".into()));
             l.token_env = Some("PRISMFLOW_API_KEY");
-            l.env = env(&[("DSH_HOME", &path_of(dir.join("dsh-home"))), ("DSH_TELEMETRY_DISABLED", "1")]);
+            l.env = env(&[("DSH_TELEMETRY_DISABLED", "1")]);
+            if !spec.shared {
+                l.env.push((s("DSH_HOME"), path_of(dir.join("dsh-home"))));
+            }
             let patch_arg = path_of(dir.join("dsh-patch.yml"));
             // Launcher flags go before the app's own flags.
             l.branches.push(Branch { on: vec!["--prismflow-oneshot"], keep_first: false, env: vec![],
@@ -346,8 +425,16 @@ pub fn plan_files_for(
             let cfg = serde_json::json!({ "cli": { "auto_update": false }, "features": { "telemetry": false, "feedback": false },
                 "telemetry": { "trace_upload": false, "mixpanel_enabled": false } });
             l.token_env = Some("XAI_API_KEY");
-            l.env = env(&[("GROK_XAI_API_BASE_URL", &base), ("GROK_MODELS_BASE_URL", &base), ("GROK_HOME", &path_of(dir.join("grok-home"))),
+            l.env = env(&[("GROK_XAI_API_BASE_URL", &base), ("GROK_MODELS_BASE_URL", &base),
                 ("GROK_TELEMETRY_ENABLED", "0"), ("GROK_FEEDBACK_ENABLED", "0"), ("GROK_DISABLE_AUTOUPDATER", "1"), ("GROK_CONFIG", &cfg.to_string())]);
+            if spec.shared {
+                // Usual ~/.grok (chats). A stored xAI sign-in would outrank
+                // XAI_API_KEY, so the sign-in file is pointed elsewhere (the
+                // variable is in grok 1.0.50's binary; not tested with a sign-in).
+                l.env.push((s("GROK_AUTH_PATH"), path_of(dir.join("grok-auth.json"))));
+            } else {
+                l.env.push((s("GROK_HOME"), path_of(dir.join("grok-home"))));
+            }
             l.default_args = vec![s("--disable-web-search"), s("--no-leader")];
         }
         Kind::Muse => {
@@ -355,6 +442,9 @@ pub fn plan_files_for(
             // PrismFlow; PrismFlow answers its /muse-code/models catalog.
             l.token_env = Some("META_API_KEY");
             l.env = env(&[("MUSE_MODEL", model), ("MUSE_ENABLE_WEB_TOOLS", "0"), ("MUSE_WEB_SEARCH_MODE", "off"), ("TBH_DISABLE_FEATURE_CONFIG", "1")]);
+            if !spec.shared {
+                xdg_home(&mut l, &dir.join("muse-home"));
+            }
             let conn = vec![s("--provider"), s("meta"), s("--base-url"), base.clone(), s("--model"), s(model)];
             let mut exec_args = conn.clone();
             exec_args.extend([s("--no-foreign-personal-context"), s("-c"), s("telemetry.enabled=false"), s("-c"), s("feature_config.enabled=false")]);
@@ -365,6 +455,9 @@ pub fn plan_files_for(
             // OpenAI-compatible mode of Qwen Code (verified 0.25.2).
             l.token_env = Some("OPENAI_API_KEY");
             l.env = env(&[("OPENAI_BASE_URL", &base), ("OPENAI_MODEL", model)]);
+            if !spec.shared {
+                l.env.push((s("QWEN_HOME"), path_of(dir.join("qwen-home"))));
+            }
             l.default_args = vec![s("--auth-type"), s("openai")];
         }
         Kind::Goose => {
@@ -372,21 +465,36 @@ pub fn plan_files_for(
             l.token_env = Some("OPENAI_API_KEY");
             l.env = env(&[("GOOSE_PROVIDER", "openai"), ("OPENAI_HOST", broker_url), ("OPENAI_BASE_PATH", "v1/chat/completions"), ("GOOSE_MODEL", model),
                 ("GOOSE_DISABLE_KEYRING", "1"), ("GOOSE_TELEMETRY_OFF", "1")]);
+            if !spec.shared {
+                l.env.push((s("GOOSE_PATH_ROOT"), path_of(dir.join("goose-home"))));
+            }
             l.branches.push(Branch { on: vec!["--prismflow-oneshot"], keep_first: false, env: env(&[("GOOSE_MODE", "auto")]),
                 args: vec![s("run"), s("--no-session"), s("--no-profile"), s("--with-builtin"), s("developer"), s("-t")] });
         }
         Kind::Crush => {
-            // A config folder of its own: openai-compat provider, key from the environment (verified 0.98.1).
+            // PrismFlow's global config folder (openai-compat provider, key from
+            // the environment). Chats live in the project's .crush folder and
+            // ~/.local/share/crush unless moved too (verified 0.98.1).
             let cfg = serde_json::json!({
                 "options": { "disable_metrics": true, "disable_provider_auto_update": true, "disable_default_providers": true },
                 "providers": { "prismflow": { "name": "PrismFlow", "type": "openai-compat", "base_url": base, "api_key": "$PRISMFLOW_TOKEN",
                     "models": [{ "id": model, "name": model, "context_window": 32768, "default_max_tokens": 4096 }] } },
                 "models": { "large": { "provider": "prismflow", "model": model }, "small": { "provider": "prismflow", "model": model } }
             });
-            l.files.push((dir.join("crush-xdg/crush/crush.json"), serde_json::to_string_pretty(&cfg).unwrap()));
+            l.files.push((dir.join("crush-config/crush.json"), serde_json::to_string_pretty(&cfg).unwrap()));
             l.token_env = Some("PRISMFLOW_TOKEN");
-            l.env = env(&[("XDG_CONFIG_HOME", &path_of(dir.join("crush-xdg"))), ("DO_NOT_TRACK", "1"), ("CRUSH_DISABLE_PROVIDER_AUTO_UPDATE", "1")]);
-            l.branches.push(Branch { on: vec!["--prismflow-oneshot"], keep_first: false, env: vec![], args: vec![s("run"), s("-q"), s("-m"), format!("prismflow/{model}")] });
+            l.env = env(&[("CRUSH_GLOBAL_CONFIG", &path_of(dir.join("crush-config"))), ("DO_NOT_TRACK", "1"), ("CRUSH_DISABLE_PROVIDER_AUTO_UPDATE", "1")]);
+            // `--data-dir` is a global flag, so it can lead every command.
+            let lead = if spec.shared {
+                vec![]
+            } else {
+                l.env.push((s("CRUSH_GLOBAL_DATA"), path_of(dir.join("crush-data"))));
+                vec![s("--data-dir"), path_of(dir.join("crush-project"))]
+            };
+            let mut oneshot = lead.clone();
+            oneshot.extend([s("run"), s("-q"), s("-m"), format!("prismflow/{model}")]);
+            l.branches.push(Branch { on: vec!["--prismflow-oneshot"], keep_first: false, env: vec![], args: oneshot });
+            l.default_args = lead;
         }
         Kind::Droid => {
             // Droid takes a per-process settings file; its key field must hold the
@@ -396,6 +504,9 @@ pub fn plan_files_for(
                 "apiKey": "{TOKEN}", "provider": "generic-chat-completion-api", "maxOutputTokens": 4096 }] }).to_string();
             l.token_file = Some((settings.clone(), template));
             l.env = env(&[("FACTORY_DISABLE_KEYRING", "1"), ("FACTORY_DROID_AUTO_UPDATE_ENABLED", "false"), ("FACTORY_OTEL_ENABLED", "false")]);
+            if !spec.shared {
+                l.env.push((s("FACTORY_HOME_OVERRIDE"), path_of(dir.join("factory-home"))));
+            }
             let sp = path_of(settings);
             l.branches.push(Branch { on: vec!["--prismflow-oneshot"], keep_first: false, env: env(&[("FACTORY_AIRGAP_ENABLED", "1")]),
                 args: vec![s("exec"), s("--settings"), sp.clone(), s("-m"), s("custom:PrismFlow-0")] });
@@ -410,13 +521,19 @@ pub fn plan_files_for(
             );
             l.files.push((dir.join("continue-config.yaml"), yaml));
             l.token_env = Some("PRISMFLOW_TOKEN");
-            l.env = env(&[("CONTINUE_GLOBAL_DIR", &path_of(dir.join("continue-home"))), ("CONTINUE_CLI_ENABLE_TELEMETRY", "0"), ("CONTINUE_METRICS_ENABLED", "0")]);
+            l.env = env(&[("CONTINUE_CLI_ENABLE_TELEMETRY", "0"), ("CONTINUE_METRICS_ENABLED", "0")]);
+            if !spec.shared {
+                l.env.push((s("CONTINUE_GLOBAL_DIR"), path_of(dir.join("continue-home"))));
+            }
             l.default_args = vec![s("--config"), path_of(dir.join("continue-config.yaml"))];
         }
         Kind::CopilotCli => {
             // Copilot CLI's documented bring-your-own-key mode; no GitHub sign-in needed.
             l.token_env = Some("COPILOT_PROVIDER_API_KEY");
             l.env = env(&[("COPILOT_PROVIDER_BASE_URL", &base), ("COPILOT_PROVIDER_TYPE", "openai"), ("COPILOT_MODEL", model), ("COPILOT_OFFLINE", "true")]);
+            if !spec.shared {
+                l.env.push((s("COPILOT_HOME"), path_of(dir.join("copilot-home"))));
+            }
         }
     }
     let script = match shell {
@@ -658,6 +775,43 @@ mod tests {
         assert!(out.status.success(), "{text} {}", String::from_utf8_lossy(&out.stderr));
         assert!(text.contains("key=tok-123 base=http://127.0.0.1:1/v1"), "{text}");
         assert!(text.contains("--auth-type openai -p \"hello world\""), "{text}");
+    }
+
+    /// What moves an agent's home (chats, settings) away from its usual one.
+    const HOME_MOVERS: &[&str] = &["--data-dir", "PI_CODING_AGENT_DIR", "HERMES_HOME", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "DSH_HOME", "GROK_HOME",
+        "QWEN_HOME", "GOOSE_PATH_ROOT", "CRUSH_GLOBAL_DATA", "FACTORY_HOME_OVERRIDE", "CONTINUE_GLOBAL_DIR", "COPILOT_HOME", "AIDER_CHAT_HISTORY_FILE"];
+
+    #[test]
+    fn shared_and_separate_modes() {
+        for a in AGENTS {
+            let script = &files(a.id)[0].1;
+            let moved: Vec<&str> = HOME_MOVERS.iter().copied().filter(|m| script.contains(m)).collect();
+            if a.shared {
+                assert!(moved.is_empty(), "{} (shared) moves its home: {moved:?}", a.id);
+            } else {
+                assert!(!moved.is_empty(), "{} (separate) keeps the usual home", a.id);
+                // Everything it moves stays in the connection's folder.
+                assert!(script.contains("/s/agents/x/"), "{}", a.id);
+            }
+            assert!(spec(a.family).is_some(), "{}", a.id);
+            assert_eq!(spec(a.family).unwrap().binary, a.binary);
+        }
+        // Every agent but Hermes comes in both modes.
+        for fam in AGENTS.iter().filter(|a| a.id == a.family) {
+            let modes: Vec<bool> = AGENTS.iter().filter(|a| a.family == fam.id).map(|a| a.shared).collect();
+            assert_eq!(modes.len(), if fam.id == "hermes" { 1 } else { 2 }, "{}", fam.id);
+        }
+        let cline = files("cline_shared");
+        assert!(cline[0].1.contains("CLINE_PROVIDER_SETTINGS_PATH='/s/agents/x/cline-data/settings/providers.json'"));
+        assert!(cline[0].1.contains("CLINE_SESSION_BACKEND_MODE='local'"));
+        let pi = files("pi_shared");
+        assert!(pi[1].1.contains("registerProvider(\"prismflow\"") && pi[1].1.contains("\"$PRISMFLOW_API_KEY\""));
+        assert!(pi[0].1.contains("PRISMFLOW_API_KEY=\"$("));
+        let crush = files("crush");
+        assert!(crush[0].1.contains("exec '/usr/local/bin/agent' --data-dir /s/agents/x/crush-project \"$@\""), "{}", crush[0].1);
+        assert!(!crush[0].1.contains("XDG_CONFIG_HOME"), "tools Crush runs keep the user's XDG folders");
+        let aider = files("aider_separate");
+        assert!(aider[0].1.contains("-c /s/agents/x/aider.conf.yml --env-file /s/agents/x/aider.env --model"));
     }
 
     #[test]
