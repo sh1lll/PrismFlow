@@ -819,7 +819,8 @@ mod tests {
                 for m in &moved {
                     let after = &script[script.find(m).unwrap() + m.len()..];
                     let value = after.trim_start_matches(['=', ' ', '\'']);
-                    assert!(value.starts_with("/s/agents/x/"), "{}: {m} points at {}", a.id, &value[..value.len().min(40)]);
+                    // (Windows joins the rest of the path with `\`.)
+                    assert!(value.starts_with("/s/agents/x"), "{}: {m} points at {}", a.id, &value[..value.len().min(40)]);
                 }
             }
             assert!(spec(a.family).is_some(), "{}", a.id);

@@ -1,8 +1,13 @@
-use crate::credentials::{account_key, CredentialStore};
+use crate::credentials::CredentialStore;
 use std::io::Write;
 
-/// Handles CLI invocations. Returns `Some(exit_code)` when the arguments
-/// requested a CLI action, or `None` when the GUI should launch.
+/// Handles CLI invocations. `token print` gives a connection's local token
+/// to the app PrismFlow set up (its config names the connection). Any
+/// program running as the same user could ask too, so that token only
+/// works on this computer's gateway, is held to PrismFlow's budget and
+/// rate limits, and is revoked on disconnect; a provider key is never
+/// printed. Returns `Some(exit_code)` when the arguments requested a CLI
+/// action, or `None` when the GUI should launch.
 pub fn handle_args(
     args: &[String],
     store: &dyn CredentialStore,
@@ -13,21 +18,13 @@ pub fn handle_args(
             let _ = writeln!(out, "prismflow {}", env!("CARGO_PKG_VERSION"));
             Some(0)
         }
-        [cmd, sub, flag, provider]
-            if cmd == "credential" && sub == "print" && flag == "--provider" =>
-        {
-            match store.get(&account_key(provider, "default")) {
-                Ok(secret) => {
-                    let _ = writeln!(out, "{}", secret);
-                    Some(0)
-                }
-                Err(_) => {
-                    eprintln!(
-                        "prismflow: no credential stored for provider '{provider}'. Add it in the app under Providers."
-                    );
-                    Some(2)
-                }
-            }
+        // Older versions let Codex fetch the provider key this way. PrismFlow
+        // no longer gives a provider key to any program: apps get their own
+        // revocable local token instead. (Connections that used this are
+        // moved to the gateway when PrismFlow starts.)
+        [cmd, sub, ..] if cmd == "credential" && sub == "print" => {
+            eprintln!("prismflow: PrismFlow no longer hands out provider keys. Open PrismFlow and connect this app again.");
+            Some(2)
         }
         [cmd, sub, flag, connection]
             if cmd == "token" && sub == "print" && flag == "--connection" =>
@@ -47,7 +44,7 @@ pub fn handle_args(
         }
         [] => None,
         _ => {
-            eprintln!("usage: prismflow [--version | credential print --provider <id> | token print --connection <id>]");
+            eprintln!("usage: prismflow [--version | token print --connection <id>]");
             Some(64)
         }
     }
@@ -120,19 +117,14 @@ mod tests {
     }
 
     #[test]
-    fn credential_print_writes_secret_to_stdout() {
+    fn credential_print_never_gives_out_a_provider_key() {
         let store = InMemoryStore::new();
-        store.set(&account_key("openrouter", "default"), "sk-or-test").unwrap();
-        let (code, out) = run(&["credential", "print", "--provider", "openrouter"], &store);
-        assert_eq!(code, Some(0));
-        assert_eq!(out.trim(), "sk-or-test");
-    }
-
-    #[test]
-    fn missing_credential_exits_2_with_empty_stdout() {
-        let (code, out) = run(&["credential", "print", "--provider", "nope"], &InMemoryStore::new());
-        assert_eq!(code, Some(2));
-        assert!(out.is_empty());
+        store.set(&crate::credentials::account_key("openrouter", "default"), "sk-or-test").unwrap();
+        for args in [&["credential", "print", "--provider", "openrouter"][..], &["credential", "print"]] {
+            let (code, out) = run(args, &store);
+            assert_eq!(code, Some(2));
+            assert!(out.is_empty(), "nothing on stdout: {out}");
+        }
     }
 
     #[test]

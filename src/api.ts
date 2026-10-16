@@ -22,7 +22,6 @@ export interface Provider {
   key_count: number;
   address: string;
   example_model: string;
-  codex_direct: boolean;
   /** How each app reaches this provider; null = unsupported. */
   routes: Record<AppId, Route | null>;
 }

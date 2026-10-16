@@ -12,7 +12,7 @@
 
 use super::{extra_bin_dirs, AppDetection};
 use crate::config_engine::{self, ConfigError, EditPlan, TomlVal};
-use crate::providers::{Protocol, ProviderDefinition};
+use crate::providers::ProviderDefinition;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -120,8 +120,6 @@ pub fn profile_file(home: &Path, provider_id: &str) -> PathBuf {
 
 #[derive(Debug, thiserror::Error)]
 pub enum CodexError {
-    #[error("{0} does not offer the OpenAI Responses API, which Codex requires; connect it through PrismFlow's gateway")]
-    ProtocolUnsupported(String),
     #[error("{0} needs a base URL; custom providers are not supported in this build")]
     MissingBaseUrl(String),
     #[error("{} exists but was not created by PrismFlow; refusing to overwrite it", .0.display())]
@@ -132,25 +130,6 @@ pub enum CodexError {
 
 fn is_ours(content: &str) -> bool {
     content.starts_with(MANAGED_MARKER)
-}
-
-/// Plan the profile file for `provider` + `model`. `helper` is the absolute
-/// path of the PrismFlow binary that serves `credential print`.
-pub fn plan_connect(
-    home: &Path,
-    provider: &ProviderDefinition,
-    model: &str,
-    helper: &Path,
-    catalog: Option<&Path>,
-) -> Result<EditPlan, CodexError> {
-    if !provider.protocols.contains(&Protocol::OpenAiResponses) {
-        return Err(CodexError::ProtocolUnsupported(provider.display_name.into()));
-    }
-    if provider.base_url.is_empty() {
-        return Err(CodexError::MissingBaseUrl(provider.display_name.into()));
-    }
-    let args = vec!["credential".into(), "print".into(), "--provider".into(), provider.id.into()];
-    plan_profile(home, provider, model, provider.base_url, helper, args, catalog)
 }
 
 /// Plan a profile that reaches `provider` through PrismFlow's gateway
@@ -528,12 +507,17 @@ mod tests {
         assert_eq!(provider_table("openrouter"), "prismflow_openrouter");
     }
 
+    /// A profile through the gateway, as every Codex connection now is.
+    fn gw(home: &Path, provider: &str, model: &str, catalog: Option<&Path>) -> Result<EditPlan, CodexError> {
+        plan_connect_gateway(home, providers::get(provider).unwrap(), model, &helper(), &format!("codex_cli:{provider}"), "http://127.0.0.1:1", catalog)
+    }
+
     #[test]
     fn connect_writes_only_a_marked_profile_file() {
         let home = tempfile::tempdir().unwrap();
         let base = home.path().join("config.toml");
         fs::write(&base, "# mine\nmodel = \"gpt-5.4-mini\"\n").unwrap();
-        let plan = plan_connect(home.path(), providers::get("openrouter").unwrap(), "openai/gpt-oss-20b", &helper(), None).unwrap();
+        let plan = gw(home.path(), "openrouter", "openai/gpt-oss-20b", None).unwrap();
         assert_eq!(plan.file, home.path().join("prismflow-openrouter.config.toml"));
         config_engine::apply(&plan).unwrap();
 
@@ -544,7 +528,7 @@ mod tests {
         assert_eq!(doc["model_provider"].as_str(), Some("prismflow_openrouter"));
         let p = &doc["model_providers"]["prismflow_openrouter"];
         assert_eq!(p["wire_api"].as_str(), Some("responses"));
-        assert_eq!(p["base_url"].as_str(), Some("https://openrouter.ai/api/v1"));
+        assert_eq!(p["base_url"].as_str(), Some("http://127.0.0.1:1/v1"));
         assert_eq!(p["auth"]["command"].as_str(), Some(helper().to_str().unwrap()));
         assert!(!written.contains("sk-"), "no secret may be written");
         // the user's config is untouched
@@ -554,27 +538,19 @@ mod tests {
     #[test]
     fn reconnect_updates_model_idempotently() {
         let home = tempfile::tempdir().unwrap();
-        let or = providers::get("openrouter").unwrap();
-        config_engine::apply(&plan_connect(home.path(), or, "a/one", &helper(), None).unwrap()).unwrap();
-        let again = plan_connect(home.path(), or, "a/one", &helper(), None).unwrap();
+        config_engine::apply(&gw(home.path(), "openrouter", "a/one", None).unwrap()).unwrap();
+        let again = gw(home.path(), "openrouter", "a/one", None).unwrap();
         assert_eq!(again.before, again.after);
-        let switched = plan_connect(home.path(), or, "b/two", &helper(), None).unwrap();
+        let switched = gw(home.path(), "openrouter", "b/two", None).unwrap();
         assert!(switched.after.contains("\"b/two\""));
         assert_eq!(switched.after.matches(MANAGED_MARKER).count(), 1);
     }
 
     #[test]
-    fn refuses_foreign_file_and_chat_only_providers() {
+    fn refuses_a_foreign_file() {
         let home = tempfile::tempdir().unwrap();
         fs::write(home.path().join("prismflow-openrouter.config.toml"), "model = \"user's\"\n").unwrap();
-        assert!(matches!(
-            plan_connect(home.path(), providers::get("openrouter").unwrap(), "m", &helper(), None),
-            Err(CodexError::NotOurs(_))
-        ));
-        assert!(matches!(
-            plan_connect(home.path(), providers::get("nvidia_nim").unwrap(), "m", &helper(), None),
-            Err(CodexError::ProtocolUnsupported(_))
-        ));
+        assert!(matches!(gw(home.path(), "openrouter", "m", None), Err(CodexError::NotOurs(_))));
     }
 
     #[test]
@@ -596,7 +572,7 @@ mod tests {
     fn disconnect_backs_up_and_removes_only_our_file() {
         let home = tempfile::tempdir().unwrap();
         let backups = tempfile::tempdir().unwrap();
-        let plan = plan_connect(home.path(), providers::get("openrouter").unwrap(), "m", &helper(), None).unwrap();
+        let plan = gw(home.path(), "openrouter", "m", None).unwrap();
         config_engine::apply(&plan).unwrap();
         let backup = disconnect(&plan.file, backups.path()).unwrap().unwrap();
         assert!(!plan.file.exists());
@@ -644,7 +620,7 @@ mod tests {
     fn profile_points_at_catalog_when_given() {
         let home = tempfile::tempdir().unwrap();
         let cat = home.path().join("cat.json");
-        let plan = plan_connect(home.path(), providers::get("openrouter").unwrap(), "m", &helper(), Some(&cat)).unwrap();
+        let plan = gw(home.path(), "openrouter", "m", Some(&cat)).unwrap();
         // Read the value back (Windows paths are escaped in TOML).
         let doc: toml_edit::DocumentMut = plan.after.parse().unwrap();
         let found = doc.as_table().iter()
@@ -662,8 +638,8 @@ mod tests {
         assert_eq!(priors["model_provider"].as_deref(), Some("other"));
         assert_eq!(priors["model_catalog_json"], None);
         let cat = home.path().join("cat.json");
-        let plan = plan_connect_base(home.path(), providers::get("openrouter").unwrap(), "a/b", "https://openrouter.ai/api/v1",
-            &helper(), vec!["credential".into()], Some(&cat)).unwrap();
+        let plan = plan_connect_base(home.path(), providers::get("openrouter").unwrap(), "a/b", "http://127.0.0.1:1/v1",
+            &helper(), vec!["token".into(), "print".into(), "--connection".into(), "codex_desktop:openrouter".into()], Some(&cat)).unwrap();
         config_engine::apply(&plan).unwrap();
         let doc: toml_edit::DocumentMut = std::fs::read_to_string(base_config(home.path())).unwrap().parse().unwrap();
         assert_eq!(doc["model_provider"].as_str(), Some("prismflow_openrouter"));

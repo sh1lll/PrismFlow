@@ -28,8 +28,6 @@ pub struct ProviderView {
     pub key_count: usize,
     /// The address in use (differs from `base_url` when the user changed it).
     pub address: String,
-    /// Codex can talk to this provider without the gateway.
-    pub codex_direct: bool,
     /// How each app would reach this provider, or None when it cannot.
     pub routes: BTreeMap<&'static str, Option<Route>>,
 }
@@ -99,10 +97,6 @@ fn provider(id: &str) -> R<&'static ProviderDefinition> {
     providers::get(id).ok_or_else(|| format!("Unknown provider '{id}'."))
 }
 
-fn codex_direct(p: &ProviderDefinition) -> bool {
-    p.protocols.contains(&Protocol::OpenAiResponses) && !p.base_url.is_empty()
-}
-
 /// The matrix decision for an (app, provider) pair; None = unsupported.
 pub fn route_for(app_id: &str, p: &ProviderDefinition) -> Option<Route> {
     if p.base_url.is_empty() {
@@ -113,10 +107,9 @@ pub fn route_for(app_id: &str, p: &ProviderDefinition) -> Option<Route> {
         return None;
     }
     match app_id {
-        a if codex::is_cli(a) && codex_direct(p) && p.requires_key => Some(Route::Direct),
-        a if codex::is_cli(a) => Some(Route::Gateway),
-        a if codex::is_desktop(a) && codex_direct(p) && p.requires_key => Some(Route::Direct),
-        a if codex::is_desktop(a) => Some(Route::Gateway),
+        // Codex too goes through the gateway: an app is only ever given its
+        // own revocable local token, never the provider key.
+        a if codex::is_cli(a) || codex::is_desktop(a) => Some(Route::Gateway),
         a if claude_code::is_cli(a) => Some(Route::Gateway),
         a if claude_desktop::is_claude_desktop(a) => Some(Route::Gateway),
         jetbrains::APP_ID => Some(Route::Gateway),
@@ -371,7 +364,6 @@ impl Service {
                 },
                 signin_available: def.credential_source != providers::CredentialSource::Keychain && self.signin_available(def),
                 key_optional: !def.requires_key,
-                codex_direct: codex_direct(def),
                 routes: app_ids().into_iter().map(|a| (a, route_for(a, def))).collect(),
             })
             .collect()
@@ -770,15 +762,10 @@ impl Service {
         }
         let plan = match (app_id, route) {
             (a, _) if codex::is_desktop(a) => {
-                let (base_url, args) = if route == Route::Direct {
-                    (p.base_url.to_string(), vec!["credential".into(), "print".into(), "--provider".into(), p.id.into()])
-                } else {
-                    (format!("{url}/v1"), vec!["token".into(), "print".into(), "--connection".into(), id.clone()])
-                };
-                codex::plan_connect_base(&self.desktop_home(app_id), p, model, &base_url, &self.helper, args, catalog).map_err(|e| e.to_string())?
+                let args = vec!["token".into(), "print".into(), "--connection".into(), id.clone()];
+                codex::plan_connect_base(&self.desktop_home(app_id), p, model, &format!("{url}/v1"), &self.helper, args, catalog).map_err(|e| e.to_string())?
             }
-            (a, Route::Direct) if codex::is_cli(a) => codex::plan_connect(&self.cli_home(a), p, model, &self.helper, catalog).map_err(|e| e.to_string())?,
-            (a, Route::Gateway) if codex::is_cli(a) => codex::plan_connect_gateway(&self.cli_home(a), p, model, &self.helper, &id, &url, catalog)
+            (a, _) if codex::is_cli(a) => codex::plan_connect_gateway(&self.cli_home(a), p, model, &self.helper, &id, &url, catalog)
                 .map_err(|e| e.to_string())?,
             _ => {
                 let routing = self.state.get(&id).ok().flatten().map(|r| r.routing).unwrap_or_default();
@@ -1291,6 +1278,26 @@ impl Service {
 
     pub fn gateway_status(&self) -> BrokerStatus {
         self.broker.status()
+    }
+
+    /// Connections from older versions where Codex fetched the provider key
+    /// itself (`credential print`, now refused) are set up again through the
+    /// gateway. Returns how many were moved.
+    pub async fn move_direct_connections(&self) -> usize {
+        let direct: Vec<ConnectionRecord> = self.connections().unwrap_or_default().into_iter().filter(|r| r.route == Route::Direct).collect();
+        let mut moved = 0;
+        for r in direct {
+            match self.connect(&r.app_id, &r.provider_id, &r.model).await {
+                Ok(_) => {
+                    moved += 1;
+                    self.diag.record(Level::Info, "connect.moved", &format!(
+                        "{} now reaches {} through PrismFlow with its own key. Restart it to use the new setup.", app_name(&r.app_id), r.provider_id));
+                }
+                Err(e) => self.diag.record(Level::Warn, "connect.move_failed", &format!(
+                    "{} still needs to be connected again: {e}", app_name(&r.app_id))),
+            }
+        }
+        moved
     }
 
     pub async fn restart_gateway(&self) -> R<BrokerStatus> {
@@ -1905,17 +1912,16 @@ mod tests {
         s.set_credential("openrouter", "  sk-or-v1-abcdefabcdef  ").unwrap();
         let rec = s.connect(CODEX, "openrouter", "a/b").await.unwrap();
         assert_eq!(rec.status, ConnectionStatus::Unverified);
-        assert_eq!(rec.route, Route::Direct);
+        assert_eq!(rec.route, Route::Gateway, "Codex gets its own local token, never the provider key");
         assert!(rec.managed_file.exists());
         assert_eq!(s.connections().unwrap().len(), 1);
         assert!(s.providers().iter().any(|p| p.def.id == "openrouter" && p.has_credential));
-        assert!(!s.broker.is_running().await, "a direct connection must not start the gateway");
     }
 
     #[test]
     fn routing_matrix_matches_the_compatibility_matrix() {
         let get = |id| providers::get(id).unwrap();
-        assert_eq!(route_for(CODEX, get("openrouter")), Some(Route::Direct));
+        assert_eq!(route_for(CODEX, get("openrouter")), Some(Route::Gateway));
         assert_eq!(route_for(CODEX, get("nvidia_nim")), Some(Route::Gateway));
         assert_eq!(route_for(CLAUDE, get("openrouter")), Some(Route::Gateway));
         assert_eq!(route_for(CLAUDE, get("nvidia_nim")), Some(Route::Gateway));
@@ -2126,7 +2132,9 @@ mod tests {
         assert_eq!(sep.managed_file, home.join("config.toml"));
         let cfg = std::fs::read_to_string(&sep.managed_file).unwrap();
         assert!(cfg.contains("model = \"c/d\"") && cfg.contains("model_provider = \"prismflow_openrouter\""), "{cfg}");
-        assert!(s.preview(codex::DESKTOP_SEPARATE_APP_ID, "openrouter", "c/d").unwrap().launch_command.contains("--env CODEX_HOME="));
+        // macOS opens it with `open --env`; elsewhere PrismFlow can't open it.
+        let line = s.preview(codex::DESKTOP_SEPARATE_APP_ID, "openrouter", "c/d").unwrap().launch_command;
+        assert_eq!(line.contains("--env CODEX_HOME="), cfg!(target_os = "macos"), "{line}");
         // Each has its own model list (written when the Codex CLI is installed).
         assert_ne!(s.codex_catalog_path(codex::DESKTOP_APP_ID, "openrouter"), s.codex_catalog_path(codex::DESKTOP_SEPARATE_APP_ID, "openrouter"));
         s.disconnect(&sep.id).await.unwrap();
@@ -2240,6 +2248,31 @@ mod tests {
         let cli = s.connect(CODEX, "openrouter", "a/b").await.unwrap();
         s.disconnect(&cli.id).await.unwrap();
         assert!(legacy.exists(), "the Codex app still uses it");
+    }
+
+    #[tokio::test]
+    async fn older_direct_codex_connections_move_to_the_gateway() {
+        let dir = tempfile::tempdir().unwrap();
+        let s = service(dir.path());
+        s.set_credential("openrouter", "sk-or-v1-abcdefabcdef").unwrap();
+        // What an older version left: a direct record whose Codex profile
+        // fetched the provider key with `credential print`.
+        let rec = s.connect(CODEX, "openrouter", "a/b").await.unwrap();
+        std::fs::write(&rec.managed_file, format!("{}\n[model_providers.prismflow_openrouter.auth]\ncommand = \"x\"\nargs = [\"credential\", \"print\", \"--provider\", \"openrouter\"]\n", codex::MANAGED_MARKER)).unwrap();
+        s.state.upsert(ConnectionRecord { route: Route::Direct, ..rec }).unwrap();
+
+        assert_eq!(s.move_direct_connections().await, 1);
+        let now = s.connections().unwrap();
+        assert_eq!(now.len(), 1);
+        assert_eq!(now[0].route, Route::Gateway);
+        let profile = std::fs::read_to_string(&now[0].managed_file).unwrap();
+        assert!(profile.contains("\"token\", \"print\"") && !profile.contains("credential"), "{profile}");
+        assert_eq!(s.move_direct_connections().await, 0, "nothing left to move");
+        // No file an app reads asks for a provider key (backups keep the old one).
+        for f in walk(&s.codex_home).into_iter().chain(walk(s.state.dir())).filter(|f| !f.starts_with(s.state.backups_dir())) {
+            let text = std::fs::read_to_string(&f).unwrap_or_default();
+            assert!(!text.contains("\"credential\", \"print\""), "{} still uses credential print", f.display());
+        }
     }
 
     #[test]

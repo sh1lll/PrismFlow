@@ -807,6 +807,9 @@ pub fn run() {
             let handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
                 let svc = handle.state::<Arc<Service>>().inner().clone();
+                // Codex connections from older versions fetched the provider
+                // key themselves; set them up through the gateway instead.
+                svc.move_direct_connections().await;
                 // Gateway connections from earlier sessions need the broker back.
                 if let Err(e) = svc.sync_gateway().await {
                     svc.diag.record(diagnostics::Level::Error, "gateway.startup", &e);
