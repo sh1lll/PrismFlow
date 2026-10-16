@@ -1834,6 +1834,13 @@ mod tests {
         assert_eq!(s.state.get(&rec.id).unwrap().unwrap().status, ConnectionStatus::Unverified);
     }
 
+    #[cfg(windows)]
+    #[test]
+    fn launch_commands_quote_paths_on_windows() {
+        assert_eq!(launch_command("C:/a b/codex.exe", "p"), "\"C:/a b/codex.exe\" -p p");
+    }
+
+    #[cfg(unix)]
     #[test]
     fn launch_commands_quote_paths() {
         assert_eq!(launch_command("/a b/codex", "prismflow-openrouter"), "'/a b/codex' -p prismflow-openrouter");

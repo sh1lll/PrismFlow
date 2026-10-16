@@ -297,6 +297,7 @@ async fn stop_terminates_the_engine_and_closes_the_port() {
     assert!(std::net::TcpStream::connect(("127.0.0.1", h.broker.port())).is_err(), "broker still listening");
 }
 
+#[cfg(unix)] // finds and kills the engine with lsof/kill
 #[tokio::test]
 async fn crashed_engine_is_restarted() {
     let h = harness().await;

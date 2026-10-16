@@ -604,7 +604,12 @@ mod tests {
         let home = tempfile::tempdir().unwrap();
         let cat = home.path().join("cat.json");
         let plan = plan_connect(home.path(), providers::get("openrouter").unwrap(), "m", &helper(), Some(&cat)).unwrap();
-        assert!(plan.after.contains(&format!("model_catalog_json = \"{}\"", cat.display())));
+        // Read the value back (Windows paths are escaped in TOML).
+        let doc: toml_edit::DocumentMut = plan.after.parse().unwrap();
+        let found = doc.as_table().iter()
+            .find_map(|(_, v)| v.as_table_like().and_then(|t| t.get("model_catalog_json")).and_then(|x| x.as_str().map(String::from)))
+            .or_else(|| doc.get("model_catalog_json").and_then(|x| x.as_str()).map(String::from));
+        assert_eq!(found.as_deref(), Some(cat.display().to_string().as_str()), "{}", plan.after);
     }
 
     #[test]
