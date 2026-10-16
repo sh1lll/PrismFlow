@@ -315,7 +315,7 @@ async fn run_stages(
             .map(|_| "VS Code points the Claude Code extension at PrismFlow.".to_string())
             .ok_or_else(|| format!("{} no longer points the Claude Code extension at PrismFlow.", crate::adapters::vscode::settings_file().display()))
     } else if crate::adapters::editors::ALL.contains(&record.app_id.as_str()) {
-        crate::adapters::editors::check(&record.app_id, &record.id)
+        crate::adapters::editors::check(&record.app_id, &record.id, &env.state_dir)
     } else if record.app_id == crate::adapters::vscode::CHAT_APP_ID {
         crate::adapters::vscode::chat_model(&record.id)
             .map(|_| "VS Code Chat has the PrismFlow model.".to_string())

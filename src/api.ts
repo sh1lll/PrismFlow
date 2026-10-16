@@ -35,13 +35,13 @@ export interface UrlCheck {
   warnings: string[];
 }
 
-export type AppId = "codex_cli" | "codex_desktop" | "codex_desktop_separate" | "claude_code" | "claude_desktop" | "jetbrains" | "vscode_claude" | "vscode_chat" | "aider" | "cline" | "pi" | "hermes" | "opencode" | "dsh" | "grok" | "muse" | "qwen" | "goose" | "crush" | "droid" | "continue_cli" | "copilot_cli" | "roo_code" | "kilo_code" | "zed" | "continue_ide";
-export const APP_IDS: AppId[] = ["codex_cli", "codex_desktop", "codex_desktop_separate", "claude_code", "claude_desktop", "jetbrains", "vscode_claude", "vscode_chat", "aider", "cline", "pi", "hermes", "roo_code", "kilo_code", "zed", "continue_ide", "opencode", "dsh", "grok", "muse", "qwen", "goose", "crush", "droid", "continue_cli", "copilot_cli"];
+export type AppId = "codex_cli" | "codex_cli_separate" | "claude_code_separate" | "vscode_claude_shared" | "vscode_separate" | "zed_separate" | "codex_desktop" | "codex_desktop_separate" | "claude_code" | "claude_desktop" | "jetbrains" | "vscode_claude" | "vscode_chat" | "aider" | "cline" | "pi" | "hermes" | "opencode" | "dsh" | "grok" | "muse" | "qwen" | "goose" | "crush" | "droid" | "continue_cli" | "copilot_cli" | "roo_code" | "kilo_code" | "zed" | "continue_ide";
+export const APP_IDS: AppId[] = ["codex_cli", "codex_cli_separate", "codex_desktop", "codex_desktop_separate", "claude_code", "claude_code_separate", "claude_desktop", "jetbrains", "vscode_claude", "vscode_claude_shared", "vscode_chat", "vscode_separate", "aider", "cline", "pi", "hermes", "roo_code", "kilo_code", "zed", "zed_separate", "continue_ide", "opencode", "dsh", "grok", "muse", "qwen", "goose", "crush", "droid", "continue_cli", "copilot_cli"];
 export const TERMINAL_AGENTS: AppId[] = ["aider", "cline", "pi", "hermes", "opencode", "dsh", "grok", "muse", "qwen", "goose", "crush", "droid", "continue_cli", "copilot_cli"];
 export type Route = "direct" | "gateway";
 
 export const APP_NAME: Record<string, string> = {
-  codex_cli: "Codex CLI", codex_desktop: "Codex app & VS Code", codex_desktop_separate: "Codex app (separate)", claude_code: "Claude Code CLI", claude_desktop: "Claude Desktop", jetbrains: "JetBrains IDEs", vscode_claude: "Claude Code for VS Code", vscode_chat: "VS Code Chat", aider: "Aider", cline: "Cline CLI", pi: "Pi", hermes: "Hermes Agent", playground: "Try a model", opencode: "OpenCode", dsh: "DeepSeek Harness", grok: "Grok Build", muse: "Muse Code", qwen: "Qwen Code", goose: "Goose", crush: "Crush", droid: "Factory Droid", continue_cli: "Continue CLI", copilot_cli: "GitHub Copilot CLI", roo_code: "Roo Code", kilo_code: "Kilo Code", zed: "Zed", continue_ide: "Continue (VS Code / JetBrains)",
+  codex_cli: "Codex CLI", codex_cli_separate: "Codex CLI (separate)", claude_code_separate: "Claude Code (separate)", vscode_claude_shared: "Claude Code for VS Code (shared)", vscode_separate: "VS Code (separate)", codex_desktop: "Codex app & VS Code", codex_desktop_separate: "Codex app (separate)", claude_code: "Claude Code CLI", claude_desktop: "Claude Desktop", jetbrains: "JetBrains IDEs", vscode_claude: "Claude Code for VS Code (separate)", vscode_chat: "VS Code Chat", aider: "Aider", cline: "Cline CLI", pi: "Pi", hermes: "Hermes Agent", playground: "Try a model", opencode: "OpenCode", dsh: "DeepSeek Harness", grok: "Grok Build", muse: "Muse Code", qwen: "Qwen Code", goose: "Goose", crush: "Crush", droid: "Factory Droid", continue_cli: "Continue CLI", copilot_cli: "GitHub Copilot CLI", roo_code: "Roo Code", kilo_code: "Kilo Code", zed: "Zed", zed_separate: "Zed (separate)", continue_ide: "Continue (VS Code / JetBrains)",
 };
 
 export const ROUTE_LABEL: Record<Route, string> = {
@@ -315,9 +315,28 @@ export function providerName(providers: Provider[], id: string): string {
 }
 
 /** The command a user runs to start the app with a connection. */
+/** Apps that come in two ways: with your usual chats and settings, or a space of their own. */
+export const MODE_PAIRS: { name: string; shared: AppId; separate: AppId }[] = [
+  { name: "Codex CLI", shared: "codex_cli", separate: "codex_cli_separate" },
+  { name: "Codex app", shared: "codex_desktop", separate: "codex_desktop_separate" },
+  { name: "Claude Code", shared: "claude_code", separate: "claude_code_separate" },
+  { name: "Claude Code for VS Code", shared: "vscode_claude_shared", separate: "vscode_claude" },
+  { name: "VS Code", shared: "vscode_chat", separate: "vscode_separate" },
+  { name: "Zed", shared: "zed", separate: "zed_separate" },
+];
+
+export function modePair(id: string) {
+  return MODE_PAIRS.find((p) => p.shared === id || p.separate === id);
+}
+
+const dir = (f: string) => f.replace(/[\\/][^\\/]+$/, "");
+
 export function launchHint(c: Connection): string {
+  if (c.app_id === "codex_cli_separate") return `CODEX_HOME='${dir(c.managed_file)}' codex -p ${c.profile}`;
+  if (c.app_id === "claude_code_separate") return `CLAUDE_CONFIG_DIR='${dir(c.managed_file)}' claude --settings '${c.managed_file}'`;
   if (TERMINAL_AGENTS.includes(c.app_id as AppId)) return c.managed_file;
   if (c.app_id === "codex_desktop") return "open the Codex app (restart it after changes)";
+  if (c.app_id === "vscode_separate" || c.app_id === "zed_separate") return "Open app in PrismFlow";
   if (c.app_id === "codex_desktop_separate") return "Open app in PrismFlow (quit the Codex app first)";
   if (c.app_id === "claude_desktop") return "Claude Desktop → Configure Third-Party Inference";
   return c.app_id === "claude_code" ? `claude --settings ${c.managed_file}` : `codex -p ${c.profile}`;

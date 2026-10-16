@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import TestRunning from "./TestRunning";
-import { api, priceText, APP_NAME, AppDetection, AppId, ConnectPreview, ModelInfo, Provider, STATUS_LABEL, VerificationReport, errText } from "../api";
+import { api, modePair, MODE_PAIRS, priceText, APP_NAME, AppDetection, AppId, ConnectPreview, ModelInfo, Provider, STATUS_LABEL, VerificationReport, errText } from "../api";
 
 const POPULAR = ["openrouter", "anthropic", "openai", "gemini", "groq", "deepseek", "nvidia_nim", "mistral", "xai"];
 const notForChat = /embed|rerank|whisper|tts|moderation|image|vision-only/i;
@@ -52,10 +52,22 @@ export default function Setup({ onDone }: { onDone: () => void }) {
           <div className="section-title">Which app do you want to use?</div>
           {apps.length === 0 && <div className="small muted mt-s">Looking for apps on this computer…</div>}
           <div className="choices">
-            {apps.filter((a) => a.installed).map((a) => (
-              <button key={a.app_id} className={app === a.app_id ? "primary" : "ghost"} onClick={() => setApp(a.app_id as AppId)}>{APP_NAME[a.app_id] ?? a.display_name}</button>
-            ))}
+            {apps.filter((a) => a.installed && !MODE_PAIRS.some((p) => p.separate === a.app_id && apps.some((b) => b.app_id === p.shared))).map((a) => {
+              const pair = modePair(a.app_id);
+              const picked = pair ? app === pair.shared || app === pair.separate : app === a.app_id;
+              return <button key={a.app_id} className={picked ? "primary" : "ghost"} onClick={() => setApp(a.app_id as AppId)}>{pair?.name ?? APP_NAME[a.app_id] ?? a.display_name}</button>;
+            })}
           </div>
+          {app && modePair(app) && (() => {
+            const pair = modePair(app)!;
+            return (
+              <div className="mt">
+                <div className="small muted">How should it run?</div>
+                <label className="small mt-block"><input type="radio" className="check" checked={app === pair.shared} onChange={() => setApp(pair.shared)} /> <b>Shared</b> · uses your usual chats and settings</label>
+                <label className="small mt-block"><input type="radio" className="check" checked={app === pair.separate} onChange={() => setApp(pair.separate)} /> <b>Separate</b> · its own chats and settings, just for PrismFlow</label>
+              </div>
+            );
+          })()}
           {apps.length > 0 && apps.every((a) => !a.installed) && <div className="muted small">None of the supported apps were found. Install one (for example Claude Code or Codex) and come back.</div>}
           <div className="row mt"><button className="primary" disabled={!app} onClick={() => go(2)}>Next</button><button className="ghost" onClick={onDone}>Skip</button></div>
         </div>

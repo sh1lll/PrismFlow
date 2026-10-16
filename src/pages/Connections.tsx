@@ -179,7 +179,7 @@ function ConnectionCard({ c, providers, onChange }: { c: Connection; providers: 
   const [running, setRunning] = useState<number[]>([]);
   useEffect(() => { api.runningSessions(c.id).then(setRunning).catch(() => setRunning([])); }, [c]);
   const app = APP_NAME[c.app_id];
-  const desktop = c.app_id.endsWith("_desktop") || c.app_id === "codex_desktop_separate";
+  const desktop = c.app_id.endsWith("_desktop") || ["codex_desktop_separate", "vscode_separate", "zed_separate"].includes(c.app_id);
 
   async function run(label: string, f: () => Promise<unknown>, ok?: string) {
     setBusy(label);
@@ -213,7 +213,7 @@ function ConnectionCard({ c, providers, onChange }: { c: Connection; providers: 
         <button className="primary" disabled={busy !== ""} onClick={() => run("verify", () => api.verify(c.id))}>
           {busy === "verify" ? "Testing…" : "Test"}
         </button>
-        {!["jetbrains", "vscode_claude", "vscode_chat", "roo_code", "kilo_code", "zed", "continue_ide"].includes(c.app_id) && <button className="ghost" disabled={busy !== ""} onClick={() => run("launch", () => api.launch(c.id), `Opened ${app}.`)}>{desktop ? "Open app" : "Open in Terminal"}</button>}
+        {!["jetbrains", "vscode_claude", "vscode_claude_shared", "vscode_chat", "roo_code", "kilo_code", "zed", "continue_ide"].includes(c.app_id) && <button className="ghost" disabled={busy !== ""} onClick={() => run("launch", () => api.launch(c.id), `Opened ${app}.`)}>{desktop ? "Open app" : "Open in Terminal"}</button>}
         <button className="danger" disabled={busy !== ""}
           onClick={() => { if (confirm(`Disconnect ${app}? PrismFlow removes only its own settings.`)) run("disconnect", () => api.disconnect(c.id)); }}>
           Disconnect

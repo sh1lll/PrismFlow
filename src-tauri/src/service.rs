@@ -667,7 +667,9 @@ impl Service {
         }
         if editors::ALL.contains(&app_id) {
             let ep = editors::plan(app_id, &agents::agent_dir(self.state.dir(), &id), &id, &format!("{url}/v1"), model, None)?;
-            let summary = if app_id == editors::CONTINUE_IDE || app_id == editors::ZED {
+            let summary = if app_id == editors::ZED_SEPARATE {
+                vec![format!("Set up a Zed of its own in {}", editors::zed_separate_dir(self.state.dir()).display()), "Your usual Zed stays as it is".into()]
+            } else if app_id == editors::CONTINUE_IDE || app_id == editors::ZED {
                 editors::guide(app_id, &format!("{url}/v1"), model, "(shown after you connect)")
             } else {
                 vec![format!("Set up {} in {}", editors::name(app_id), ep.file.display()), "Your other settings stay as they are".into()]
@@ -1303,7 +1305,7 @@ impl Service {
         } else if record.app_id == vscode::CHAT_APP_ID {
             vscode::disconnect_chat(&record.id).map(|()| None)
         } else if editors::ALL.contains(&record.app_id.as_str()) {
-            editors::disconnect(&record.app_id, &record.id).map(|()| {
+            editors::disconnect(&record.app_id, &record.id, self.state.dir()).map(|()| {
                 let _ = std::fs::remove_dir_all(agents::agent_dir(self.state.dir(), &record.id));
                 None
             })
@@ -1515,6 +1517,12 @@ impl Service {
         }
         if vscode::is_vscode(&record.app_id) {
             return Err("Open VS Code. PrismFlow is set up there.".into());
+        }
+        if record.app_id == editors::ZED_SEPARATE {
+            let token = tokens::ensure(self.store.as_ref(), &record.id).map_err(|e| e.to_string())?;
+            editors::open_zed_separate(self.state.dir(), &token)?;
+            self.diag.record(Level::Info, "launch", "Opened Zed (separate).");
+            return Ok(());
         }
         if editors::ALL.contains(&record.app_id.as_str()) {
             return Err(format!("Open {}. PrismFlow is set up there.", editors::name(&record.app_id)));

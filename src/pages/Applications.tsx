@@ -3,10 +3,16 @@ import { api, AppDetection, errText } from "../api";
 
 /** One plain sentence per app: what connecting it does. */
 const WHAT: Record<string, string> = {
-  codex_cli: "PrismFlow adds its own Codex profile. Your Codex settings stay as they are.",
+  codex_cli: "Uses your usual Codex chats. PrismFlow adds its own Codex profile; your Codex settings stay as they are.",
   codex_desktop: "Uses your usual Codex app, chats and all. PrismFlow switches its model and puts your old setting back when you disconnect.",
   codex_desktop_separate: "Opens the Codex app with its own chats and settings, just for PrismFlow. Your usual Codex stays as it is.",
-  claude_code: "PrismFlow adds its own Claude Code settings file. Your login and settings stay as they are.",
+  claude_code: "Uses your usual Claude Code chats. PrismFlow adds its own settings file; your login and settings stay as they are.",
+  claude_code_separate: "Claude Code with its own chats, settings and MCP servers, just for PrismFlow.",
+  codex_cli_separate: "Codex CLI with its own chats and settings, just for PrismFlow.",
+  vscode_claude: "The Claude Code extension with its own chats, in your usual VS Code.",
+  vscode_claude_shared: "The Claude Code extension with your usual Claude Code chats and settings.",
+  vscode_separate: "A VS Code window of its own, with Claude Code and Chat set up for PrismFlow. Your extensions are shared.",
+  zed_separate: "A Zed of its own with PrismFlow ready. Your usual Zed stays as it is.",
   claude_desktop: "PrismFlow shows you what to enter in Claude Desktop. It doesn't change the app itself.",
   aider: "PrismFlow starts Aider with its own settings. Your Aider setup stays as it is.",
   cline: "PrismFlow starts Cline with its own settings. Your Cline setup stays as it is.",
