@@ -9,7 +9,8 @@ body { margin: 0; background: var(--bg); color: var(--text);
 .shell { display: flex; height: 100vh; }
 .nav { width: 190px; background: var(--panel); border-right: 1px solid var(--line);
   padding: 14px 10px; display: flex; flex-direction: column; gap: 4px; }
-.brand { font-weight: 700; letter-spacing: 0.04em; padding: 4px 10px 14px; color: var(--accent); }
+.brand { display: flex; align-items: center; gap: 8px; font-weight: 700; letter-spacing: 0.04em; padding: 4px 10px 14px; color: var(--text); }
+.brand img { height: 22px; width: auto; }
 .nav-item { text-align: left; background: none; border: 0; color: var(--muted);
   padding: 8px 10px; border-radius: 8px; cursor: pointer; font-size: 14px; }
 .nav-item.active { background: #22222c; color: var(--text); }

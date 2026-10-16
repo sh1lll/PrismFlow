@@ -43,7 +43,7 @@ export default function App() {
   return (
     <div className="shell">
       <nav className="nav">
-        <div className="brand">PrismFlow</div>
+        <div className="brand"><img src="/prismflow-logo.png" alt="" />PrismFlow</div>
         {PAGES.map((p) => (
           <button key={p} className={p === page ? "nav-item active" : "nav-item"} onClick={() => setPage(p)}>
             {p}

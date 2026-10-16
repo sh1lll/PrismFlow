@@ -135,11 +135,17 @@ pub async fn switch(svc: &Service, conn_id: &str, provider_id: &str, model: &str
 
 pub fn install<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
     let menu = build_menu(app)?;
-    // A one-colour prism; macOS tints template icons to match the menu bar.
-    let icon = tauri::image::Image::from_bytes(include_bytes!("../icons/tray.png")).ok().or_else(|| app.default_window_icon().cloned());
     let mut b = TrayIconBuilder::with_id(TRAY_ID).menu(&menu).tooltip("PrismFlow").show_menu_on_left_click(true);
-    if let Some(i) = icon {
+    // macOS: the logo's one-colour silhouette, tinted to match the menu bar.
+    // Windows and Linux don't tint tray icons (a black one disappears on a
+    // dark taskbar) and want them square, so they get the app icon.
+    #[cfg(target_os = "macos")]
+    if let Ok(i) = tauri::image::Image::from_bytes(include_bytes!("../icons/tray.png")) {
         b = b.icon(i).icon_as_template(true);
+    }
+    #[cfg(not(target_os = "macos"))]
+    if let Some(i) = app.default_window_icon().cloned() {
+        b = b.icon(i);
     }
     b.on_menu_event(|app, event| {
         let id = event.id().as_ref().to_string();

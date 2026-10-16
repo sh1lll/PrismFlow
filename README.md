@@ -1,3 +1,5 @@
+<p align="center"><img src="branding/prismflow-logo-800.png" alt="PrismFlow" width="560"></p>
+
 # PrismFlow
 
 PrismFlow connects the AI coding apps you already use (Claude Code, Codex,
