@@ -20,6 +20,50 @@ use std::path::{Path, PathBuf};
 pub const CLAUDE_APP_ID: &str = "vscode_claude";
 pub const CHAT_APP_ID: &str = "vscode_chat";
 pub const MARKER_KEY: &str = "prismflowConnection";
+/// Claude Code extension using your usual ~/.claude (chats and settings).
+pub const CLAUDE_SHARED_APP_ID: &str = "vscode_claude_shared";
+/// A VS Code window of its own (own settings and chats; your extensions),
+/// with the Claude Code extension and VS Code Chat set up for PrismFlow.
+pub const SEPARATE_APP_ID: &str = "vscode_separate";
+
+pub fn is_claude(app_id: &str) -> bool {
+    app_id == CLAUDE_APP_ID || app_id == CLAUDE_SHARED_APP_ID
+}
+
+/// Any VS Code connection.
+pub fn is_vscode(app_id: &str) -> bool {
+    is_claude(app_id) || app_id == CHAT_APP_ID || app_id == SEPARATE_APP_ID
+}
+
+/// The separate window's `--user-data-dir` (inside PrismFlow's data).
+pub fn separate_data_dir(state_dir: &Path) -> PathBuf {
+    state_dir.join("vscode-separate")
+}
+
+/// The `code` command.
+pub fn code_command() -> Option<PathBuf> {
+    super::find_exe("code").or_else(|| {
+        let mac = PathBuf::from("/Applications/Visual Studio Code.app/Contents/Resources/app/bin/code");
+        let win = dirs::data_local_dir().map(|d| d.join("Programs/Microsoft VS Code/bin/code.cmd"));
+        [Some(mac), win].into_iter().flatten().find(|p| p.is_file())
+    })
+}
+
+/// Opens the separate VS Code window.
+pub fn open_separate(data_dir: &Path) -> Result<(), String> {
+    let code = code_command().ok_or("VS Code's `code` command wasn't found. In VS Code, run \"Shell Command: Install 'code' command in PATH\".")?;
+    let mut cmd = if cfg!(windows) {
+        let mut c = std::process::Command::new("cmd");
+        c.arg("/c").arg(&code);
+        c
+    } else {
+        std::process::Command::new(&code)
+    };
+    cmd.arg("--user-data-dir").arg(data_dir).arg("--new-window")
+        .stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null());
+    cmd.spawn().map_err(|e| format!("Could not open VS Code: {e}"))?;
+    Ok(())
+}
 
 /// VS Code's user folder (default profile).
 pub fn user_dir() -> PathBuf {
@@ -43,7 +87,11 @@ pub fn settings_file() -> PathBuf {
 }
 
 pub fn chat_models_file() -> PathBuf {
-    user_dir().join("chatLanguageModels.json")
+    chat_models_file_in(&user_dir())
+}
+
+fn chat_models_file_in(user: &Path) -> PathBuf {
+    user.join("chatLanguageModels.json")
 }
 
 fn installed() -> bool {
@@ -65,7 +113,14 @@ pub fn bundled_claude() -> Option<PathBuf> {
 pub fn detect(app_id: &str) -> AppDetection {
     let found = installed();
     let (name, notes) = if app_id == CLAUDE_APP_ID {
-        ("Claude Code for VS Code", vec!["Uses PrismFlow in the Claude Code extension. Your own ~/.claude stays as it is.".to_string()])
+        ("Claude Code for VS Code (separate)", vec!["Uses PrismFlow in the Claude Code extension, with its own chats. Your own ~/.claude stays as it is.".to_string()])
+    } else if app_id == CLAUDE_SHARED_APP_ID {
+        ("Claude Code for VS Code (shared)", vec!["Uses PrismFlow in the Claude Code extension, with your usual Claude Code chats and settings.".to_string()])
+    } else if app_id == SEPARATE_APP_ID {
+        ("VS Code (separate)", vec![
+            "Opens a VS Code window of its own, with Claude Code and VS Code Chat set up for PrismFlow.".to_string(),
+            "Its settings and chats are apart from your usual VS Code; your extensions are shared.".to_string(),
+        ])
     } else {
         ("VS Code Chat", vec!["Adds a PrismFlow model to VS Code's chat model picker.".to_string()])
     };
@@ -89,11 +144,17 @@ pub struct Plan {
 
 /// Claude Code extension: point it at PrismFlow's own Claude config folder.
 pub fn plan_claude(owned_dir: &Path, connection_id: &str, settings_json: String) -> Result<Plan, String> {
-    let file = settings_file();
+    plan_claude_in(&user_dir(), owned_dir, connection_id, settings_json)
+}
+
+pub fn plan_claude_in(user: &Path, owned_dir: &Path, connection_id: &str, settings_json: String) -> Result<Plan, String> {
+    let file = user.join("settings.json");
     let (before, mut obj) = jsonfile::read_object(&file)?;
+    refuse_other_connection(&obj, connection_id)?;
     let config_dir = owned_dir.join("claude");
     let mut vars: Vec<Value> = obj.get("claudeCode.environmentVariables").and_then(Value::as_array).cloned().unwrap_or_default();
-    if let Some(v) = vars.iter().find(|v| v["name"] == "CLAUDE_CONFIG_DIR") {
+    let ours = vars.iter().any(|v| v["name"] == "PRISMFLOW_CONNECTION" && v["value"] == connection_id);
+    if let Some(v) = vars.iter().find(|v| v["name"] == "CLAUDE_CONFIG_DIR").filter(|_| !ours) {
         if !v["value"].as_str().is_some_and(|s| s.contains("prismflow") || s.contains("PrismFlow")) {
             return Err("The Claude Code extension already uses its own CLAUDE_CONFIG_DIR. Remove it from VS Code's settings first.".into());
         }
@@ -106,14 +167,71 @@ pub fn plan_claude(owned_dir: &Path, connection_id: &str, settings_json: String)
     Ok(Plan { after: jsonfile::render(&obj), file, before, owned: vec![(config_dir.join("settings.json"), settings_json)] })
 }
 
-pub fn disconnect_claude(connection_id: &str) -> Result<(), String> {
+/// The shared setup lists the variables it added here, so disconnect
+/// removes exactly those.
+const ADDED_VARS: &str = "PRISMFLOW_ADDED";
+
+fn added_names(vars: &[Value]) -> Vec<String> {
+    vars.iter().find(|v| v["name"] == ADDED_VARS).and_then(|v| v["value"].as_str())
+        .map(|s| s.split(',').map(str::to_string).collect()).unwrap_or_default()
+}
+
+/// The extension has one setup: another PrismFlow connection must go first.
+fn refuse_other_connection(obj: &serde_json::Map<String, Value>, connection_id: &str) -> Result<(), String> {
+    let vars = obj.get("claudeCode.environmentVariables").and_then(Value::as_array).cloned().unwrap_or_default();
+    if let Some(other) = vars.iter().find(|v| v["name"] == "PRISMFLOW_CONNECTION" && v["value"] != connection_id) {
+        return Err(format!("The Claude Code extension is set up for another PrismFlow connection ({}). Disconnect it first.", other["value"].as_str().unwrap_or("?")));
+    }
+    Ok(())
+}
+
+/// Claude Code extension with your usual ~/.claude: PrismFlow's address,
+/// model names and local token go in the extension's environment.
+pub fn plan_claude_shared(connection_id: &str, env: &serde_json::Map<String, Value>, token: &str) -> Result<Plan, String> {
     let file = settings_file();
+    let (before, mut obj) = jsonfile::read_object(&file)?;
+    refuse_other_connection(&obj, connection_id)?;
+    let mut vars: Vec<Value> = obj.get("claudeCode.environmentVariables").and_then(Value::as_array).cloned().unwrap_or_default();
+    let old = added_names(&vars);
+    vars.retain(|v| v["name"].as_str().is_some_and(|n| !old.iter().any(|o| o == n) && n != ADDED_VARS && n != "PRISMFLOW_CONNECTION"));
+    let mut add: Vec<(String, String)> = env.iter()
+        .filter(|(k, _)| k.as_str() != "ANTHROPIC_AUTH_TOKEN" && k.as_str() != "ANTHROPIC_API_KEY")
+        .map(|(k, v)| (k.clone(), v.as_str().unwrap_or_default().to_string()))
+        .collect();
+    add.push(("ANTHROPIC_AUTH_TOKEN".into(), token.into()));
+    if let Some(v) = vars.iter().find(|v| v["name"].as_str().is_some_and(|n| n == "CLAUDE_CONFIG_DIR" || add.iter().any(|(k, _)| k == n))) {
+        return Err(format!("The Claude Code extension already sets {} in VS Code's settings. Remove it there first.", v["name"].as_str().unwrap_or("?")));
+    }
+    let names: Vec<&str> = add.iter().map(|(k, _)| k.as_str()).collect();
+    let list = names.join(",");
+    for (k, v) in &add {
+        vars.push(json!({ "name": k, "value": v }));
+    }
+    vars.push(json!({ "name": ADDED_VARS, "value": list }));
+    vars.push(json!({ "name": "PRISMFLOW_CONNECTION", "value": connection_id }));
+    jsonfile::set(&mut obj, &["claudeCode.environmentVariables"], Value::Array(vars))?;
+    jsonfile::set(&mut obj, &["claudeCode.disableLoginPrompt"], json!(true))?;
+    Ok(Plan { after: jsonfile::render(&obj), file, before, owned: Vec::new() })
+}
+
+pub fn disconnect_claude(connection_id: &str) -> Result<(), String> {
+    disconnect_claude_in(&user_dir(), connection_id)
+}
+
+pub fn disconnect_claude_in(user: &Path, connection_id: &str) -> Result<(), String> {
+    let file = user.join("settings.json");
+    if !file.exists() {
+        return Ok(());
+    }
     let (_, mut obj) = jsonfile::read_object(&file)?;
     let Some(vars) = obj.get("claudeCode.environmentVariables").and_then(Value::as_array).cloned() else { return Ok(()) };
     if !vars.iter().any(|v| v["name"] == "PRISMFLOW_CONNECTION" && v["value"] == connection_id) {
         return Ok(());
     }
-    let kept: Vec<Value> = vars.into_iter().filter(|v| v["name"] != "CLAUDE_CONFIG_DIR" && v["name"] != "PRISMFLOW_CONNECTION").collect();
+    let added = added_names(&vars);
+    let kept: Vec<Value> = vars.into_iter()
+        .filter(|v| v["name"].as_str().is_some_and(|n| n != "CLAUDE_CONFIG_DIR" && n != "PRISMFLOW_CONNECTION" && n != ADDED_VARS && !added.iter().any(|a| a == n)))
+        .collect();
     if kept.is_empty() {
         obj.remove("claudeCode.environmentVariables");
     } else {
@@ -123,9 +241,21 @@ pub fn disconnect_claude(connection_id: &str) -> Result<(), String> {
     crate::config_engine::atomic_write(&file, &jsonfile::render(&obj)).map_err(|e| e.to_string())
 }
 
+/// Is the shared setup for this connection still in VS Code's settings?
+pub fn claude_shared_in_place(connection_id: &str) -> bool {
+    jsonfile::read_object(&settings_file()).ok()
+        .and_then(|(_, o)| o.get("claudeCode.environmentVariables").and_then(Value::as_array).cloned())
+        .is_some_and(|vars| vars.iter().any(|v| v["name"] == "PRISMFLOW_CONNECTION" && v["value"] == connection_id)
+            && vars.iter().any(|v| v["name"] == "ANTHROPIC_BASE_URL"))
+}
+
 /// The config folder the extension uses, if PrismFlow set it for this connection.
 pub fn claude_config_dir(connection_id: &str) -> Option<PathBuf> {
-    let (_, obj) = jsonfile::read_object(&settings_file()).ok()?;
+    claude_config_dir_in(&user_dir(), connection_id)
+}
+
+pub fn claude_config_dir_in(user: &Path, connection_id: &str) -> Option<PathBuf> {
+    let (_, obj) = jsonfile::read_object(&user.join("settings.json")).ok()?;
     let vars = obj.get("claudeCode.environmentVariables")?.as_array()?;
     vars.iter().any(|v| v["name"] == "PRISMFLOW_CONNECTION" && v["value"] == connection_id).then_some(())?;
     vars.iter().find(|v| v["name"] == "CLAUDE_CONFIG_DIR").and_then(|v| v["value"].as_str()).map(PathBuf::from)
@@ -148,7 +278,11 @@ fn read_groups(file: &Path) -> Result<(String, Vec<Value>), String> {
 
 /// VS Code Chat: one model group using the gateway's Messages endpoint.
 pub fn plan_chat(connection_id: &str, provider_name: &str, model: &str, broker_url: &str, token: &str, context: Option<u64>) -> Result<Plan, String> {
-    let file = chat_models_file();
+    plan_chat_in(&user_dir(), connection_id, provider_name, model, broker_url, token, context)
+}
+
+pub fn plan_chat_in(user: &Path, connection_id: &str, provider_name: &str, model: &str, broker_url: &str, token: &str, context: Option<u64>) -> Result<Plan, String> {
+    let file = chat_models_file_in(user);
     let (before, mut groups) = read_groups(&file)?;
     groups.retain(|g| g[MARKER_KEY] != connection_id);
     let max_in = context.unwrap_or(32_000).saturating_sub(4_096).max(8_000);
@@ -173,7 +307,11 @@ pub fn plan_chat(connection_id: &str, provider_name: &str, model: &str, broker_u
 }
 
 pub fn disconnect_chat(connection_id: &str) -> Result<(), String> {
-    let file = chat_models_file();
+    disconnect_chat_in(&user_dir(), connection_id)
+}
+
+pub fn disconnect_chat_in(user: &Path, connection_id: &str) -> Result<(), String> {
+    let file = chat_models_file_in(user);
     let (_, mut groups) = read_groups(&file)?;
     let n = groups.len();
     groups.retain(|g| g[MARKER_KEY] != connection_id);

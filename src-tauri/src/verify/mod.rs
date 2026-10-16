@@ -28,6 +28,8 @@ pub struct VerifyEnv<'a> {
     /// Working directory for agent runs (keeps project files out of scope).
     pub workdir: PathBuf,
     pub agent_timeout: Duration,
+    /// PrismFlow's data folder (connection-owned files live under it).
+    pub state_dir: PathBuf,
 }
 
 /// Stages finished so far, per connection, while a test runs (the UI polls it).
@@ -192,12 +194,20 @@ pub fn saw_tool_execution(jsonl: &str) -> Option<bool> {
     parsed_any.then_some(false)
 }
 
+/// The separate Claude Code's own config folder (its settings file lives there).
+fn claude_dir_for(record: &ConnectionRecord) -> Option<&Path> {
+    (record.app_id == claude_code::SEPARATE_APP_ID).then(|| record.managed_file.parent()).flatten()
+}
+
 /// Run `claude -p` against the connection's settings file. Only `plan` mode:
 /// verification never grants write or bypass permissions (matrix §E).
 /// Inherited `ANTHROPIC_*` / `CLAUDE_CODE_*` variables are removed so the
 /// run sees exactly what the settings file configures.
-async fn run_claude(bin: &Path, settings: &Path, workdir: &Path, prompt: &str, timeout: Duration) -> Result<(bool, String), String> {
+async fn run_claude(bin: &Path, config_dir: Option<&Path>, settings: &Path, workdir: &Path, prompt: &str, timeout: Duration) -> Result<(bool, String), String> {
     let mut cmd = tokio::process::Command::new(bin);
+    if let Some(d) = config_dir {
+        cmd.env("CLAUDE_CONFIG_DIR", d);
+    }
     cmd.arg("-p")
         .arg("--settings").arg(settings)
         .args(["--permission-mode", "plan", "--output-format", "stream-json", "--verbose", "--no-session-persistence"])
@@ -283,11 +293,22 @@ async fn run_stages(
 ) -> ConnectionStatus {
     // Stage 1 — configuration validation.
     let agent = crate::adapters::agents::spec(&record.app_id);
-    let is_claude = record.app_id == claude_code::APP_ID;
+    let is_claude = claude_code::is_cli(&record.app_id);
     let stage1 = if record.app_id == crate::adapters::claude_desktop::APP_ID {
         Ok("Gateway connection created. Claude Desktop's own settings hold the address and token you entered; PrismFlow does not read them.".to_string())
     } else if record.app_id == crate::adapters::jetbrains::APP_ID {
         check_jetbrains_config(&record.id)
+    } else if record.app_id == crate::adapters::vscode::CLAUDE_SHARED_APP_ID {
+        crate::adapters::vscode::claude_shared_in_place(&record.id)
+            .then(|| "VS Code gives the Claude Code extension PrismFlow's address.".to_string())
+            .ok_or_else(|| format!("{} no longer points the Claude Code extension at PrismFlow.", crate::adapters::vscode::settings_file().display()))
+    } else if record.app_id == crate::adapters::vscode::SEPARATE_APP_ID {
+        // managed_file is the separate window's User/settings.json.
+        let user = record.managed_file.parent().unwrap_or(Path::new("/"));
+        crate::adapters::vscode::claude_config_dir_in(user, &record.id)
+            .filter(|d| d.join("settings.json").is_file())
+            .map(|_| "The separate VS Code is set up for PrismFlow.".to_string())
+            .ok_or_else(|| "The separate VS Code is no longer set up for PrismFlow. Connect it again.".to_string())
     } else if record.app_id == crate::adapters::vscode::CLAUDE_APP_ID {
         crate::adapters::vscode::claude_config_dir(&record.id)
             .filter(|d| d.join("settings.json").is_file())
@@ -408,10 +429,14 @@ async fn run_stages(
     if record.app_id == crate::adapters::jetbrains::APP_ID {
         return jetbrains_stages(env, provider, record, run, &secrets).await;
     }
-    if record.app_id == crate::adapters::vscode::CLAUDE_APP_ID {
-        // The extension runs Claude Code with this settings folder; run it the same way.
+    if crate::adapters::vscode::is_claude(&record.app_id) || record.app_id == crate::adapters::vscode::SEPARATE_APP_ID {
+        // The extension runs Claude Code with PrismFlow's settings; run it the same way.
         let mut r = record.clone();
-        r.managed_file = crate::adapters::vscode::claude_config_dir(&record.id).unwrap_or_default().join("settings.json");
+        r.managed_file = if record.app_id == crate::adapters::vscode::CLAUDE_APP_ID {
+            crate::adapters::vscode::claude_config_dir(&record.id).unwrap_or_default().join("settings.json")
+        } else {
+            crate::adapters::agents::agent_dir(&env.state_dir, &record.id).join("claude/settings.json")
+        };
         return claude_agent_stages(env, provider, &r, run, &secrets).await;
     }
     if record.app_id == crate::adapters::vscode::CHAT_APP_ID {
@@ -434,7 +459,7 @@ async fn run_stages(
         return ConnectionStatus::RequiresAttention;
     };
     // The Codex app's folder (the separate one has its own CODEX_HOME).
-    let home = codex::is_desktop(&record.app_id).then(|| record.managed_file.parent()).flatten();
+    let home = (codex::is_desktop(&record.app_id) || record.app_id == codex::CLI_SEPARATE_APP_ID).then(|| record.managed_file.parent()).flatten();
     let prompt = format!("Reply with exactly {E2E_TOKEN} and nothing else.");
     match run_codex(bin, home, &record.profile, &env.workdir, false, &prompt, env.agent_timeout).await {
         Ok((true, out)) if out.contains(E2E_TOKEN) => run.push(5, "End-to-end", StageOutcome::Pass,
@@ -493,7 +518,7 @@ async fn claude_agent_stages(env: &VerifyEnv<'_>, provider: &ProviderDefinition,
 
     // Stage 5 — a real Claude Code turn through the gateway.
     let prompt = format!("Reply with exactly {E2E_TOKEN} and nothing else.");
-    match run_claude(bin, &record.managed_file, &env.workdir, &prompt, env.agent_timeout).await {
+    match run_claude(bin, claude_dir_for(record), &record.managed_file, &env.workdir, &prompt, env.agent_timeout).await {
         Ok((_, out)) => match claude_result(&out) {
             Some((false, text)) if text.contains(E2E_TOKEN) => run.push(5, "End-to-end", StageOutcome::Pass,
                 "Claude Code answered.".to_string()),
@@ -520,7 +545,7 @@ async fn claude_agent_stages(env: &VerifyEnv<'_>, provider: &ProviderDefinition,
         "Use the Read tool to read {} and reply with its exact contents. PRISMFLOW_TOOL_PROBE",
         probe.display()
     );
-    match run_claude(bin, &record.managed_file, &env.workdir, &prompt, env.agent_timeout).await {
+    match run_claude(bin, claude_dir_for(record), &record.managed_file, &env.workdir, &prompt, env.agent_timeout).await {
         Ok((_, out)) => match claude_saw_tool_round_trip(&out) {
             Some(true) => {
                 run.push(6, "Tool calling", StageOutcome::Pass, "The model can use tools.");
@@ -967,7 +992,7 @@ esac"#;
             gateway: None,
             base_url: f.server.uri(),
             workdir: std::env::temp_dir(),
-            agent_timeout: Duration::from_secs(10),
+            agent_timeout: Duration::from_secs(10), state_dir: std::env::temp_dir(),
         };
         verify(&env, providers::get("openrouter").unwrap(), &f.record).await
     }
@@ -1107,7 +1132,7 @@ esac"#;
         let env = VerifyEnv {
             client: discovery::client(), store: &store, codex_bin: None, claude_bin: Some(claude),
             gateway: Some(gateway_status(phase)), base_url: server.uri(),
-            workdir: work.path().join("verify"), agent_timeout: Duration::from_secs(10),
+            workdir: work.path().join("verify"), agent_timeout: Duration::from_secs(10), state_dir: std::env::temp_dir(),
         };
         verify(&env, nim, &record).await
     }

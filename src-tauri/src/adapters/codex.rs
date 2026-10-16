@@ -17,6 +17,12 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 pub const APP_ID: &str = "codex_cli";
+/// Codex CLI with its own CODEX_HOME inside PrismFlow's data (own chats, settings).
+pub const CLI_SEPARATE_APP_ID: &str = "codex_cli_separate";
+
+pub fn is_cli(app_id: &str) -> bool {
+    app_id == APP_ID || app_id == CLI_SEPARATE_APP_ID
+}
 pub const MANAGED_MARKER: &str = "# Managed by PrismFlow";
 /// Versions this adapter has been verified against (SPEC §21.2).
 pub const VERIFIED_MIN: (u32, u32, u32) = (0, 162, 0);
@@ -358,6 +364,15 @@ pub fn is_desktop(app_id: &str) -> bool {
 /// The separate Codex app's own folder inside PrismFlow's data.
 pub fn separate_home(state_dir: &Path) -> PathBuf {
     state_dir.join("codex-separate")
+}
+
+/// Separate CLI detection: same binary, different notes.
+pub fn detect_cli_separate() -> AppDetection {
+    let mut d = detect();
+    d.app_id = CLI_SEPARATE_APP_ID.into();
+    d.display_name = "Codex CLI (separate)".into();
+    d.notes = vec!["Its own chats and settings, just for PrismFlow. Your usual Codex stays as it is.".into()];
+    d
 }
 
 /// Separate detection: same app, different notes.

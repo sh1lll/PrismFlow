@@ -25,6 +25,31 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 pub const APP_ID: &str = "claude_code";
+/// Claude Code with its own CLAUDE_CONFIG_DIR inside PrismFlow's data.
+pub const SEPARATE_APP_ID: &str = "claude_code_separate";
+
+pub fn is_cli(app_id: &str) -> bool {
+    app_id == APP_ID || app_id == SEPARATE_APP_ID
+}
+
+pub fn detect_separate() -> AppDetection {
+    let mut d = detect();
+    d.app_id = SEPARATE_APP_ID.into();
+    d.display_name = "Claude Code (separate)".into();
+    d.notes = vec!["Its own chats, settings and MCP servers, just for PrismFlow. Your usual Claude Code stays as it is.".into()];
+    d
+}
+
+/// A fresh config folder would start with the first-run screens; PrismFlow
+/// supplies the key, so mark first-run as done (only if the file is new).
+pub fn prepare_separate_dir(dir: &Path) -> std::io::Result<()> {
+    std::fs::create_dir_all(dir)?;
+    let state = dir.join(".claude.json");
+    if !state.exists() {
+        std::fs::write(state, "{\n  \"hasCompletedOnboarding\": true\n}\n")?;
+    }
+    Ok(())
+}
 pub const MARKER_KEY: &str = "_prismflow";
 pub const VERIFIED_MIN: (u32, u32, u32) = (2, 1, 0);
 pub const VERIFIED_MAX: (u32, u32, u32) = (2, 1, u32::MAX);
