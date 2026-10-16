@@ -695,9 +695,9 @@ impl Service {
             let vp = self.vscode_plan(app_id, p, model, &id, &url, None)?;
             let summary = if app_id == vscode::CLAUDE_SHARED_APP_ID {
                 vec![
-                    format!("Give the Claude Code extension PrismFlow's address and model names in {}", vp.file.display()),
+                    format!("Have the Claude Code extension run Claude through PrismFlow ({})", vp.file.display()),
                     "It keeps using your own ~/.claude chats and settings".into(),
-                    "VS Code needs the key in this file; it only works on this computer and is removed when you disconnect".into(),
+                    "The key is fetched from PrismFlow when Claude runs; it isn't stored".into(),
                 ]
             } else if app_id == vscode::SEPARATE_APP_ID {
                 vec![
@@ -767,15 +767,8 @@ impl Service {
             Ok(claude_code::plan_connect(dir, p, model, &self.helper, id, url, &routing).map_err(|e| e.to_string())?.after)
         };
         if app_id == vscode::CLAUDE_SHARED_APP_ID {
-            // The same settings Claude Code would get, as the extension's
-            // environment; the file is kept for PrismFlow's own test.
-            let dir = agents::agent_dir(self.state.dir(), id).join("claude");
-            let settings = claude_settings(&dir)?;
-            let doc: serde_json::Value = serde_json::from_str(&settings).map_err(|e| e.to_string())?;
-            let env = doc["env"].as_object().cloned().unwrap_or_default();
-            let mut plan = vscode::plan_claude_shared(id, &env, token.unwrap_or("(added when you connect)"))?;
-            plan.owned.push((dir.join("settings.json"), settings));
-            return Ok(plan);
+            let dir = agents::agent_dir(self.state.dir(), id);
+            return vscode::plan_claude_shared(&dir, id, claude_settings(&dir.join("claude"))?, &self.helper);
         }
         if app_id == vscode::SEPARATE_APP_ID {
             let dir = agents::agent_dir(self.state.dir(), id);
@@ -886,7 +879,7 @@ impl Service {
             warnings.push("Your own ~/.claude settings and history aren't used while it's connected.".into());
         } else if app_id == vscode::CLAUDE_SHARED_APP_ID {
             warnings.push("Start a new Claude Code chat in VS Code after connecting. Reload the window if it still uses the old setup.".into());
-            warnings.push("It uses your usual Claude Code chats and settings. If your ~/.claude settings set their own ANTHROPIC_BASE_URL, that one wins.".into());
+            warnings.push("It uses your usual Claude Code chats and settings.".into());
         } else if app_id == vscode::SEPARATE_APP_ID {
             warnings.push("Open it from PrismFlow. It's a separate VS Code window with its own settings and chats.".into());
             warnings.push("In it, use the Claude Code extension or pick the PrismFlow model in Chat.".into());
@@ -2108,26 +2101,31 @@ mod tests {
         let user = dir.path().join("vscode-user");
         std::fs::create_dir_all(&user).unwrap();
         std::env::set_var("PRISMFLOW_VSCODE_USER_DIR", &user);
-        let mine = r#"{"editor.fontSize": 14, "claudeCode.environmentVariables": [{"name": "FOO", "value": "1"}]}"#;
-        std::fs::write(user.join("settings.json"), mine).unwrap();
         let s = service(dir.path());
         s.set_credential("openrouter", "sk-or-v1-abcdefabcdef").unwrap();
 
-        // Shared: the extension gets PrismFlow's address and token, ~/.claude untouched.
+        // Shared: the extension runs Claude through PrismFlow's binary; no key
+        // in VS Code's settings, ~/.claude still used.
+        let mine = r#"{"editor.fontSize": 14, "claudeCode.disableLoginPrompt": false, "claudeCode.environmentVariables": [{"name": "FOO", "value": "1"}]}"#;
+        std::fs::write(user.join("settings.json"), mine).unwrap();
         let sh = s.connect(vscode::CLAUDE_SHARED_APP_ID, "openrouter", "a/b").await.unwrap();
-        let v: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(user.join("settings.json")).unwrap()).unwrap();
+        let text = std::fs::read_to_string(user.join("settings.json")).unwrap();
+        assert!(!text.contains("pft_"), "no key in VS Code's settings: {text}");
+        let v: serde_json::Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(v["claudeCode.claudeProcessWrapper"], s.helper.display().to_string());
+        assert_eq!(v["claudeCode.disableLoginPrompt"], false, "the user's own value stays");
         let vars = v["claudeCode.environmentVariables"].as_array().unwrap();
         let get = |n: &str| vars.iter().find(|x| x["name"] == n).map(|x| x["value"].as_str().unwrap().to_string());
         assert_eq!(get("FOO").as_deref(), Some("1"));
-        assert!(get("ANTHROPIC_BASE_URL").unwrap().starts_with("http://127.0.0.1:"));
-        assert!(get("ANTHROPIC_AUTH_TOKEN").unwrap().starts_with("pft_"));
         assert!(get("CLAUDE_CONFIG_DIR").is_none(), "shared uses the usual ~/.claude");
-        assert!(vscode::claude_shared_in_place(&sh.id));
+        let settings = vscode::claude_shared_settings(&sh.id).unwrap();
+        let claude: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&settings).unwrap()).unwrap();
+        assert!(claude["apiKeyHelper"].as_str().unwrap().contains("token print"), "the key is fetched at run time");
         // One setup at a time in the extension.
         assert!(s.connect(vscode::CLAUDE_APP_ID, "openrouter", "a/b").await.unwrap_err().contains("Disconnect it first"));
         s.disconnect(&sh.id).await.unwrap();
         let v: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(user.join("settings.json")).unwrap()).unwrap();
-        assert_eq!(v["claudeCode.environmentVariables"], serde_json::json!([{"name": "FOO", "value": "1"}]));
+        assert_eq!(v, serde_json::from_str::<serde_json::Value>(mine).unwrap(), "disconnect puts the settings back exactly");
 
         // Separate window: everything in PrismFlow's own folder.
         let before = std::fs::read_to_string(user.join("settings.json")).unwrap();

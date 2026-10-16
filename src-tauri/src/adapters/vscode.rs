@@ -142,76 +142,94 @@ pub struct Plan {
     pub owned: Vec<(PathBuf, String)>,
 }
 
-/// Claude Code extension: point it at PrismFlow's own Claude config folder.
+const CONNECTION_VAR: &str = "PRISMFLOW_CONNECTION";
+/// The shared mode's settings file, read by PrismFlow's wrapper (cli.rs).
+pub const SETTINGS_VAR: &str = "PRISMFLOW_CLAUDE_SETTINGS";
+/// The VS Code settings PrismFlow added (comma-separated), so disconnect
+/// removes exactly those and leaves the user's own.
+const ADDED_VAR: &str = "PRISMFLOW_ADDED";
+const ENV_KEY: &str = "claudeCode.environmentVariables";
+const WRAPPER_KEY: &str = "claudeCode.claudeProcessWrapper";
+const LOGIN_KEY: &str = "claudeCode.disableLoginPrompt";
+
+fn vars_of(obj: &serde_json::Map<String, Value>) -> Vec<Value> {
+    obj.get(ENV_KEY).and_then(Value::as_array).cloned().unwrap_or_default()
+}
+
+fn var<'a>(vars: &'a [Value], name: &str) -> Option<&'a str> {
+    vars.iter().find(|v| v["name"] == name).and_then(|v| v["value"].as_str())
+}
+
+/// Points the Claude Code extension at PrismFlow. `var` is the one variable
+/// that does it (CLAUDE_CONFIG_DIR for separate, SETTINGS_VAR for shared);
+/// `wrapper` is PrismFlow's own binary for the shared mode.
+fn plan_extension(user: &Path, connection_id: &str, var_name: &str, value: &Path, wrapper: Option<&Path>) -> Result<(PathBuf, String, String), String> {
+    let file = user.join("settings.json");
+    let (before, mut obj) = jsonfile::read_object(&file)?;
+    let mut vars = vars_of(&obj);
+    match var(&vars, CONNECTION_VAR) {
+        Some(other) if other != connection_id => {
+            return Err(format!("The Claude Code extension is set up for another PrismFlow connection ({other}). Disconnect it first."));
+        }
+        Some(_) => {}
+        None => {
+            for taken in ["CLAUDE_CONFIG_DIR", SETTINGS_VAR] {
+                if var(&vars, taken).is_some() {
+                    return Err(format!("The Claude Code extension already sets {taken} in VS Code's settings. Remove it there first."));
+                }
+            }
+            if wrapper.is_some() && obj.get(WRAPPER_KEY).is_some_and(|w| !w.is_null()) {
+                return Err("The Claude Code extension already runs Claude through another program (claudeProcessWrapper). Remove that setting first.".into());
+            }
+        }
+    }
+    let mut added: Vec<String> = var(&vars, ADDED_VAR).map(|s| s.split(',').map(str::to_string).collect()).unwrap_or_default();
+    vars.retain(|v| v["name"].as_str().is_some_and(|n| ![CONNECTION_VAR, ADDED_VAR, "CLAUDE_CONFIG_DIR", SETTINGS_VAR].contains(&n)));
+    let mut set = |obj: &mut serde_json::Map<String, Value>, key: &str, v: Value| -> Result<(), String> {
+        if !obj.contains_key(key) {
+            added.push(key.to_string());
+        }
+        if added.iter().any(|a| a == key) {
+            jsonfile::set(obj, &[key], v)?;
+        }
+        Ok(())
+    };
+    set(&mut obj, LOGIN_KEY, json!(true))?;
+    if let Some(w) = wrapper {
+        set(&mut obj, WRAPPER_KEY, json!(w.display().to_string()))?;
+    }
+    added.sort();
+    added.dedup();
+    vars.push(json!({ "name": var_name, "value": value.display().to_string() }));
+    vars.push(json!({ "name": CONNECTION_VAR, "value": connection_id }));
+    vars.push(json!({ "name": ADDED_VAR, "value": added.join(",") }));
+    jsonfile::set(&mut obj, &[ENV_KEY], Value::Array(vars))?;
+    Ok((file, before, jsonfile::render(&obj)))
+}
+
+/// Claude Code extension, separate: its own Claude config folder (owned by
+/// PrismFlow, holding `apiKeyHelper`), so the user's ~/.claude isn't used.
 pub fn plan_claude(owned_dir: &Path, connection_id: &str, settings_json: String) -> Result<Plan, String> {
     plan_claude_in(&user_dir(), owned_dir, connection_id, settings_json)
 }
 
 pub fn plan_claude_in(user: &Path, owned_dir: &Path, connection_id: &str, settings_json: String) -> Result<Plan, String> {
-    let file = user.join("settings.json");
-    let (before, mut obj) = jsonfile::read_object(&file)?;
-    refuse_other_connection(&obj, connection_id)?;
     let config_dir = owned_dir.join("claude");
-    let mut vars: Vec<Value> = obj.get("claudeCode.environmentVariables").and_then(Value::as_array).cloned().unwrap_or_default();
-    let ours = vars.iter().any(|v| v["name"] == "PRISMFLOW_CONNECTION" && v["value"] == connection_id);
-    if let Some(v) = vars.iter().find(|v| v["name"] == "CLAUDE_CONFIG_DIR").filter(|_| !ours) {
-        if !v["value"].as_str().is_some_and(|s| s.contains("prismflow") || s.contains("PrismFlow")) {
-            return Err("The Claude Code extension already uses its own CLAUDE_CONFIG_DIR. Remove it from VS Code's settings first.".into());
-        }
-    }
-    vars.retain(|v| v["name"] != "CLAUDE_CONFIG_DIR" && v["name"] != "PRISMFLOW_CONNECTION");
-    vars.push(json!({ "name": "CLAUDE_CONFIG_DIR", "value": config_dir.display().to_string() }));
-    vars.push(json!({ "name": "PRISMFLOW_CONNECTION", "value": connection_id }));
-    jsonfile::set(&mut obj, &["claudeCode.environmentVariables"], Value::Array(vars))?;
-    jsonfile::set(&mut obj, &["claudeCode.disableLoginPrompt"], json!(true))?;
-    Ok(Plan { after: jsonfile::render(&obj), file, before, owned: vec![(config_dir.join("settings.json"), settings_json)] })
+    let (file, before, after) = plan_extension(user, connection_id, "CLAUDE_CONFIG_DIR", &config_dir, None)?;
+    Ok(Plan { file, before, after, owned: vec![(config_dir.join("settings.json"), settings_json)] })
 }
 
-/// The shared setup lists the variables it added here, so disconnect
-/// removes exactly those.
-const ADDED_VARS: &str = "PRISMFLOW_ADDED";
-
-fn added_names(vars: &[Value]) -> Vec<String> {
-    vars.iter().find(|v| v["name"] == ADDED_VARS).and_then(|v| v["value"].as_str())
-        .map(|s| s.split(',').map(str::to_string).collect()).unwrap_or_default()
-}
-
-/// The extension has one setup: another PrismFlow connection must go first.
-fn refuse_other_connection(obj: &serde_json::Map<String, Value>, connection_id: &str) -> Result<(), String> {
-    let vars = obj.get("claudeCode.environmentVariables").and_then(Value::as_array).cloned().unwrap_or_default();
-    if let Some(other) = vars.iter().find(|v| v["name"] == "PRISMFLOW_CONNECTION" && v["value"] != connection_id) {
-        return Err(format!("The Claude Code extension is set up for another PrismFlow connection ({}). Disconnect it first.", other["value"].as_str().unwrap_or("?")));
-    }
-    Ok(())
-}
-
-/// Claude Code extension with your usual ~/.claude: PrismFlow's address,
-/// model names and local token go in the extension's environment.
-pub fn plan_claude_shared(connection_id: &str, env: &serde_json::Map<String, Value>, token: &str) -> Result<Plan, String> {
-    let file = settings_file();
-    let (before, mut obj) = jsonfile::read_object(&file)?;
-    refuse_other_connection(&obj, connection_id)?;
-    let mut vars: Vec<Value> = obj.get("claudeCode.environmentVariables").and_then(Value::as_array).cloned().unwrap_or_default();
-    let old = added_names(&vars);
-    vars.retain(|v| v["name"].as_str().is_some_and(|n| !old.iter().any(|o| o == n) && n != ADDED_VARS && n != "PRISMFLOW_CONNECTION"));
-    let mut add: Vec<(String, String)> = env.iter()
-        .filter(|(k, _)| k.as_str() != "ANTHROPIC_AUTH_TOKEN" && k.as_str() != "ANTHROPIC_API_KEY")
-        .map(|(k, v)| (k.clone(), v.as_str().unwrap_or_default().to_string()))
-        .collect();
-    add.push(("ANTHROPIC_AUTH_TOKEN".into(), token.into()));
-    if let Some(v) = vars.iter().find(|v| v["name"].as_str().is_some_and(|n| n == "CLAUDE_CONFIG_DIR" || add.iter().any(|(k, _)| k == n))) {
-        return Err(format!("The Claude Code extension already sets {} in VS Code's settings. Remove it there first.", v["name"].as_str().unwrap_or("?")));
-    }
-    let names: Vec<&str> = add.iter().map(|(k, _)| k.as_str()).collect();
-    let list = names.join(",");
-    for (k, v) in &add {
-        vars.push(json!({ "name": k, "value": v }));
-    }
-    vars.push(json!({ "name": ADDED_VARS, "value": list }));
-    vars.push(json!({ "name": "PRISMFLOW_CONNECTION", "value": connection_id }));
-    jsonfile::set(&mut obj, &["claudeCode.environmentVariables"], Value::Array(vars))?;
-    jsonfile::set(&mut obj, &["claudeCode.disableLoginPrompt"], json!(true))?;
-    Ok(Plan { after: jsonfile::render(&obj), file, before, owned: Vec::new() })
+/// Claude Code extension, shared: the user's ~/.claude, with PrismFlow's
+/// binary as `claudeProcessWrapper`. The extension runs it as
+/// `<wrapper> <its claude> <args…>` (checked in anthropic.claude-code
+/// 2.1.300), and the wrapper adds `--settings <settings file>`; that file's
+/// `apiKeyHelper` fetches the token at run time, so no key is stored in VS
+/// Code's settings (which Settings Sync uploads), and as flag settings it
+/// outranks an address in the user's own Claude settings.
+pub fn plan_claude_shared(owned_dir: &Path, connection_id: &str, settings_json: String, helper: &Path) -> Result<Plan, String> {
+    let settings = owned_dir.join("claude").join("settings.json");
+    let (file, before, after) = plan_extension(&user_dir(), connection_id, SETTINGS_VAR, &settings, Some(helper))?;
+    Ok(Plan { file, before, after, owned: vec![(settings, settings_json)] })
 }
 
 pub fn disconnect_claude(connection_id: &str) -> Result<(), String> {
@@ -224,29 +242,34 @@ pub fn disconnect_claude_in(user: &Path, connection_id: &str) -> Result<(), Stri
         return Ok(());
     }
     let (_, mut obj) = jsonfile::read_object(&file)?;
-    let Some(vars) = obj.get("claudeCode.environmentVariables").and_then(Value::as_array).cloned() else { return Ok(()) };
-    if !vars.iter().any(|v| v["name"] == "PRISMFLOW_CONNECTION" && v["value"] == connection_id) {
+    let vars = vars_of(&obj);
+    if var(&vars, CONNECTION_VAR) != Some(connection_id) {
         return Ok(());
     }
-    let added = added_names(&vars);
+    // Setups made before PrismFlow kept a list always added the login setting.
+    let added: Vec<String> = var(&vars, ADDED_VAR).map_or_else(|| vec![LOGIN_KEY.to_string()], |s| s.split(',').map(str::to_string).collect());
     let kept: Vec<Value> = vars.into_iter()
-        .filter(|v| v["name"].as_str().is_some_and(|n| n != "CLAUDE_CONFIG_DIR" && n != "PRISMFLOW_CONNECTION" && n != ADDED_VARS && !added.iter().any(|a| a == n)))
+        .filter(|v| v["name"].as_str().is_some_and(|n| ![CONNECTION_VAR, ADDED_VAR, "CLAUDE_CONFIG_DIR", SETTINGS_VAR].contains(&n)))
         .collect();
     if kept.is_empty() {
-        obj.remove("claudeCode.environmentVariables");
+        obj.remove(ENV_KEY);
     } else {
-        obj.insert("claudeCode.environmentVariables".into(), Value::Array(kept));
+        obj.insert(ENV_KEY.into(), Value::Array(kept));
     }
-    obj.remove("claudeCode.disableLoginPrompt");
+    for key in added.iter().filter(|k| !k.is_empty()) {
+        obj.remove(key.as_str());
+    }
     crate::config_engine::atomic_write(&file, &jsonfile::render(&obj)).map_err(|e| e.to_string())
 }
 
-/// Is the shared setup for this connection still in VS Code's settings?
-pub fn claude_shared_in_place(connection_id: &str) -> bool {
-    jsonfile::read_object(&settings_file()).ok()
-        .and_then(|(_, o)| o.get("claudeCode.environmentVariables").and_then(Value::as_array).cloned())
-        .is_some_and(|vars| vars.iter().any(|v| v["name"] == "PRISMFLOW_CONNECTION" && v["value"] == connection_id)
-            && vars.iter().any(|v| v["name"] == "ANTHROPIC_BASE_URL"))
+/// The shared mode's settings file, if VS Code still runs the extension
+/// through PrismFlow for this connection.
+pub fn claude_shared_settings(connection_id: &str) -> Option<PathBuf> {
+    let (_, obj) = jsonfile::read_object(&settings_file()).ok()?;
+    let vars = vars_of(&obj);
+    (var(&vars, CONNECTION_VAR) == Some(connection_id) && obj.get(WRAPPER_KEY).is_some_and(Value::is_string))
+        .then(|| var(&vars, SETTINGS_VAR).map(PathBuf::from))
+        .flatten()
 }
 
 /// The config folder the extension uses, if PrismFlow set it for this connection.
@@ -256,9 +279,8 @@ pub fn claude_config_dir(connection_id: &str) -> Option<PathBuf> {
 
 pub fn claude_config_dir_in(user: &Path, connection_id: &str) -> Option<PathBuf> {
     let (_, obj) = jsonfile::read_object(&user.join("settings.json")).ok()?;
-    let vars = obj.get("claudeCode.environmentVariables")?.as_array()?;
-    vars.iter().any(|v| v["name"] == "PRISMFLOW_CONNECTION" && v["value"] == connection_id).then_some(())?;
-    vars.iter().find(|v| v["name"] == "CLAUDE_CONFIG_DIR").and_then(|v| v["value"].as_str()).map(PathBuf::from)
+    let vars = vars_of(&obj);
+    (var(&vars, CONNECTION_VAR) == Some(connection_id)).then(|| var(&vars, "CLAUDE_CONFIG_DIR").map(PathBuf::from)).flatten()
 }
 
 fn read_groups(file: &Path) -> Result<(String, Vec<Value>), String> {
@@ -360,13 +382,15 @@ mod tests {
     #[test]
     fn claude_extension_entry_round_trip() {
         let dir = tempfile::tempdir().unwrap();
+        let _turn = crate::accounts::TEST_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         std::env::set_var("PRISMFLOW_VSCODE_USER_DIR", dir.path());
         std::fs::write(settings_file(), r#"{"editor.fontSize": 14, "claudeCode.environmentVariables": [{"name": "FOO", "value": "1"}]}"#).unwrap();
         let p = plan_claude(&dir.path().join("prismflow-owned"), "vscode_claude:ollama", "{}".into()).unwrap();
         std::fs::write(&p.file, &p.after).unwrap();
         let v: Value = serde_json::from_str(&p.after).unwrap();
         assert_eq!(v["editor.fontSize"], 14);
-        assert_eq!(v["claudeCode.environmentVariables"].as_array().unwrap().len(), 3);
+        // FOO, CLAUDE_CONFIG_DIR, the connection, and the list of what PrismFlow added.
+        assert_eq!(v["claudeCode.environmentVariables"].as_array().unwrap().len(), 4);
         assert_eq!(v["claudeCode.disableLoginPrompt"], true);
         assert!(claude_config_dir("vscode_claude:ollama").unwrap().ends_with("prismflow-owned/claude"));
         disconnect_claude("vscode_claude:ollama").unwrap();

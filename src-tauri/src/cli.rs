@@ -53,6 +53,47 @@ pub fn handle_args(
     }
 }
 
+/// The Claude Code extension's `claudeProcessWrapper` (shared mode, see
+/// adapters/vscode.rs): the extension runs `prismflow <its claude> <args…>`
+/// with the settings file in the environment; this adds `--settings`.
+/// Returns None when this isn't such a call.
+pub fn claude_wrapper(args: &[String]) -> Option<i32> {
+    let settings = std::env::var_os(crate::adapters::vscode::SETTINGS_VAR)?;
+    let (claude, rest) = match args.split_first() {
+        Some((first, rest)) if std::path::Path::new(first).is_file() => (std::path::PathBuf::from(first), rest),
+        _ => match crate::adapters::claude_code::find_binary() {
+            Some(found) => (found, args),
+            None => {
+                eprintln!("prismflow: Claude Code wasn't found. Reinstall the Claude Code extension.");
+                return Some(127);
+            }
+        },
+    };
+    let mut cmd = std::process::Command::new(&claude);
+    // Claude's own tools (and PrismFlow's token helper) must not see this.
+    cmd.arg("--settings").arg(&settings).args(rest).env_remove(crate::adapters::vscode::SETTINGS_VAR);
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        let e = cmd.exec();
+        eprintln!("prismflow: couldn't start {}: {e}", claude.display());
+        Some(126)
+    }
+    #[cfg(not(unix))]
+    {
+        // No exec on Windows: run Claude with the same stdin/stdout, wait,
+        // and pass its exit code on. If the extension stops this process,
+        // Claude's input closes and it exits too.
+        match cmd.status() {
+            Ok(s) => Some(s.code().unwrap_or(1)),
+            Err(e) => {
+                eprintln!("prismflow: couldn't start {}: {e}", claude.display());
+                Some(126)
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

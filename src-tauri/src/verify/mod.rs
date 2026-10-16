@@ -303,8 +303,9 @@ async fn run_stages(
     } else if record.app_id == crate::adapters::jetbrains::APP_ID {
         check_jetbrains_config(&record.id)
     } else if record.app_id == crate::adapters::vscode::CLAUDE_SHARED_APP_ID {
-        crate::adapters::vscode::claude_shared_in_place(&record.id)
-            .then(|| "VS Code gives the Claude Code extension PrismFlow's address.".to_string())
+        crate::adapters::vscode::claude_shared_settings(&record.id)
+            .filter(|f| f.is_file())
+            .map(|_| "VS Code runs the Claude Code extension through PrismFlow.".to_string())
             .ok_or_else(|| format!("{} no longer points the Claude Code extension at PrismFlow.", crate::adapters::vscode::settings_file().display()))
     } else if record.app_id == crate::adapters::vscode::SEPARATE_APP_ID {
         // managed_file is the separate window's User/settings.json.
