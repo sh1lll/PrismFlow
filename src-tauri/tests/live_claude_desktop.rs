@@ -51,7 +51,7 @@ async fn claude_desktop_gateway_profile() {
     eprintln!("streamed text: {text:?}");
     assert!(text.contains("PRISMFLOW_DESKTOP_OK") && sse.contains("message_stop"));
 
-    cd::disconnect_auto().unwrap();
+    cd::disconnect_auto("claude_desktop:ollama").unwrap();
     let meta: Value = serde_json::from_str(&std::fs::read_to_string(lib.path().join("configLibrary/_meta.json")).unwrap()).unwrap();
     assert_eq!(meta, meta0, "library restored");
     let mode: Value = serde_json::from_str(&std::fs::read_to_string(lib.path().join("claude_desktop_config.json")).unwrap()).unwrap();

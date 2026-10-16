@@ -127,6 +127,14 @@ pub fn route_for(app_id: &str, p: &ProviderDefinition) -> Option<Route> {
     }
 }
 
+/// Apps that hold one PrismFlow setup at a time, so a second provider
+/// can't be connected next to the first. (The Claude Code extension's two
+/// modes share one setting; vscode.rs refuses that pairing itself.)
+pub fn one_setup(app_id: &str) -> bool {
+    codex::is_desktop(app_id) || claude_desktop::is_claude_desktop(app_id)
+        || [editors::ZED, editors::ZED_SEPARATE, editors::ROO, editors::KILO].contains(&app_id)
+}
+
 pub fn connection_id(app_id: &str, provider_id: &str) -> String {
     format!("{app_id}:{provider_id}")
 }
@@ -920,9 +928,10 @@ impl Service {
     }
 
     pub async fn connect(&self, app_id: &str, provider_id: &str, model: &str) -> R<ConnectionRecord> {
-        if codex::is_desktop(app_id) {
+        if one_setup(app_id) {
             if let Some(other) = self.connections()?.into_iter().find(|r| r.app_id == app_id && r.provider_id != provider_id) {
-                return Err(format!("{} is connected to {} already. Disconnect it first; the app has one configuration.", app_name(app_id), other.provider_id));
+                let name = providers::get(&other.provider_id).map_or(other.provider_id.as_str(), |p| p.display_name);
+                return Err(format!("{} is connected to {name} already. Disconnect it first; the app has one setup.", app_name(app_id)));
             }
         }
         self.prepare_home(app_id)?;
@@ -1296,11 +1305,11 @@ impl Service {
         let record = self.state.get(id).map_err(|e| e.to_string())?.ok_or("Unknown connection.")?;
         let removed = if record.app_id == claude_desktop::SEPARATE_APP_ID {
             // The copy's chats stay in its folder; only PrismFlow's setup goes.
-            claude_desktop::disconnect_auto_in(&claude_desktop::separate_root(self.state.dir())).map(|()| None)
+            claude_desktop::disconnect_auto_in(&claude_desktop::separate_root(self.state.dir()), &record.id).map(|()| None)
         } else if record.app_id == claude_desktop::APP_ID {
             // Automatic setup: back to the Claude account, PrismFlow's entry removed.
             // Guided setup wrote nothing; revoking the token below is the disconnect.
-            claude_desktop::disconnect_auto().map(|()| None)
+            claude_desktop::disconnect_auto(&record.id).map(|()| None)
         } else if codex::is_desktop(&record.app_id) {
             codex::plan_disconnect_base(&self.desktop_home(&record.app_id), &record.provider_id, &record.priors)
                 .map_err(|e| e.to_string())
@@ -1672,9 +1681,12 @@ fn open_terminal(line: &str) -> R<()> {
 
 /// Windows: a new console window that stays open (`cmd /k`).
 #[cfg(windows)]
-/// `env` goes on the process; the new window inherits it.
+/// `env` goes on the process; the new window inherits it. The command line
+/// is passed as written: `start` needs its title in quotes, and cmd.exe
+/// doesn't understand the `\"` escaping Rust would add around `line`.
 fn open_terminal(line: &str, env: &[(&str, String)]) -> R<()> {
-    std::process::Command::new("cmd").args(["/c", "start", "PrismFlow", "cmd", "/k", line])
+    use std::os::windows::process::CommandExt;
+    std::process::Command::new("cmd").raw_arg(format!("/c start \"PrismFlow\" cmd /k {line}"))
         .envs(env.iter().map(|(k, v)| (*k, v.as_str()))).spawn()
         .map_err(|e| format!("Could not open a console: {e}"))?;
     Ok(())
@@ -2130,6 +2142,21 @@ mod tests {
         assert!(vscode::claude_config_dir_in(&own, &sep.id).is_none());
         assert!(!std::fs::read_to_string(own.join("chatLanguageModels.json")).unwrap().contains("/v1/messages"));
         std::env::remove_var("PRISMFLOW_VSCODE_USER_DIR");
+    }
+
+    #[tokio::test]
+    async fn switching_a_one_setup_app_replaces_its_setup() {
+        let dir = tempfile::tempdir().unwrap();
+        let s = service(dir.path());
+        s.set_credential("openrouter", "sk-or-v1-abcdefabcdef").unwrap();
+        s.set_credential("groq", "gsk_abcdefabcdefabcdef").unwrap();
+        let first = s.connect(claude_desktop::SEPARATE_APP_ID, "openrouter", "a/b").await.unwrap();
+        let err = s.connect(claude_desktop::SEPARATE_APP_ID, "groq", "x").await.unwrap_err();
+        assert!(err.contains("Disconnect it first") && err.contains("OpenRouter"), "{err}");
+        crate::tray::switch(&s, &first.id, "groq", "x").await.unwrap();
+        let now: Vec<String> = s.connections().unwrap().into_iter().map(|c| c.id).collect();
+        assert_eq!(now, vec![connection_id(claude_desktop::SEPARATE_APP_ID, "groq")]);
+        assert!(claude_desktop::auto_active(&claude_desktop::separate_root(s.state.dir()), &now[0]), "the new setup is the live one");
     }
 
     #[test]

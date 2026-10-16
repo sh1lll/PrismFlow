@@ -304,12 +304,17 @@ pub fn auto_profile(root: &Path) -> Option<Value> {
 }
 
 /// Removes PrismFlow's configuration; back to the Claude account if it was selected.
-pub fn disconnect_auto() -> Result<(), String> {
-    disconnect_auto_in(&config_root())
+pub fn disconnect_auto(connection_id: &str) -> Result<(), String> {
+    disconnect_auto_in(&config_root(), connection_id)
 }
 
-pub fn disconnect_auto_in(root: &Path) -> Result<(), String> {
+/// Leaves the files alone when PrismFlow's configuration there belongs to
+/// another connection.
+pub fn disconnect_auto_in(root: &Path, connection_id: &str) -> Result<(), String> {
     let lib = Library::load(root)?;
+    if read(&lib.profile_path())?.is_some_and(|p| p["inferenceCustomHeaders"][OWNER_HEADER].as_str().is_some_and(|o| o != connection_id)) {
+        return Ok(());
+    }
     let ours_listed = lib.meta.as_ref().is_some_and(|m| m["entries"].as_array().is_some_and(|e| e.iter().any(|x| x["id"] == PRISMFLOW_ID)));
     if !ours_listed && !lib.profile_path().exists() {
         return Ok(()); // nothing of PrismFlow's there; leave the files untouched
@@ -366,7 +371,7 @@ mod tests {
         let mode: Value = serde_json::from_str(&std::fs::read_to_string(dir.path().join("claude_desktop_config.json")).unwrap()).unwrap();
         assert_eq!(mode, json!({"deploymentMode": "3p", "keepMe": true}));
 
-        disconnect_auto().unwrap();
+        disconnect_auto("claude_desktop:ollama").unwrap();
         assert!(!auto_active(dir.path(), "claude_desktop:ollama"));
         let meta: Value = serde_json::from_str(&std::fs::read_to_string(dir.path().join("configLibrary/_meta.json")).unwrap()).unwrap();
         assert_eq!(meta, json!({"entries": [{"id": DEFAULT_ID, "name": "Default"}], "appliedId": DEFAULT_ID}));
@@ -378,10 +383,12 @@ mod tests {
         let fresh = tempfile::tempdir().unwrap();
         std::env::set_var("PRISMFLOW_CLAUDE_3P_DIR", fresh.path());
         connect_auto("http://127.0.0.1:1", "t", "c").unwrap();
+        disconnect_auto("someone-else").unwrap();
+        assert!(auto_active(fresh.path(), "c"), "another connection's disconnect leaves it alone");
         let meta: Value = serde_json::from_str(&std::fs::read_to_string(fresh.path().join("configLibrary/_meta.json")).unwrap()).unwrap();
         assert_eq!(meta["appliedId"], PRISMFLOW_ID);
         assert_eq!(meta["entries"].as_array().unwrap().len(), 2);
-        disconnect_auto().unwrap();
+        disconnect_auto("c").unwrap();
         std::env::remove_var("PRISMFLOW_CLAUDE_3P_DIR");
 
         // The separate copy: its own root, the same library layout.
@@ -391,7 +398,7 @@ mod tests {
         assert!(auto_active(&root, "claude_desktop_separate:x"));
         assert_eq!(root.file_name().unwrap(), "data-3p");
         assert_eq!(separate_data_dir(state.path()).parent(), root.parent(), "Claude Desktop looks for <data dir>-3p");
-        disconnect_auto_in(&root).unwrap();
+        disconnect_auto_in(&root, "claude_desktop_separate:x").unwrap();
         assert!(!auto_active(&root, "claude_desktop_separate:x"));
     }
 }

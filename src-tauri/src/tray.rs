@@ -113,9 +113,19 @@ pub fn refresh<R: Runtime>(app: &AppHandle<R>) {
 }
 
 /// Switches a connection to another provider + model: connect the new pair,
-/// then (if the provider changed) remove the old connection.
+/// then (if the provider changed) remove the old connection. Apps with one
+/// setup go the other way round, and the old pair is put back if the new
+/// one can't be connected.
 pub async fn switch(svc: &Service, conn_id: &str, provider_id: &str, model: &str) -> Result<(), String> {
     let old = svc.connections()?.into_iter().find(|c| c.id == conn_id).ok_or("Unknown connection.")?;
+    if old.provider_id != provider_id && crate::service::one_setup(&old.app_id) {
+        svc.disconnect(&old.id).await?;
+        if let Err(e) = svc.connect(&old.app_id, provider_id, model).await {
+            let _ = svc.connect(&old.app_id, &old.provider_id, &old.model).await;
+            return Err(e);
+        }
+        return Ok(());
+    }
     let new = svc.connect(&old.app_id, provider_id, model).await?;
     if new.id != old.id {
         svc.disconnect(&old.id).await?;
