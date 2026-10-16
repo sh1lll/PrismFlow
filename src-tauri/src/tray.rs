@@ -86,7 +86,27 @@ fn build_menu<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
     Ok(menu)
 }
 
+/// What the menu shows; the menu is only rebuilt when this changes, so an
+/// open menu isn't closed by the periodic refresh.
+fn menu_key<R: Runtime>(app: &AppHandle<R>) -> String {
+    let svc = app.state::<Arc<Service>>().inner().clone();
+    let conns: Vec<String> = svc.connections().unwrap_or_default().iter().map(|c| format!("{}={}", c.id, c.model)).collect();
+    let p = svc.profiles();
+    format!("{}|{}|{:?}|{:?}|{}", conns.join(","), svc.gateway_status().url.is_empty(), p.active, p.list.keys().collect::<Vec<_>>(),
+        app.autolaunch().is_enabled().unwrap_or(false))
+}
+
+static LAST_MENU: std::sync::Mutex<String> = std::sync::Mutex::new(String::new());
+
 pub fn refresh<R: Runtime>(app: &AppHandle<R>) {
+    let key = menu_key(app);
+    {
+        let mut last = LAST_MENU.lock().unwrap_or_else(|e| e.into_inner());
+        if *last == key {
+            return;
+        }
+        *last = key;
+    }
     if let (Some(tray), Ok(menu)) = (app.tray_by_id(TRAY_ID), build_menu(app)) {
         let _ = tray.set_menu(Some(menu));
     }
@@ -105,10 +125,11 @@ pub async fn switch(svc: &Service, conn_id: &str, provider_id: &str, model: &str
 
 pub fn install<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
     let menu = build_menu(app)?;
-    let icon = app.default_window_icon().cloned();
+    // A one-colour prism; macOS tints template icons to match the menu bar.
+    let icon = tauri::image::Image::from_bytes(include_bytes!("../icons/tray.png")).ok().or_else(|| app.default_window_icon().cloned());
     let mut b = TrayIconBuilder::with_id(TRAY_ID).menu(&menu).tooltip("PrismFlow").show_menu_on_left_click(true);
     if let Some(i) = icon {
-        b = b.icon(i).icon_as_template(cfg!(target_os = "macos"));
+        b = b.icon(i).icon_as_template(true);
     }
     b.on_menu_event(|app, event| {
         let id = event.id().as_ref().to_string();

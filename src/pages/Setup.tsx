@@ -47,6 +47,7 @@ export default function Setup({ onDone }: { onDone: () => void }) {
       {step === 1 && (
         <div className="card">
           <div className="section-title">Which app do you want to use?</div>
+          {apps.length === 0 && <div className="small muted mt-s">Looking for apps on this computer…</div>}
           <div className="choices">
             {apps.filter((a) => a.installed).map((a) => (
               <button key={a.app_id} className={app === a.app_id ? "primary" : "ghost"} onClick={() => setApp(a.app_id as AppId)}>{APP_NAME[a.app_id] ?? a.display_name}</button>
