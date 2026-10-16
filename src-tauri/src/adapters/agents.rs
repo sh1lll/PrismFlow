@@ -831,17 +831,20 @@ mod tests {
             let modes: Vec<bool> = AGENTS.iter().filter(|a| a.family == fam.id).map(|a| a.shared).collect();
             assert_eq!(modes.len(), if fam.id == "hermes" { 1 } else { 2 }, "{}", fam.id);
         }
+        // Paths joined on Windows use `\` (and so get quoted); compare
+        // with `/` and without quotes.
+        let unix = |t: &str| t.replace('\\', "/").replace('\'', "");
         let cline = files("cline_shared");
-        assert!(cline[0].1.contains("CLINE_PROVIDER_SETTINGS_PATH='/s/agents/x/cline-data/settings/providers.json'"));
+        assert!(unix(&cline[0].1).contains("CLINE_PROVIDER_SETTINGS_PATH=/s/agents/x/cline-data/settings/providers.json"));
         assert!(cline[0].1.contains("CLINE_SESSION_BACKEND_MODE='local'"));
         let pi = files("pi_shared");
         assert!(pi[1].1.contains("registerProvider(\"prismflow\"") && pi[1].1.contains("\"$PRISMFLOW_API_KEY\""));
         assert!(pi[0].1.contains("PRISMFLOW_API_KEY=\"$("));
         let crush = files("crush");
-        assert!(crush[0].1.contains("exec '/usr/local/bin/agent' --data-dir /s/agents/x/crush-project \"$@\""), "{}", crush[0].1);
+        assert!(unix(&crush[0].1).contains("exec /usr/local/bin/agent --data-dir /s/agents/x/crush-project \"$@\""), "{}", crush[0].1);
         assert!(!crush[0].1.contains("XDG_CONFIG_HOME"), "tools Crush runs keep the user's XDG folders");
         let aider = files("aider_separate");
-        assert!(aider[0].1.contains("-c /s/agents/x/aider.conf.yml --env-file /s/agents/x/aider.env --model"));
+        assert!(unix(&aider[0].1).contains("-c /s/agents/x/aider.conf.yml --env-file /s/agents/x/aider.env --model"));
     }
 
     #[test]
