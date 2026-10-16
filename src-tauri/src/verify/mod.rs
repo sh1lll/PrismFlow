@@ -162,8 +162,14 @@ async fn run_codex(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .kill_on_drop(true);
+    crate::proctree::own_group(&mut cmd);
     let child = cmd.spawn().map_err(|e| format!("could not start codex: {e}"))?;
-    match tokio::time::timeout(timeout, child.wait_with_output()).await {
+    let tree = crate::proctree::TreeGuard::new(child.id());
+    let done = tokio::time::timeout(timeout, child.wait_with_output()).await;
+    if done.is_ok() {
+        tree.finished();
+    }
+    match done {
         Err(_) => Err(format!("codex did not finish within {}s", timeout.as_secs())),
         Ok(Err(e)) => Err(format!("codex failed to run: {e}")),
         Ok(Ok(out)) => {
@@ -228,8 +234,14 @@ async fn run_claude(bin: &Path, config_dir: Option<&Path>, settings: &Path, work
             cmd.env_remove(k.as_ref());
         }
     }
+    crate::proctree::own_group(&mut cmd);
     let child = cmd.spawn().map_err(|e| format!("could not start claude: {e}"))?;
-    match tokio::time::timeout(timeout, child.wait_with_output()).await {
+    let tree = crate::proctree::TreeGuard::new(child.id());
+    let done = tokio::time::timeout(timeout, child.wait_with_output()).await;
+    if done.is_ok() {
+        tree.finished();
+    }
+    match done {
         Err(_) => Err(format!("claude did not finish within {}s", timeout.as_secs())),
         Ok(Err(e)) => Err(format!("claude failed to run: {e}")),
         Ok(Ok(out)) => Ok((
@@ -709,8 +721,14 @@ async fn run_script(script: &Path, args: &[String], workdir: &Path, timeout: Dur
     let mut cmd = tokio::process::Command::new(prog);
     cmd.args(lead).args(args).current_dir(workdir)
         .stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped()).kill_on_drop(true);
+    crate::proctree::own_group(&mut cmd);
     let child = cmd.spawn().map_err(|e| format!("could not start the agent: {e}"))?;
-    match tokio::time::timeout(timeout, child.wait_with_output()).await {
+    let tree = crate::proctree::TreeGuard::new(child.id());
+    let done = tokio::time::timeout(timeout, child.wait_with_output()).await;
+    if done.is_ok() {
+        tree.finished();
+    }
+    match done {
         Err(_) => Err(format!("the agent did not finish within {}s", timeout.as_secs())),
         Ok(Err(e)) => Err(format!("the agent failed to run: {e}")),
         Ok(Ok(out)) => Ok((out.status.success(), format!("{}\n{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr)))),
@@ -1024,7 +1042,8 @@ esac"#;
         let mut f = fixture(200, 200).await;
         f.record.id = "slow-progress".into();
         let pid_file = f._home.path().join("agent.pid");
-        let body = format!("echo $$ > '{}'; exec sleep 30", pid_file.display());
+        // The agent starts a program of its own (like an npm shim does).
+        let body = format!("sleep 30 & echo $! > '{}'; wait", pid_file.display());
         let mut fut = Box::pin(run(&f, Some(&body)));
         let seen = tokio::select! {
             _ = &mut fut => panic!("should still be waiting for the reply"),
@@ -1043,7 +1062,7 @@ esac"#;
             if !alive { break; }
             tokio::time::sleep(Duration::from_millis(50)).await;
         }
-        assert!(!alive, "the agent process {pid} was left running");
+        assert!(!alive, "the program the agent started ({pid}) was left running");
     }
 
     #[tokio::test]

@@ -37,7 +37,10 @@ pub async fn prompt(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .kill_on_drop(true);
+    crate::proctree::own_group(&mut cmd);
     let mut child = cmd.spawn().map_err(|e| format!("couldn't start the agent: {e}"))?;
+    // The agent is stopped when this returns, with whatever it started.
+    let _tree = crate::proctree::TreeGuard::new(child.id());
     let mut stdin = child.stdin.take().ok_or("no stdin")?;
     let mut lines = BufReader::new(child.stdout.take().ok_or("no stdout")?).lines();
     let stderr = child.stderr.take();

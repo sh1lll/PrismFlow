@@ -165,7 +165,13 @@ pub fn launch_script_for(dir: &Path, shell: Shell) -> PathBuf {
 pub fn script_runner(script: &Path) -> (String, Vec<String>) {
     match Shell::HERE {
         Shell::Posix => ("/bin/sh".into(), vec![script.display().to_string()]),
-        Shell::PowerShell => ("powershell".into(), vec!["-NoProfile".into(), "-ExecutionPolicy".into(), "Bypass".into(), "-File".into(), script.display().to_string()]),
+        // PowerShell 7 passes arguments with quotes intact; Windows
+        // PowerShell 5.1 (always present) can split them. npm's .cmd shims
+        // still go through cmd.exe either way.
+        Shell::PowerShell => {
+            let ps = if super::find_exe("pwsh").is_some() { "pwsh" } else { "powershell" };
+            (ps.into(), vec!["-NoProfile".into(), "-ExecutionPolicy".into(), "Bypass".into(), "-File".into(), script.display().to_string()])
+        }
     }
 }
 
@@ -627,7 +633,9 @@ fn render_powershell(spec: &AgentSpec, l: &Launch, bin: &Path, helper: &Path, co
     let list = |v: &[String]| v.iter().map(|a| pq(a)).collect::<Vec<_>>().join(", ");
     o.push_str("$rest = @($args)\r\n");
     if let Some(vs) = &l.version_switch {
-        o.push_str(&format!("$version = ((& {b} --version 2>$null) | Out-String)\r\n"));
+        // Windows PowerShell turns a native program's stderr line into an
+        // error, which 'Stop' would make fatal (a Node warning, say).
+        o.push_str(&format!("$ErrorActionPreference = 'Continue'\r\n$version = ((& {b} --version 2>$null) | Out-String)\r\n$ErrorActionPreference = 'Stop'\r\n"));
         o.push_str(&format!("if ($version -match 'v2\\.' -or $version -match '^\\s*2\\.') {{\r\n  $env:{} = {}\r\n", vs.env_key, pq(&vs.v2_value)));
         o.push_str(&format!("  if ($rest.Count -gt 0 -and $rest[0] -eq 'run') {{ $rest = @('run', {}) + @($rest | Select-Object -Skip 1) }}\r\n}} else {{\r\n  $env:{} = {}\r\n}}\r\n",
             pq(vs.v2_run_flag), vs.env_key, pq(&vs.v1_value)));

@@ -127,6 +127,29 @@ pub fn route_for(app_id: &str, p: &ProviderDefinition) -> Option<Route> {
     }
 }
 
+/// Connections being tested now (from the app or the companion): one test
+/// per connection at a time, so their progress views don't mix.
+static RUNNING_TESTS: std::sync::Mutex<std::collections::BTreeSet<String>> = std::sync::Mutex::new(std::collections::BTreeSet::new());
+
+struct RunningTest(String);
+
+impl RunningTest {
+    /// `key` names the data folder and the connection.
+    fn start(key: &str) -> R<Self> {
+        let mut running = RUNNING_TESTS.lock().unwrap_or_else(|e| e.into_inner());
+        if !running.insert(key.to_string()) {
+            return Err("A test is already running for this app.".into());
+        }
+        Ok(Self(key.to_string()))
+    }
+}
+
+impl Drop for RunningTest {
+    fn drop(&mut self) {
+        RUNNING_TESTS.lock().unwrap_or_else(|e| e.into_inner()).remove(&self.0);
+    }
+}
+
 /// Apps that hold one PrismFlow setup at a time, so a second provider
 /// can't be connected next to the first. (The Claude Code extension's two
 /// modes share one setting; vscode.rs refuses that pairing itself.)
@@ -654,6 +677,9 @@ impl Service {
         let p = provider(provider_id)?;
         let model = validate_model_id(model)?;
         let route = route_for(app_id, p).ok_or_else(|| match app_id {
+            a if p.credential_source == providers::CredentialSource::CodexLogin && (codex::is_cli(a) || codex::is_desktop(a)) => {
+                "Codex signs in to ChatGPT itself; use Codex's own sign-in instead of PrismFlow.".to_string()
+            }
             a if codex::is_cli(a) || codex::is_desktop(a) || claude_code::is_cli(a) || claude_desktop::is_claude_desktop(a) || a == jetbrains::APP_ID || vscode::is_vscode(a) || editors::ALL.contains(&a) || agents::spec(a).is_some() => format!(
                 "{} needs a base URL; custom providers are not supported in this build.", p.display_name
             ),
@@ -1260,6 +1286,7 @@ impl Service {
     }
 
     pub async fn verify(&self, id: &str) -> R<VerificationReport> {
+        let _one = RunningTest::start(&format!("{}|{id}", self.state.dir().display()))?;
         let mut record = self.state.get(id).map_err(|e| e.to_string())?.ok_or("Unknown connection.")?;
         let p = provider(&record.provider_id)?;
         if record.route == Route::Gateway && !self.broker.is_running().await {
@@ -1358,7 +1385,22 @@ impl Service {
             msg
         })?;
         if codex::is_cli(&record.app_id) || codex::is_desktop(&record.app_id) {
-            let _ = std::fs::remove_file(self.codex_catalog_path(&record.app_id, &record.provider_id));
+            let mut catalogs = vec![self.codex_catalog_path(&record.app_id, &record.provider_id)];
+            // Codex app connections made before each had its own list used
+            // the CLI's.
+            let legacy = self.codex_catalog_path(codex::APP_ID, &record.provider_id);
+            let cli_connected = self.connections().unwrap_or_default().iter()
+                .any(|r| r.app_id == codex::APP_ID && r.provider_id == record.provider_id);
+            if record.app_id == codex::DESKTOP_APP_ID && !cli_connected {
+                catalogs.push(legacy.clone());
+            }
+            // ...and such a Codex app still points at the CLI's list.
+            let in_use = codex::read_base_priors(&self.codex_home).ok()
+                .and_then(|v| v.get("model_catalog_json").cloned().flatten())
+                .is_some_and(|c| std::path::Path::new(&c) == legacy);
+            for c in catalogs.iter().filter(|c| !(in_use && **c == legacy)) {
+                let _ = std::fs::remove_file(c);
+            }
         }
         if record.route == Route::Gateway {
             tokens::revoke(self.store.as_ref(), id).map_err(|e| format!("Couldn't remove this app's key: {e}"))?;
@@ -1387,6 +1429,10 @@ impl Service {
             procs.iter().filter(|p| p.command.contains(&dir)).map(|p| p.pid).collect()
         } else if claude_code::is_cli(&record.app_id) {
             adapters::processes::claude_sessions(&procs, &record.managed_file.display().to_string())
+        } else if record.app_id == codex::CLI_SEPARATE_APP_ID {
+            // Its profile has the same name as the shared one's and CODEX_HOME
+            // isn't on the command line, so its sessions can't be told apart.
+            Vec::new()
         } else {
             adapters::processes::codex_sessions(&procs, &record.profile)
         })
@@ -2155,6 +2201,21 @@ mod tests {
         let now: Vec<String> = s.connections().unwrap().into_iter().map(|c| c.id).collect();
         assert_eq!(now, vec![connection_id(claude_desktop::SEPARATE_APP_ID, "groq")]);
         assert!(claude_desktop::auto_active(&claude_desktop::separate_root(s.state.dir()), &now[0]), "the new setup is the live one");
+    }
+
+    #[tokio::test]
+    async fn an_older_codex_app_setup_keeps_its_model_list() {
+        let dir = tempfile::tempdir().unwrap();
+        let s = service(dir.path());
+        s.set_credential("openrouter", "sk-or-v1-abcdefabcdef").unwrap();
+        // Before per-connection lists, the Codex app pointed at the CLI's.
+        let legacy = s.codex_catalog_path(CODEX, "openrouter");
+        std::fs::create_dir_all(legacy.parent().unwrap()).unwrap();
+        std::fs::write(&legacy, "{}").unwrap();
+        std::fs::write(s.codex_home.join("config.toml"), format!("model_catalog_json = {:?}\n", legacy.display().to_string())).unwrap();
+        let cli = s.connect(CODEX, "openrouter", "a/b").await.unwrap();
+        s.disconnect(&cli.id).await.unwrap();
+        assert!(legacy.exists(), "the Codex app still uses it");
     }
 
     #[test]

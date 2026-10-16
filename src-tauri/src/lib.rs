@@ -11,6 +11,7 @@ pub mod discovery;
 pub mod gateway;
 pub mod mcp;
 pub mod notify;
+pub mod proctree;
 pub mod tray;
 pub mod usage;
 pub mod ollama;
