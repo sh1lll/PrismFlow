@@ -7,6 +7,8 @@
 //! PRISMFLOW_LIVE_BROKER=<dir with url+token> PRISMFLOW_ACP_CLAUDE_JS=<…/dist/index.js>
 //!   cargo test --test live_jetbrains -- --ignored --nocapture
 
+#![cfg(unix)] // uses a POSIX helper script
+
 use prismflow_lib::adapters::{acp, agents, claude_code, jetbrains};
 use std::time::Duration;
 
