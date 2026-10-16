@@ -35,13 +35,13 @@ export interface UrlCheck {
   warnings: string[];
 }
 
-export type AppId = "codex_cli" | "codex_desktop" | "claude_code" | "claude_desktop" | "jetbrains" | "vscode_claude" | "vscode_chat" | "aider" | "cline" | "pi" | "hermes" | "opencode" | "dsh" | "grok" | "muse" | "qwen" | "goose" | "crush" | "droid" | "continue_cli" | "copilot_cli" | "roo_code" | "kilo_code" | "zed" | "continue_ide";
-export const APP_IDS: AppId[] = ["codex_cli", "codex_desktop", "claude_code", "claude_desktop", "jetbrains", "vscode_claude", "vscode_chat", "aider", "cline", "pi", "hermes", "roo_code", "kilo_code", "zed", "continue_ide", "opencode", "dsh", "grok", "muse", "qwen", "goose", "crush", "droid", "continue_cli", "copilot_cli"];
+export type AppId = "codex_cli" | "codex_desktop" | "codex_desktop_separate" | "claude_code" | "claude_desktop" | "jetbrains" | "vscode_claude" | "vscode_chat" | "aider" | "cline" | "pi" | "hermes" | "opencode" | "dsh" | "grok" | "muse" | "qwen" | "goose" | "crush" | "droid" | "continue_cli" | "copilot_cli" | "roo_code" | "kilo_code" | "zed" | "continue_ide";
+export const APP_IDS: AppId[] = ["codex_cli", "codex_desktop", "codex_desktop_separate", "claude_code", "claude_desktop", "jetbrains", "vscode_claude", "vscode_chat", "aider", "cline", "pi", "hermes", "roo_code", "kilo_code", "zed", "continue_ide", "opencode", "dsh", "grok", "muse", "qwen", "goose", "crush", "droid", "continue_cli", "copilot_cli"];
 export const TERMINAL_AGENTS: AppId[] = ["aider", "cline", "pi", "hermes", "opencode", "dsh", "grok", "muse", "qwen", "goose", "crush", "droid", "continue_cli", "copilot_cli"];
 export type Route = "direct" | "gateway";
 
 export const APP_NAME: Record<string, string> = {
-  codex_cli: "Codex CLI", codex_desktop: "Codex app & VS Code", claude_code: "Claude Code CLI", claude_desktop: "Claude Desktop", jetbrains: "JetBrains IDEs", vscode_claude: "Claude Code for VS Code", vscode_chat: "VS Code Chat", aider: "Aider", cline: "Cline CLI", pi: "Pi", hermes: "Hermes Agent", playground: "Try a model", opencode: "OpenCode", dsh: "DeepSeek Harness", grok: "Grok Build", muse: "Muse Code", qwen: "Qwen Code", goose: "Goose", crush: "Crush", droid: "Factory Droid", continue_cli: "Continue CLI", copilot_cli: "GitHub Copilot CLI", roo_code: "Roo Code", kilo_code: "Kilo Code", zed: "Zed", continue_ide: "Continue (VS Code / JetBrains)",
+  codex_cli: "Codex CLI", codex_desktop: "Codex app & VS Code", codex_desktop_separate: "Codex app (separate)", claude_code: "Claude Code CLI", claude_desktop: "Claude Desktop", jetbrains: "JetBrains IDEs", vscode_claude: "Claude Code for VS Code", vscode_chat: "VS Code Chat", aider: "Aider", cline: "Cline CLI", pi: "Pi", hermes: "Hermes Agent", playground: "Try a model", opencode: "OpenCode", dsh: "DeepSeek Harness", grok: "Grok Build", muse: "Muse Code", qwen: "Qwen Code", goose: "Goose", crush: "Crush", droid: "Factory Droid", continue_cli: "Continue CLI", copilot_cli: "GitHub Copilot CLI", roo_code: "Roo Code", kilo_code: "Kilo Code", zed: "Zed", continue_ide: "Continue (VS Code / JetBrains)",
 };
 
 export const ROUTE_LABEL: Record<Route, string> = {
@@ -103,6 +103,18 @@ export type ConnectionStatus =
 export type StageOutcome = "Pass" | "Warn" | "Fail" | "Skipped";
 
 export interface StageResult { stage: number; name: string; outcome: StageOutcome; detail: string }
+
+/** Plain names for the test steps. */
+export const STEP_NAME: Record<string, string> = {
+  Configuration: "Setup",
+  Credential: "Key",
+  Endpoint: "Provider reachable",
+  Model: "Model",
+  Gateway: "PrismFlow service",
+  "End-to-end": "Reply",
+  "Tool calling": "Tools",
+  "In Claude Desktop": "In Claude Desktop",
+};
 
 export interface VerificationReport {
   started_at: number;
@@ -230,6 +242,8 @@ export const api = {
   preview: (appId: AppId, providerId: string, model: string) => invoke<ConnectPreview>("preview_connection", { appId, providerId, model }),
   connect: (appId: AppId, providerId: string, model: string) => invoke<Connection>("connect", { appId, providerId, model }),
   verify: (id: string) => invoke<VerificationReport>("verify_connection", { id }),
+  cancelVerify: (id: string) => invoke<void>("cancel_verify", { id }),
+  verifyProgress: (id: string) => invoke<StageResult[] | null>("verify_progress", { id }),
   disconnect: (id: string) => invoke<string | null>("disconnect", { id }),
   connections: () => invoke<Connection[]>("list_connections"),
   checkCustomUrl: (url: string) => invoke<UrlCheck>("check_custom_url", { url }),
@@ -304,6 +318,7 @@ export function providerName(providers: Provider[], id: string): string {
 export function launchHint(c: Connection): string {
   if (TERMINAL_AGENTS.includes(c.app_id as AppId)) return c.managed_file;
   if (c.app_id === "codex_desktop") return "open the Codex app (restart it after changes)";
+  if (c.app_id === "codex_desktop_separate") return "Open app in PrismFlow (quit the Codex app first)";
   if (c.app_id === "claude_desktop") return "Claude Desktop → Configure Third-Party Inference";
   return c.app_id === "claude_code" ? `claude --settings ${c.managed_file}` : `codex -p ${c.profile}`;
 }

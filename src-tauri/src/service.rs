@@ -89,7 +89,7 @@ type R<T> = Result<T, String>;
 
 /// Every application PrismFlow can connect.
 fn app_ids() -> Vec<&'static str> {
-    let mut v = vec![codex::APP_ID, codex::DESKTOP_APP_ID, claude_code::APP_ID, claude_desktop::APP_ID, jetbrains::APP_ID, vscode::CLAUDE_APP_ID, vscode::CHAT_APP_ID];
+    let mut v = vec![codex::APP_ID, codex::DESKTOP_APP_ID, codex::SEPARATE_APP_ID, claude_code::APP_ID, claude_desktop::APP_ID, jetbrains::APP_ID, vscode::CLAUDE_APP_ID, vscode::CHAT_APP_ID];
     v.extend(editors::ALL);
     v.extend(agents::AGENTS.iter().map(|a| a.id));
     v
@@ -109,14 +109,14 @@ pub fn route_for(app_id: &str, p: &ProviderDefinition) -> Option<Route> {
         return None; // custom providers wait for URL validation + consent (SPEC §6.3)
     }
     // Codex signs in to ChatGPT itself; routing it through PrismFlow adds nothing.
-    if p.credential_source == providers::CredentialSource::CodexLogin && (app_id == codex::APP_ID || app_id == codex::DESKTOP_APP_ID) {
+    if p.credential_source == providers::CredentialSource::CodexLogin && (app_id == codex::APP_ID || codex::is_desktop(app_id)) {
         return None;
     }
     match app_id {
         codex::APP_ID if codex_direct(p) && p.requires_key => Some(Route::Direct),
         codex::APP_ID => Some(Route::Gateway),
-        codex::DESKTOP_APP_ID if codex_direct(p) && p.requires_key => Some(Route::Direct),
-        codex::DESKTOP_APP_ID => Some(Route::Gateway),
+        a if codex::is_desktop(a) && codex_direct(p) && p.requires_key => Some(Route::Direct),
+        a if codex::is_desktop(a) => Some(Route::Gateway),
         claude_code::APP_ID => Some(Route::Gateway),
         claude_desktop::APP_ID => Some(Route::Gateway),
         jetbrains::APP_ID | vscode::CLAUDE_APP_ID | vscode::CHAT_APP_ID => Some(Route::Gateway),
@@ -140,6 +140,7 @@ pub fn app_name(app_id: &str) -> &'static str {
     match app_id {
         claude_code::APP_ID => "Claude Code",
         codex::DESKTOP_APP_ID => "Codex app & VS Code",
+        codex::SEPARATE_APP_ID => "Codex app (separate)",
         claude_desktop::APP_ID => "Claude Desktop",
         jetbrains::APP_ID => "JetBrains IDEs",
         vscode::CLAUDE_APP_ID => "Claude Code for VS Code",
@@ -536,6 +537,18 @@ impl Service {
 
     /// PrismFlow-owned Codex model catalog for a provider (kept in the state
     /// dir, not in ~/.codex, so the user's Codex home holds only the profile).
+    /// Where a Codex app connection keeps its config: your usual Codex
+    /// folder (shared), or PrismFlow's own folder (separate).
+    fn desktop_home(&self, app_id: &str) -> PathBuf {
+        if app_id == codex::SEPARATE_APP_ID {
+            let home = codex::separate_home(self.state.dir());
+            let _ = std::fs::create_dir_all(&home);
+            home
+        } else {
+            self.codex_home.clone()
+        }
+    }
+
     pub fn codex_catalog_path(&self, provider_id: &str) -> PathBuf {
         self.state.dir().join("codex-catalogs").join(format!("{provider_id}.json"))
     }
@@ -567,7 +580,7 @@ impl Service {
     }
 
     fn plan(&self, app_id: &str, provider_id: &str, model: &str) -> R<(&'static ProviderDefinition, Route, config_engine::EditPlan)> {
-        let catalog = (app_id == codex::APP_ID || app_id == codex::DESKTOP_APP_ID).then(|| self.codex_catalog_path(provider_id));
+        let catalog = (app_id == codex::APP_ID || codex::is_desktop(app_id)).then(|| self.codex_catalog_path(provider_id));
         self.plan_with(app_id, provider_id, model, catalog.as_deref())
     }
 
@@ -581,7 +594,7 @@ impl Service {
         let p = provider(provider_id)?;
         let model = validate_model_id(model)?;
         let route = route_for(app_id, p).ok_or_else(|| match app_id {
-            a if a == codex::APP_ID || a == codex::DESKTOP_APP_ID || a == claude_code::APP_ID || a == claude_desktop::APP_ID || a == jetbrains::APP_ID || a == vscode::CLAUDE_APP_ID || a == vscode::CHAT_APP_ID || editors::ALL.contains(&a) || agents::spec(a).is_some() => format!(
+            a if a == codex::APP_ID || codex::is_desktop(a) || a == claude_code::APP_ID || a == claude_desktop::APP_ID || a == jetbrains::APP_ID || a == vscode::CLAUDE_APP_ID || a == vscode::CHAT_APP_ID || editors::ALL.contains(&a) || agents::spec(a).is_some() => format!(
                 "{} needs a base URL; custom providers are not supported in this build.", p.display_name
             ),
             other => format!("Unknown application '{other}'."),
@@ -638,13 +651,13 @@ impl Service {
             return Ok((p, route, config_engine::EditPlan { file: script, before, after: body, summary }));
         }
         let plan = match (app_id, route) {
-            (codex::DESKTOP_APP_ID, _) => {
+            (a, _) if codex::is_desktop(a) => {
                 let (base_url, args) = if route == Route::Direct {
                     (p.base_url.to_string(), vec!["credential".into(), "print".into(), "--provider".into(), p.id.into()])
                 } else {
                     (format!("{url}/v1"), vec!["token".into(), "print".into(), "--connection".into(), id.clone()])
                 };
-                codex::plan_connect_base(&self.codex_home, p, model, &base_url, &self.helper, args, catalog).map_err(|e| e.to_string())?
+                codex::plan_connect_base(&self.desktop_home(app_id), p, model, &base_url, &self.helper, args, catalog).map_err(|e| e.to_string())?
             }
             (codex::APP_ID, Route::Direct) => codex::plan_connect(&self.codex_home, p, model, &self.helper, catalog).map_err(|e| e.to_string())?,
             (codex::APP_ID, Route::Gateway) => codex::plan_connect_gateway(&self.codex_home, p, model, &self.helper, &id, &url, catalog)
@@ -689,7 +702,7 @@ impl Service {
     fn profile_for(&self, app_id: &str, provider_id: &str) -> String {
         if agents::spec(app_id).is_some() {
             connection_id(app_id, provider_id).replace(':', "-")
-        } else if app_id == codex::DESKTOP_APP_ID || app_id == claude_desktop::APP_ID || app_id == jetbrains::APP_ID || app_id == vscode::CLAUDE_APP_ID || app_id == vscode::CHAT_APP_ID || editors::ALL.contains(&app_id) {
+        } else if codex::is_desktop(app_id) || app_id == claude_desktop::APP_ID || app_id == jetbrains::APP_ID || app_id == vscode::CLAUDE_APP_ID || app_id == vscode::CHAT_APP_ID || editors::ALL.contains(&app_id) {
             String::new() // desktop apps have no PrismFlow profile
         } else if app_id == claude_code::APP_ID {
             claude_code::profile_name(provider_id)
@@ -701,6 +714,9 @@ impl Service {
     fn launch_line(&self, app_id: &str, profile: &str, file: &std::path::Path) -> String {
         if app_id == claude_desktop::APP_ID {
             return format!("open -b {}", claude_desktop::BUNDLE_ID);
+        }
+        if app_id == codex::SEPARATE_APP_ID {
+            return format!("open -n -b {} --env CODEX_HOME={}", codex::DESKTOP_BUNDLE_ID, quote(&self.desktop_home(app_id).display().to_string()));
         }
         if app_id == codex::DESKTOP_APP_ID {
             return format!("open -b {}", codex::DESKTOP_BUNDLE_ID);
@@ -751,6 +767,9 @@ impl Service {
         } else if app_id == jetbrains::APP_ID {
             warnings.push("In your JetBrains IDE, open AI Assistant and pick the PrismFlow agent.".into());
             warnings.push("Your other agents and your own Claude Code and Codex settings stay as they are.".into());
+        } else if app_id == codex::SEPARATE_APP_ID {
+            warnings.push("Codex opens with its own chats and settings, just for PrismFlow. Your usual Codex stays as it is.".into());
+            warnings.push("Quit the Codex app first, then open it from PrismFlow.".into());
         } else if app_id == codex::DESKTOP_APP_ID {
             if let Some(cur) = codex::read_base_priors(&self.codex_home).unwrap_or_default().get("model_provider").cloned().flatten() {
                 if !cur.starts_with("prismflow_") {
@@ -777,16 +796,16 @@ impl Service {
     }
 
     pub async fn connect(&self, app_id: &str, provider_id: &str, model: &str) -> R<ConnectionRecord> {
-        if app_id == codex::DESKTOP_APP_ID {
-            if let Some(other) = self.connections()?.into_iter().find(|r| r.app_id == codex::DESKTOP_APP_ID && r.provider_id != provider_id) {
-                return Err(format!("Codex Desktop is connected to {} already. Disconnect it first; the app has one configuration.", other.provider_id));
+        if codex::is_desktop(app_id) {
+            if let Some(other) = self.connections()?.into_iter().find(|r| r.app_id == app_id && r.provider_id != provider_id) {
+                return Err(format!("{} is connected to {} already. Disconnect it first; the app has one configuration.", app_name(app_id), other.provider_id));
             }
         }
         // Desktop: keep the original priors across model switches.
-        let desktop_priors = if app_id == codex::DESKTOP_APP_ID {
+        let desktop_priors = if codex::is_desktop(app_id) {
             match self.state.get(&connection_id(app_id, provider_id)).ok().flatten() {
                 Some(existing) => existing.priors,
-                None => codex::read_base_priors(&self.codex_home).map_err(|e| e.to_string())?,
+                None => codex::read_base_priors(&self.desktop_home(app_id)).map_err(|e| e.to_string())?,
             }
         } else {
             Default::default()
@@ -1149,8 +1168,8 @@ impl Service {
             // Automatic setup: back to the Claude account, PrismFlow's entry removed.
             // Guided setup wrote nothing; revoking the token below is the disconnect.
             claude_desktop::disconnect_auto().map(|()| None)
-        } else if record.app_id == codex::DESKTOP_APP_ID {
-            codex::plan_disconnect_base(&self.codex_home, &record.provider_id, &record.priors)
+        } else if codex::is_desktop(&record.app_id) {
+            codex::plan_disconnect_base(&self.desktop_home(&record.app_id), &record.provider_id, &record.priors)
                 .map_err(|e| e.to_string())
                 .and_then(|plans| {
                     let mut backup = None;
@@ -1195,7 +1214,9 @@ impl Service {
             self.diag.record(Level::Error, "disconnect.failed", &msg);
             msg
         })?;
-        if record.app_id == codex::APP_ID || record.app_id == codex::DESKTOP_APP_ID {
+        let catalog_shared = self.connections().unwrap_or_default().iter()
+            .any(|r| r.id != record.id && r.provider_id == record.provider_id && (r.app_id == codex::APP_ID || codex::is_desktop(&r.app_id)));
+        if (record.app_id == codex::APP_ID || codex::is_desktop(&record.app_id)) && !catalog_shared {
             let _ = std::fs::remove_file(self.codex_catalog_path(&record.provider_id));
         }
         if record.route == Route::Gateway {
@@ -1218,7 +1239,7 @@ impl Service {
     pub fn running_sessions(&self, id: &str) -> R<Vec<u32>> {
         let record = self.state.get(id).map_err(|e| e.to_string())?.ok_or("Unknown connection.")?;
         let procs = adapters::processes::list();
-        Ok(if record.app_id == claude_desktop::APP_ID || record.app_id == codex::DESKTOP_APP_ID || record.app_id == jetbrains::APP_ID || record.app_id == vscode::CLAUDE_APP_ID || record.app_id == vscode::CHAT_APP_ID || editors::ALL.contains(&record.app_id.as_str()) {
+        Ok(if record.app_id == claude_desktop::APP_ID || codex::is_desktop(&record.app_id) || record.app_id == jetbrains::APP_ID || record.app_id == vscode::CLAUDE_APP_ID || record.app_id == vscode::CHAT_APP_ID || editors::ALL.contains(&record.app_id.as_str()) {
             Vec::new() // desktop apps: restart is shown in the UI instead
         } else if agents::spec(&record.app_id).is_some() {
             let dir = agents::agent_dir(self.state.dir(), &record.id).display().to_string();
@@ -1387,6 +1408,11 @@ impl Service {
         if editors::ALL.contains(&record.app_id.as_str()) {
             return Err(format!("Open {}. PrismFlow is set up there.", editors::name(&record.app_id)));
         }
+        if record.app_id == codex::SEPARATE_APP_ID {
+            open_separate_codex(&self.desktop_home(&record.app_id))?;
+            self.diag.record(Level::Info, "launch", "Opened the Codex app (separate).");
+            return Ok(());
+        }
         if record.app_id == codex::DESKTOP_APP_ID {
             open_app(codex::DESKTOP_BUNDLE_ID)?;
             self.diag.record(Level::Info, "launch", "Opened the Codex app.");
@@ -1410,6 +1436,28 @@ impl Service {
 fn open_app(bundle_id: &str) -> R<()> {
     let ok = std::process::Command::new("open").args(["-b", bundle_id]).status().map_err(|e| e.to_string())?.success();
     if ok { Ok(()) } else { Err("The app could not be opened.".into()) }
+}
+
+/// Opens a new Codex app with PrismFlow's own CODEX_HOME. A Codex app that
+/// is already open would take the request instead, so it must be quit first.
+#[cfg(target_os = "macos")]
+fn open_separate_codex(home: &std::path::Path) -> R<()> {
+    let app = codex::detect_desktop().path.ok_or("The Codex app isn't installed.")?;
+    let running = std::process::Command::new("pgrep").args(["-f", &format!("{app}/Contents/MacOS/")]).output()
+        .is_ok_and(|o| o.status.success());
+    if running {
+        return Err("The Codex app is already open. Quit it (Codex → Quit), then press Open again.".into());
+    }
+    std::fs::create_dir_all(home).map_err(|e| e.to_string())?;
+    let ok = std::process::Command::new("open")
+        .args(["-n", "-b", codex::DESKTOP_BUNDLE_ID, "--env", &format!("CODEX_HOME={}", home.display())])
+        .status().map_err(|e| e.to_string())?.success();
+    if ok { Ok(()) } else { Err("The app could not be opened.".into()) }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn open_separate_codex(_home: &std::path::Path) -> R<()> {
+    Err("Opening the separate Codex app is macOS-only in this build.".into())
 }
 
 #[cfg(not(target_os = "macos"))]
@@ -1810,6 +1858,31 @@ mod tests {
         assert!(r["model_providers"].get("prismflow_openrouter").is_none());
         assert!(restored.starts_with("# mine"));
         assert!(walk(&s.codex_home).iter().all(|f| !f.display().to_string().contains("prismflow-backup")), "backups live in the state dir");
+    }
+
+    #[tokio::test]
+    async fn separate_codex_app_leaves_your_codex_alone() {
+        let dir = tempfile::tempdir().unwrap();
+        let s = service(dir.path());
+        let base = s.codex_home.join("config.toml");
+        std::fs::write(&base, "# mine\nmodel = \"gpt-5\"\n").unwrap();
+        s.set_credential("openrouter", "sk-or-v1-abcdefabcdef").unwrap();
+        // Both at once: the shared app and the separate one.
+        let shared = s.connect(codex::DESKTOP_APP_ID, "openrouter", "a/b").await.unwrap();
+        let mine = std::fs::read_to_string(&base).unwrap();
+        let sep = s.connect(codex::SEPARATE_APP_ID, "openrouter", "c/d").await.unwrap();
+        assert_eq!(std::fs::read_to_string(&base).unwrap(), mine, "separate must not touch the usual Codex config");
+        let home = codex::separate_home(s.state.dir());
+        assert_eq!(sep.managed_file, home.join("config.toml"));
+        let cfg = std::fs::read_to_string(&sep.managed_file).unwrap();
+        assert!(cfg.contains("model = \"c/d\"") && cfg.contains("model_provider = \"prismflow_openrouter\""), "{cfg}");
+        assert!(s.preview(codex::SEPARATE_APP_ID, "openrouter", "c/d").unwrap().launch_command.contains("--env CODEX_HOME="));
+        // Disconnecting one keeps the shared model list the other uses.
+        s.disconnect(&sep.id).await.unwrap();
+        assert!(s.codex_catalog_path("openrouter").exists());
+        assert!(!std::fs::read_to_string(&sep.managed_file).unwrap_or_default().contains("prismflow_openrouter"));
+        s.disconnect(&shared.id).await.unwrap();
+        assert!(!s.codex_catalog_path("openrouter").exists());
     }
 
     #[test]

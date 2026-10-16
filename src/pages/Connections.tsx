@@ -1,7 +1,8 @@
 import RoutingPanel from "./RoutingPanel";
+import TestRunning from "./TestRunning";
 import { useEffect, useMemo, useState } from "react";
 import {
-  api, priceText, APP_IDS, APP_NAME, AppId, Connection, ConnectPreview, ModelInfo, Provider, STATUS_LABEL, StageResult,
+  api, priceText, APP_IDS, APP_NAME, AppId, Connection, ConnectPreview, ModelInfo, Provider, STATUS_LABEL, STEP_NAME, StageResult,
   errText, launchHint, providerName, statusTone, when,
 } from "../api";
 
@@ -12,24 +13,12 @@ const OUTCOME: Record<string, { label: string; tone: string }> = {
   Skipped: { label: "Skipped", tone: "muted" },
 };
 
-/** Plain names for the test steps. */
-const STEP: Record<string, string> = {
-  Configuration: "Setup",
-  Credential: "Key",
-  Endpoint: "Provider reachable",
-  Model: "Model",
-  Gateway: "PrismFlow service",
-  "End-to-end": "Reply",
-  "Tool calling": "Tools",
-  "In Claude Desktop": "In Claude Desktop",
-};
-
 function Stages({ stages }: { stages: StageResult[] }) {
   return (
     <div className="stages">
       {stages.map((s, i) => (
         <div key={i} className="stage">
-          <span className={`badge ${OUTCOME[s.outcome].tone}`}>{OUTCOME[s.outcome].label}</span> <b>{STEP[s.name] ?? s.name}</b>
+          <span className={`badge ${OUTCOME[s.outcome].tone}`}>{OUTCOME[s.outcome].label}</span> <b>{STEP_NAME[s.name] ?? s.name}</b>
           <StageDetail text={s.detail} />
         </div>
       ))}
@@ -190,7 +179,7 @@ function ConnectionCard({ c, providers, onChange }: { c: Connection; providers: 
   const [running, setRunning] = useState<number[]>([]);
   useEffect(() => { api.runningSessions(c.id).then(setRunning).catch(() => setRunning([])); }, [c]);
   const app = APP_NAME[c.app_id];
-  const desktop = c.app_id.endsWith("_desktop");
+  const desktop = c.app_id.endsWith("_desktop") || c.app_id === "codex_desktop_separate";
 
   async function run(label: string, f: () => Promise<unknown>, ok?: string) {
     setBusy(label);
@@ -222,7 +211,7 @@ function ConnectionCard({ c, providers, onChange }: { c: Connection; providers: 
       {c.route === "gateway" && <RoutingPanel c={c} providers={providers} onSaved={onChange} />}
       <div className="row mt">
         <button className="primary" disabled={busy !== ""} onClick={() => run("verify", () => api.verify(c.id))}>
-          {busy === "verify" ? "Testing… (can take a few minutes)" : "Test"}
+          {busy === "verify" ? "Testing…" : "Test"}
         </button>
         {!["jetbrains", "vscode_claude", "vscode_chat", "roo_code", "kilo_code", "zed", "continue_ide"].includes(c.app_id) && <button className="ghost" disabled={busy !== ""} onClick={() => run("launch", () => api.launch(c.id), `Opened ${app}.`)}>{desktop ? "Open app" : "Open in Terminal"}</button>}
         <button className="danger" disabled={busy !== ""}
@@ -230,6 +219,7 @@ function ConnectionCard({ c, providers, onChange }: { c: Connection; providers: 
           Disconnect
         </button>
       </div>
+      {busy === "verify" && <TestRunning id={c.id} />}
       {msg && <div className={`small mt pre-wrap ${msg.tone}`}>{msg.text}</div>}
       <details className="mt">
         <summary className="small">Details</summary>

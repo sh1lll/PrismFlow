@@ -30,13 +30,35 @@ pub struct VerifyEnv<'a> {
     pub agent_timeout: Duration,
 }
 
+/// Stages finished so far, per connection, while a test runs (the UI polls it).
+static PROGRESS: std::sync::LazyLock<std::sync::Mutex<std::collections::HashMap<String, Vec<StageResult>>>> =
+    std::sync::LazyLock::new(Default::default);
+
+/// The stages a running test has finished; None when no test is running.
+pub fn progress(connection_id: &str) -> Option<Vec<StageResult>> {
+    PROGRESS.lock().ok()?.get(connection_id).cloned()
+}
+
 struct Run {
+    id: String,
     stages: Vec<StageResult>,
 }
 
 impl Run {
     fn push(&mut self, stage: u8, name: &str, outcome: StageOutcome, detail: impl Into<String>) {
         self.stages.push(StageResult { stage, name: name.into(), outcome, detail: detail.into() });
+        if let Ok(mut p) = PROGRESS.lock() {
+            p.insert(self.id.clone(), self.stages.clone());
+        }
+    }
+}
+
+impl Drop for Run {
+    /// Also runs when the test is stopped part-way.
+    fn drop(&mut self) {
+        if let Ok(mut p) = PROGRESS.lock() {
+            p.remove(&self.id);
+        }
     }
 }
 
@@ -111,6 +133,7 @@ fn tail(text: &str, lines: usize) -> String {
 
 async fn run_codex(
     bin: &Path,
+    home: Option<&Path>,
     profile: &str,
     workdir: &Path,
     json: bool,
@@ -127,6 +150,9 @@ async fn run_codex(
     cmd.arg(workdir);
     if json {
         cmd.arg("--json");
+    }
+    if let Some(h) = home {
+        cmd.env("CODEX_HOME", h);
     }
     cmd.arg(prompt)
         .env("PATH", codex::child_path(bin))
@@ -241,9 +267,12 @@ pub async fn verify(
     record: &ConnectionRecord,
 ) -> VerificationReport {
     let started_at = now_secs();
-    let mut run = Run { stages: Vec::new() };
+    let mut run = Run { id: record.id.clone(), stages: Vec::new() };
+    if let Ok(mut p) = PROGRESS.lock() {
+        p.insert(record.id.clone(), Vec::new());
+    }
     let status = run_stages(env, provider, record, &mut run).await;
-    VerificationReport { started_at, finished_at: now_secs(), stages: run.stages, status }
+    VerificationReport { started_at, finished_at: now_secs(), stages: std::mem::take(&mut run.stages), status }
 }
 
 async fn run_stages(
@@ -272,7 +301,7 @@ async fn run_stages(
             .ok_or_else(|| format!("{} no longer has the PrismFlow model.", crate::adapters::vscode::chat_models_file().display()))
     } else if let Some(a) = agent {
         check_agent_config(a, &record.managed_file)
-    } else if record.app_id == codex::DESKTOP_APP_ID {
+    } else if codex::is_desktop(&record.app_id) {
         check_desktop_config(&record.managed_file, &record.provider_id, env.codex_bin.as_deref())
     } else if is_claude {
         check_claude_config(&record.managed_file, env.claude_bin.as_deref())
@@ -404,8 +433,10 @@ async fn run_stages(
         run.push(5, "End-to-end", StageOutcome::Fail, "Codex isn't installed.");
         return ConnectionStatus::RequiresAttention;
     };
+    // The Codex app's folder (the separate one has its own CODEX_HOME).
+    let home = codex::is_desktop(&record.app_id).then(|| record.managed_file.parent()).flatten();
     let prompt = format!("Reply with exactly {E2E_TOKEN} and nothing else.");
-    match run_codex(bin, &record.profile, &env.workdir, false, &prompt, env.agent_timeout).await {
+    match run_codex(bin, home, &record.profile, &env.workdir, false, &prompt, env.agent_timeout).await {
         Ok((true, out)) if out.contains(E2E_TOKEN) => run.push(5, "End-to-end", StageOutcome::Pass,
             if record.profile.is_empty() {
                 "Codex answered. Restart the Codex app to use it.".to_string()
@@ -426,7 +457,7 @@ async fn run_stages(
 
     // Stage 6 — agent compatibility: a real tool call.
     let prompt = format!("Use your shell tool to run `echo {TOOL_TOKEN}`, then reply DONE.");
-    match run_codex(bin, &record.profile, &env.workdir, true, &prompt, env.agent_timeout).await {
+    match run_codex(bin, home, &record.profile, &env.workdir, true, &prompt, env.agent_timeout).await {
         Ok((_, out)) => match saw_tool_execution(&out) {
             Some(true) => {
                 run.push(6, "Tool calling", StageOutcome::Pass, "The model can use tools.");
@@ -951,6 +982,25 @@ esac"#;
         let r = run(&f, Some(GOOD_CODEX)).await;
         assert_eq!(r.status, ConnectionStatus::ConnectedAndVerified, "{:#?}", r.stages);
         assert_eq!(outcomes(&r), vec![StageOutcome::Pass; 6]);
+    }
+
+    /// The UI sees finished steps while the reply is slow, and Skip (dropping
+    /// the test) stops the app and clears the progress.
+    #[tokio::test]
+    async fn slow_test_shows_progress_and_can_be_stopped() {
+        let mut f = fixture(200, 200).await;
+        f.record.id = "slow-progress".into();
+        let mut fut = Box::pin(run(&f, Some("sleep 30")));
+        let seen = tokio::select! {
+            _ = &mut fut => panic!("should still be waiting for the reply"),
+            p = async { loop {
+                tokio::time::sleep(Duration::from_millis(50)).await;
+                if let Some(p) = progress("slow-progress").filter(|p| p.len() >= 4) { break p; }
+            } } => p,
+        };
+        assert!(seen.iter().any(|s| s.name == "Model"), "{seen:?}");
+        drop(fut);
+        assert!(progress("slow-progress").is_none());
     }
 
     #[tokio::test]

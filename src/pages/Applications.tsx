@@ -4,7 +4,8 @@ import { api, AppDetection, errText } from "../api";
 /** One plain sentence per app: what connecting it does. */
 const WHAT: Record<string, string> = {
   codex_cli: "PrismFlow adds its own Codex profile. Your Codex settings stay as they are.",
-  codex_desktop: "PrismFlow switches the Codex app's model and puts your old setting back when you disconnect.",
+  codex_desktop: "Uses your usual Codex app, chats and all. PrismFlow switches its model and puts your old setting back when you disconnect.",
+  codex_desktop_separate: "Opens the Codex app with its own chats and settings, just for PrismFlow. Your usual Codex stays as it is.",
   claude_code: "PrismFlow adds its own Claude Code settings file. Your login and settings stay as they are.",
   claude_desktop: "PrismFlow shows you what to enter in Claude Desktop. It doesn't change the app itself.",
   aider: "PrismFlow starts Aider with its own settings. Your Aider setup stays as it is.",

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import TestRunning from "./TestRunning";
 import { api, priceText, APP_NAME, AppDetection, AppId, ConnectPreview, ModelInfo, Provider, STATUS_LABEL, VerificationReport, errText } from "../api";
 
 const POPULAR = ["openrouter", "anthropic", "openai", "gemini", "groq", "deepseek", "nvidia_nim", "mistral", "xai"];
@@ -17,6 +18,8 @@ export default function Setup({ onDone }: { onDone: () => void }) {
   const [filter, setFilter] = useState("");
   const [preview, setPreview] = useState<ConnectPreview | null>(null);
   const [report, setReport] = useState<VerificationReport | null>(null);
+  const [connId, setConnId] = useState("");
+  const [skipped, setSkipped] = useState(false);
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
   const loadProviders = () => api.providers().then(setProviders).catch((e) => setError(errText(e)));
@@ -131,20 +134,27 @@ export default function Setup({ onDone }: { onDone: () => void }) {
         <div className="card">
           <div className="section-title">Connect {APP_NAME[app]} to {model} ({p.display_name})</div>
           {preview.warnings.map((w, i) => <div key={i} className="small mt-s">• {w}</div>)}
-          {!report && (
+          {!report && !skipped && (
             <div className="row mt">
-              <button className="ghost" onClick={() => go(4)}>Back</button>
+              <button className="ghost" disabled={busy !== ""} onClick={() => go(4)}>Back</button>
               <button className="primary" disabled={busy !== ""} onClick={() => run("connect", async () => {
                 const c = await api.connect(app as AppId, p.id, model.trim());
+                setConnId(c.id);
                 setBusy("test");
-                setReport(await api.verify(c.id));
-              })}>{busy === "connect" ? "Connecting…" : busy === "test" ? "Testing… (local models can take a few minutes)" : "Connect and test"}</button>
+                try { setReport(await api.verify(c.id)); } catch (e) { if (errText(e).includes("skipped")) setSkipped(true); else throw e; }
+              })}>{busy === "connect" ? "Connecting…" : busy === "test" ? "Testing…" : "Connect and test"}</button>
+              {busy === "" && <button className="ghost" onClick={() => run("connect", async () => {
+                const c = await api.connect(app as AppId, p.id, model.trim());
+                setConnId(c.id); setSkipped(true);
+              })}>Connect without testing</button>}
             </div>
           )}
-          {report && (
+          {busy === "test" && connId && <TestRunning id={connId} />}
+          {(report || skipped) && (
             <div className="mt">
-              <div className={report.status === "ConnectedAndVerified" ? "ok" : "warn"}><b>{STATUS_LABEL[report.status]}</b></div>
-              {report.stages.filter((s) => s.outcome === "Fail").map((s) => <div key={s.stage} className="small err pre-wrap mt-s">{s.detail.split("\n\n")[0]}</div>)}
+              {report ? <div className={report.status === "ConnectedAndVerified" ? "ok" : "warn"}><b>{STATUS_LABEL[report.status]}</b></div>
+                : <div className="ok"><b>Connected.</b> <span className="small muted">Not tested. You can test it later on the Connections page.</span></div>}
+              {report?.stages.filter((s) => s.outcome === "Fail").map((s) => <div key={s.stage} className="small err pre-wrap mt-s">{s.detail.split("\n\n")[0]}</div>)}
               {preview.launch_command && <div className="small mt">Start it with: <code className="selectable">{preview.launch_command}</code></div>}
               <div className="row mt"><button className="primary" onClick={onDone}>Done</button></div>
             </div>

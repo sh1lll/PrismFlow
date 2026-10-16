@@ -315,9 +315,36 @@ async fn connect(svc: State<'_, Arc<Service>>, app_id: String, provider_id: Stri
     svc.connect(&app_id, &provider_id, &model).await
 }
 
+/// Running tests, so Skip can stop one.
+static VERIFY_JOBS: std::sync::LazyLock<std::sync::Mutex<std::collections::HashMap<String, tokio::task::AbortHandle>>> =
+    std::sync::LazyLock::new(Default::default);
+
 #[tauri::command]
 async fn verify_connection(svc: State<'_, Arc<Service>>, id: String) -> Cmd<state::VerificationReport> {
-    svc.verify(&id).await
+    let svc = svc.inner().clone();
+    let key = id.clone();
+    let job = tokio::spawn(async move { svc.verify(&id).await });
+    if let Ok(mut jobs) = VERIFY_JOBS.lock() {
+        jobs.insert(key.clone(), job.abort_handle());
+    }
+    let out = job.await;
+    if let Ok(mut jobs) = VERIFY_JOBS.lock() {
+        jobs.remove(&key);
+    }
+    out.unwrap_or_else(|_| Err("Test skipped.".into()))
+}
+
+/// Stops a running test (the apps it started are closed too).
+#[tauri::command]
+fn cancel_verify(id: String) {
+    if let Some(job) = VERIFY_JOBS.lock().ok().and_then(|mut j| j.remove(&id)) {
+        job.abort();
+    }
+}
+
+#[tauri::command]
+fn verify_progress(id: String) -> Option<Vec<state::StageResult>> {
+    verify::progress(&id)
 }
 
 #[tauri::command]
@@ -815,6 +842,8 @@ pub fn run() {
         .manage(sessions::Sessions::open(&dir))
         .manage(BotState { bots: bots::Bots::default(), dir: dir.clone() })
         .invoke_handler(tauri::generate_handler![
+            cancel_verify,
+            verify_progress,
             keychain_waiting,
             editor_guide,
             set_provider_url,

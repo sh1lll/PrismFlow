@@ -346,6 +346,31 @@ pub fn render_catalog(t: &CatalogTemplate, entries: &[CatalogEntry]) -> serde_js
 
 pub const DESKTOP_APP_ID: &str = "codex_desktop";
 pub const DESKTOP_BUNDLE_ID: &str = "com.openai.codex";
+/// The Codex app in a space of its own: PrismFlow opens it with a private
+/// CODEX_HOME, so its chats and settings stay apart from your usual Codex.
+pub const SEPARATE_APP_ID: &str = "codex_desktop_separate";
+
+/// The shared or the separate Codex app connection.
+pub fn is_desktop(app_id: &str) -> bool {
+    app_id == DESKTOP_APP_ID || app_id == SEPARATE_APP_ID
+}
+
+/// The separate Codex app's own folder inside PrismFlow's data.
+pub fn separate_home(state_dir: &Path) -> PathBuf {
+    state_dir.join("codex-separate")
+}
+
+/// Separate detection: same app, different notes.
+pub fn detect_separate() -> AppDetection {
+    let mut d = detect_desktop();
+    d.app_id = SEPARATE_APP_ID.into();
+    d.display_name = "Codex app (separate)".into();
+    d.notes = vec![
+        "Opens the Codex app with its own chats and settings, just for PrismFlow. Your usual Codex stays as it is.".into(),
+        "Open it from PrismFlow. Quit the Codex app first if it's already open.".into(),
+    ];
+    d
+}
 pub const BASE_KEYS: &[&str] = &["model", "model_provider", "model_catalog_json"];
 
 pub fn base_config(home: &Path) -> PathBuf {
