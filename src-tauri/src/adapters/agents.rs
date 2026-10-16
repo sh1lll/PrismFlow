@@ -278,7 +278,9 @@ pub fn plan_files_for(
     match spec.kind {
         Kind::Aider => {
             l.token_env = Some("OPENAI_API_KEY");
-            l.env = env(&[("OPENAI_API_BASE", &base)]);
+            // OPENAI_BASE_URL too, so tools Aider runs that use the OpenAI SDK
+            // send the token to the gateway, not to OpenAI.
+            l.env = env(&[("OPENAI_API_BASE", &base), ("OPENAI_BASE_URL", &base)]);
             l.default_args = vec![s("--model"), format!("openai/{model}"), s("--no-show-model-warnings"), s("--analytics-disable"), s("--no-check-update")];
             if !spec.shared {
                 // Chat history goes to the project folder by default, and the
@@ -306,10 +308,12 @@ pub fn plan_files_for(
             });
             l.files.push((dir.join("cline-data/settings/providers.json"), serde_json::to_string_pretty(&providers).unwrap()));
             l.token_env = Some("OPENAI_API_KEY");
-            // Defense in depth: the gateway is plain-http loopback, so a dead
-            // HTTPS proxy keeps the token from ever reaching a remote host if
-            // Cline falls back to a default endpoint.
-            l.env = env(&[("HTTPS_PROXY", "http://127.0.0.1:9"), ("https_proxy", "http://127.0.0.1:9"), ("NO_PROXY", "127.0.0.1,localhost"), ("no_proxy", "127.0.0.1,localhost"),
+            // Defense in depth for anything that honors proxy variables: the
+            // gateway is plain-http loopback, so a dead HTTPS proxy stops the
+            // token reaching a remote host through a default endpoint. Tools
+            // using the OpenAI SDK go to the gateway via OPENAI_BASE_URL.
+            l.env = env(&[("OPENAI_BASE_URL", &base),
+                ("HTTPS_PROXY", "http://127.0.0.1:9"), ("https_proxy", "http://127.0.0.1:9"), ("NO_PROXY", "127.0.0.1,localhost"), ("no_proxy", "127.0.0.1,localhost"),
                 // A Cline hub already running (from normal use) would otherwise
                 // take the run and use its own provider (verified 3.0.70).
                 ("CLINE_SESSION_BACKEND_MODE", "local")]);
@@ -470,7 +474,8 @@ pub fn plan_files_for(
         Kind::Goose => {
             // Goose's OpenAI provider, env only; no keyring, telemetry off (verified 1.54.0).
             l.token_env = Some("OPENAI_API_KEY");
-            l.env = env(&[("GOOSE_PROVIDER", "openai"), ("OPENAI_HOST", broker_url), ("OPENAI_BASE_PATH", "v1/chat/completions"), ("GOOSE_MODEL", model),
+            // OPENAI_BASE_URL is for tools Goose runs (OpenAI SDK default).
+            l.env = env(&[("GOOSE_PROVIDER", "openai"), ("OPENAI_HOST", broker_url), ("OPENAI_BASE_PATH", "v1/chat/completions"), ("OPENAI_BASE_URL", &base), ("GOOSE_MODEL", model),
                 ("GOOSE_DISABLE_KEYRING", "1"), ("GOOSE_TELEMETRY_OFF", "1")]);
             if !spec.shared {
                 l.env.push((s("GOOSE_PATH_ROOT"), path_of(dir.join("goose-home"))));
@@ -570,7 +575,8 @@ fn render_posix(spec: &AgentSpec, l: &Launch, bin: &Path, helper: &Path, connect
     }
     if let Some((file, template)) = &l.token_file {
         let (a, z) = template.split_once("{TOKEN}").unwrap_or((template, ""));
-        o.push_str(&format!("TOKEN=\"$({token_cmd})\"\numask 077\nprintf '%s%s%s' {} \"$TOKEN\" {} > {}\n", q(a), q(z), q(&file.display().to_string())));
+        // umask only for this file: the agent's own files keep the usual mode.
+        o.push_str(&format!("TOKEN=\"$({token_cmd})\"\n(umask 077; printf '%s%s%s' {} \"$TOKEN\" {} > {})\nunset TOKEN\n", q(a), q(z), q(&file.display().to_string())));
     }
     if !l.env.is_empty() {
         let parts: Vec<String> = l.env.iter().map(|(k, v)| format!("{k}={}", q(v))).collect();
@@ -726,7 +732,7 @@ mod tests {
         assert_eq!(s["baseUrl"], "http://127.0.0.1:47821/v1");
         assert!(s.get("apiKey").is_none(), "Cline reads OPENAI_API_KEY when no key is stored");
         assert!(providers["providers"]["openai-compatible"]["updatedAt"].is_string(), "without it Cline ignores the entry");
-        assert!(cline[0].1.contains("HTTPS_PROXY='http://127.0.0.1:9'"), "token must not be able to leave over https");
+        assert!(cline[0].1.contains("HTTPS_PROXY='http://127.0.0.1:9'"), "proxy-honoring code can't reach a remote host");
 
         let pi = files("pi");
         let models: serde_json::Value = serde_json::from_str(&pi[1].1).unwrap();

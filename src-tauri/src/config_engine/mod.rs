@@ -272,18 +272,40 @@ pub fn backup(path: &Path) -> Result<Option<PathBuf>, ConfigError> {
     let dest = path.with_file_name(name);
     fs::copy(path, &dest)
         .map_err(|e| ConfigError::Io { file: path.to_path_buf(), detail: e.to_string() })?;
+    // A backup can hold a key the original held; only the owner reads it.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&dest, fs::Permissions::from_mode(0o600))
+            .map_err(|e| ConfigError::Io { file: dest.clone(), detail: e.to_string() })?;
+    }
     Ok(Some(dest))
 }
 
 /// Write via a temp file in the same directory + rename (atomic on the same
 /// filesystem). Cleans up the temp file on failure.
+/// A new file readable only by its owner (on Unix; Windows files take the
+/// folder's permissions).
+fn new_private_file(path: &Path) -> std::io::Result<fs::File> {
+    let mut o = fs::OpenOptions::new();
+    o.write(true).create_new(true);
+    #[cfg(unix)]
+    std::os::unix::fs::OpenOptionsExt::mode(&mut o, 0o600);
+    o.open(path)
+}
+
 pub fn atomic_write(path: &Path, content: &str) -> Result<(), ConfigError> {
     let file_name = path.file_name().unwrap_or_default().to_string_lossy();
     let tmp = path.with_file_name(format!(".{file_name}.prismflow-tmp-{}", uuid::Uuid::new_v4()));
     let write_result = (|| {
-        let mut f = fs::File::create(&tmp)?;
+        let mut f = new_private_file(&tmp)?;
         f.write_all(content.as_bytes())?;
         f.sync_all()?;
+        // Keep the file's own permissions; a new file stays owner-only
+        // (some of these files hold PrismFlow's local key).
+        if let Ok(meta) = fs::metadata(path) {
+            fs::set_permissions(&tmp, meta.permissions())?;
+        }
         fs::rename(&tmp, path)
     })();
     if let Err(e) = write_result {
@@ -349,6 +371,23 @@ trust_level = "trusted"
                 ],
             ),
         ]
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn writes_keep_permissions_and_new_files_are_private() {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = |p: &Path| fs::metadata(p).unwrap().permissions().mode() & 0o777;
+        let dir = tempfile::tempdir().unwrap();
+        let new = dir.path().join("new.json");
+        atomic_write(&new, "{}").unwrap();
+        assert_eq!(mode(&new), 0o600);
+        let theirs = dir.path().join("theirs.json");
+        fs::write(&theirs, "{}").unwrap();
+        fs::set_permissions(&theirs, fs::Permissions::from_mode(0o640)).unwrap();
+        let b = apply(&EditPlan { file: theirs.clone(), before: "{}".into(), after: "{\"a\":1}".into(), summary: vec![] }).unwrap();
+        assert_eq!(mode(&theirs), 0o640, "the file keeps its own permissions");
+        assert_eq!(mode(&b.backup_path.unwrap()), 0o600, "backups are owner-only");
     }
 
     #[test]

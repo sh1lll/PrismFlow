@@ -65,7 +65,7 @@ fn agents_keep_to_their_mode() {
         std::fs::write(&helper, format!("#!/bin/sh\nprintf %s '{token}'\n")).unwrap();
         {
             use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(&helper, std::fs::Permissions::from_mode(0o755)).unwrap();
+            std::fs::set_permissions(&helper, std::fs::Permissions::from_mode(0o700)).unwrap();
         }
         let files = agents::plan_files(spec, &conn, &bin, &helper, &format!("{id}:live"), &url, &model);
         agents::write(&files).unwrap();
@@ -98,6 +98,13 @@ fn agents_keep_to_their_mode() {
         let in_conn: Vec<String> = files_under(&conn).into_iter().filter(|f| !before_conn.contains(f)).collect();
         let in_work = files_under(&work);
         let replied = text.to_uppercase().contains("PONG");
+        // No agent may save the token where it keeps its own files.
+        let saved_token: Vec<String> = [&home, &conn].iter().flat_map(|root| files_under(root).into_iter().map(move |f| root.join(f)))
+            .filter(|p| std::fs::read(p).is_ok_and(|b| b.windows(token.len()).any(|w| w == token.as_bytes())))
+            .filter(|p| !p.ends_with("droid-settings.json")) // Droid's per-launch settings, by design
+            .map(|p| p.display().to_string())
+            .collect();
+        let _ = std::fs::remove_file(&helper);
         eprintln!("== {id} ({}) ran ok={ok} replied={replied}", if spec.shared { "shared" } else { "separate" });
         eprintln!("   home: {} files, e.g. {:?}", in_home.len(), in_home.iter().take(4).collect::<Vec<_>>());
         eprintln!("   connection (new): {} files, e.g. {:?}", in_conn.len(), in_conn.iter().take(4).collect::<Vec<_>>());
@@ -106,8 +113,11 @@ fn agents_keep_to_their_mode() {
             eprintln!("   output: {}", text.lines().rev().take(6).collect::<Vec<_>>().join(" | "));
         }
         let mode_ok = if spec.shared { !in_home.is_empty() } else { in_home.is_empty() && !in_conn.is_empty() };
-        if !replied || !mode_ok {
-            failures.push(format!("{id}: replied={replied} mode_ok={mode_ok}"));
+        if !saved_token.is_empty() {
+            eprintln!("   token saved in: {saved_token:?}");
+        }
+        if !replied || !mode_ok || !saved_token.is_empty() {
+            failures.push(format!("{id}: replied={replied} mode_ok={mode_ok} token_saved={}", !saved_token.is_empty()));
         }
     }
     assert!(failures.is_empty(), "{failures:#?}");

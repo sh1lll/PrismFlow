@@ -91,9 +91,10 @@ pub fn state_dir() -> PathBuf {
     if let Some(dir) = std::env::var_os("PRISMFLOW_STATE_DIR") {
         return PathBuf::from(dir);
     }
-    dirs::data_dir()
-        .unwrap_or_else(std::env::temp_dir)
-        .join("app.prismflow.desktop")
+    // Windows: the local (not roaming) folder, so nothing PrismFlow keeps
+    // is copied to other computers with a roaming profile.
+    let base = if cfg!(windows) { dirs::data_local_dir() } else { dirs::data_dir() };
+    base.unwrap_or_else(std::env::temp_dir).join("app.prismflow.desktop")
 }
 
 pub struct StateStore {
@@ -105,6 +106,14 @@ impl StateStore {
         for d in [dir.to_path_buf(), dir.join("backups")] {
             fs::create_dir_all(&d)
                 .map_err(|e| ConfigError::Io { file: d.clone(), detail: e.to_string() })?;
+        }
+        // Connections' folders, backups and separate apps' homes live here,
+        // some holding PrismFlow's local key: only the owner gets in.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(dir, fs::Permissions::from_mode(0o700))
+                .map_err(|e| ConfigError::Io { file: dir.to_path_buf(), detail: e.to_string() })?;
         }
         Ok(Self { dir: dir.to_path_buf() })
     }
