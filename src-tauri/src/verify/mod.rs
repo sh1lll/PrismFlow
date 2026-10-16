@@ -462,7 +462,7 @@ async fn run_stages(
         run.push(5, "End-to-end", StageOutcome::Fail, "Codex isn't installed.");
         return ConnectionStatus::RequiresAttention;
     };
-    // The Codex app's folder (the separate one has its own CODEX_HOME).
+    // Codex reads its config from the folder that holds the managed file.
     let home = (codex::is_desktop(&record.app_id) || record.app_id == codex::CLI_SEPARATE_APP_ID).then(|| record.managed_file.parent()).flatten();
     let prompt = format!("Reply with exactly {E2E_TOKEN} and nothing else.");
     match run_codex(bin, home, &record.profile, &env.workdir, false, &prompt, env.agent_timeout).await {
@@ -998,7 +998,8 @@ esac"#;
             gateway: None,
             base_url: f.server.uri(),
             workdir: std::env::temp_dir(),
-            agent_timeout: Duration::from_secs(10), state_dir: std::env::temp_dir(),
+            agent_timeout: Duration::from_secs(10),
+            state_dir: std::env::temp_dir(),
         };
         verify(&env, providers::get("openrouter").unwrap(), &f.record).await
     }
@@ -1016,22 +1017,32 @@ esac"#;
     }
 
     /// The UI sees finished steps while the reply is slow, and Skip (dropping
-    /// the test) stops the app and clears the progress.
+    /// the test) stops the program it started and clears the progress.
     #[tokio::test]
-    async fn slow_test_shows_progress_and_can_be_stopped() {
+    async fn slow_test_shows_progress_and_skip_stops_it() {
         let mut f = fixture(200, 200).await;
         f.record.id = "slow-progress".into();
-        let mut fut = Box::pin(run(&f, Some("sleep 30")));
+        let pid_file = f._home.path().join("agent.pid");
+        let body = format!("echo $$ > '{}'; exec sleep 30", pid_file.display());
+        let mut fut = Box::pin(run(&f, Some(&body)));
         let seen = tokio::select! {
             _ = &mut fut => panic!("should still be waiting for the reply"),
             p = async { loop {
                 tokio::time::sleep(Duration::from_millis(50)).await;
-                if let Some(p) = progress("slow-progress").filter(|p| p.len() >= 4) { break p; }
+                if let Some(p) = progress("slow-progress").filter(|p| p.len() >= 4 && pid_file.exists()) { break p; }
             } } => p,
         };
         assert!(seen.iter().any(|s| s.name == "Model"), "{seen:?}");
         drop(fut);
         assert!(progress("slow-progress").is_none());
+        let pid = std::fs::read_to_string(&pid_file).unwrap().trim().to_string();
+        let mut alive = true;
+        for _ in 0..40 {
+            alive = std::process::Command::new("kill").args(["-0", &pid]).status().unwrap().success();
+            if !alive { break; }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        assert!(!alive, "the agent process {pid} was left running");
     }
 
     #[tokio::test]
@@ -1138,7 +1149,8 @@ esac"#;
         let env = VerifyEnv {
             client: discovery::client(), store: &store, codex_bin: None, claude_bin: Some(claude),
             gateway: Some(gateway_status(phase)), base_url: server.uri(),
-            workdir: work.path().join("verify"), agent_timeout: Duration::from_secs(10), state_dir: std::env::temp_dir(),
+            workdir: work.path().join("verify"), agent_timeout: Duration::from_secs(10),
+            state_dir: std::env::temp_dir(),
         };
         verify(&env, nim, &record).await
     }

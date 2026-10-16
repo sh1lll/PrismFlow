@@ -323,18 +323,30 @@ static VERIFY_JOBS: std::sync::LazyLock<std::sync::Mutex<std::collections::HashM
 async fn verify_connection(svc: State<'_, Arc<Service>>, id: String) -> Cmd<state::VerificationReport> {
     let svc = svc.inner().clone();
     let key = id.clone();
-    let job = tokio::spawn(async move { svc.verify(&id).await });
-    if let Ok(mut jobs) = VERIFY_JOBS.lock() {
+    let job = {
+        let mut jobs = VERIFY_JOBS.lock().map_err(|_| "PrismFlow is busy. Try again.".to_string())?;
+        if jobs.contains_key(&key) {
+            return Err("A test is already running for this app.".into());
+        }
+        let job = tokio::spawn(async move { svc.verify(&id).await });
         jobs.insert(key.clone(), job.abort_handle());
-    }
+        job
+    };
     let out = job.await;
     if let Ok(mut jobs) = VERIFY_JOBS.lock() {
         jobs.remove(&key);
     }
-    out.unwrap_or_else(|_| Err("Test skipped.".into()))
+    match out {
+        Ok(report) => report,
+        Err(e) if e.is_cancelled() => Err(TEST_SKIPPED.into()),
+        Err(_) => Err("The test stopped unexpectedly. Try again.".into()),
+    }
 }
 
-/// Stops a running test (the apps it started are closed too).
+/// What a skipped test reports (the setup screen checks for it).
+const TEST_SKIPPED: &str = "Test skipped.";
+
+/// Stops a running test. Programs the test started are stopped with it.
 #[tauri::command]
 fn cancel_verify(id: String) {
     if let Some(job) = VERIFY_JOBS.lock().ok().and_then(|mut j| j.remove(&id)) {

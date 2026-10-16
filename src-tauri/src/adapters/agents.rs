@@ -10,6 +10,7 @@
 //!   provider comes from PrismFlow, through the environment, flags or a
 //!   PrismFlow-owned file the agent is pointed at.
 //! - separate: the agent's home moves into the connection's directory.
+//!
 //! PrismFlow never writes the user's own agent config. No secret is stored:
 //! the script fetches the connection's revocable gateway token at launch
 //! (or the agent runs the token helper itself, for Pi's separate mode).
@@ -56,15 +57,15 @@ pub struct AgentSpec {
 }
 
 pub const AGENTS: &[AgentSpec] = &[
-    // Each agent comes as its own entry (the original id, as first verified)
-    // and the other mode. Home locations checked 2026-10-16 per agent with a
-    // scratch HOME. Hermes has no shared mode: its config.yaml and .env always
+    // Each agent has two entries: its original id (the mode it first shipped
+    // in) and the other mode. Home locations checked 2026-10-16 per agent with
+    // a scratch HOME. Hermes has no shared mode: its config.yaml and .env always
     // win over the environment, and PrismFlow does not rewrite YAML it does not own.
-    // OpenCode 1.19.0 and 2.0.29 both verified 2026-10-15; the script picks the config format at launch.
     AgentSpec { id: "aider", display_name: "Aider", binary: "aider", kind: Kind::Aider, verified_version: "0.86.2", tools: false, family: "aider", shared: true },
     AgentSpec { id: "cline", display_name: "Cline CLI", binary: "cline", kind: Kind::Cline, verified_version: "3.0.70", tools: true, family: "cline", shared: false },
     AgentSpec { id: "pi", display_name: "Pi", binary: "pi", kind: Kind::Pi, verified_version: "1.1.0", tools: true, family: "pi", shared: false },
     AgentSpec { id: "hermes", display_name: "Hermes Agent", binary: "hermes", kind: Kind::Hermes, verified_version: "0.21.6", tools: true, family: "hermes", shared: false },
+    // OpenCode 1.19.0 and 2.0.29 both verified 2026-10-15; the script picks the config format at launch.
     AgentSpec { id: "opencode", display_name: "OpenCode", binary: "opencode", kind: Kind::OpenCode, verified_version: "2.0.29", tools: true, family: "opencode", shared: true },
     AgentSpec { id: "dsh", display_name: "DeepSeek Harness", binary: "dsh", kind: Kind::Dsh, verified_version: "0.2.0-rc.2", tools: true, family: "dsh", shared: false },
     AgentSpec { id: "grok", display_name: "Grok Build", binary: "grok", kind: Kind::Grok, verified_version: "1.0.52", tools: true, family: "grok", shared: false },
@@ -172,7 +173,12 @@ pub fn script_runner(script: &Path) -> (String, Vec<String>) {
 pub fn launch_command_line(script: &Path) -> String {
     match Shell::HERE {
         Shell::Posix => q(&script.display().to_string()),
-        Shell::PowerShell => format!("powershell -NoProfile -ExecutionPolicy Bypass -File \"{}\"", script.display()),
+        Shell::PowerShell => {
+            // cmd.exe-style quoting: the path is the only word with spaces.
+            let (prog, args) = script_runner(script);
+            let words: Vec<String> = args.iter().map(|a| if a.contains(' ') { format!("\"{a}\"") } else { a.clone() }).collect();
+            format!("{prog} {}", words.join(" "))
+        }
     }
 }
 
@@ -268,11 +274,6 @@ pub fn plan_files_for(
 ) -> Vec<(PathBuf, String)> {
     let base = format!("{broker_url}/v1");
     let path_of = |p: PathBuf| p.display().to_string();
-    // The token command as other programs run it (Pi runs it itself).
-    let token_cmd = match shell {
-        Shell::Posix => format!("{} token print --connection {}", q(&helper.display().to_string()), q(connection_id)),
-        Shell::PowerShell => format!("\"{}\" token print --connection \"{}\"", helper.display(), connection_id),
-    };
     let mut l = Launch::default();
     match spec.kind {
         Kind::Aider => {
@@ -333,6 +334,12 @@ pub fn plan_files_for(
             l.default_args = vec![s("-e"), path_of(file), s("--model"), format!("prismflow/{model}")];
         }
         Kind::Pi => {
+            // Pi runs this command itself to get the key (a shell on macOS
+            // and Linux, cmd.exe on Windows).
+            let token_cmd = match shell {
+                Shell::Posix => posix_token_cmd(helper, connection_id),
+                Shell::PowerShell => format!("\"{}\" token print --connection \"{}\"", helper.display(), connection_id),
+            };
             let models = serde_json::json!({ "providers": { "prismflow": {
                 "baseUrl": base, "api": "openai-completions", "apiKey": format!("!{token_cmd}"),
                 "models": [{ "id": model }]
@@ -545,8 +552,12 @@ pub fn plan_files_for(
     files
 }
 
+fn posix_token_cmd(helper: &Path, connection_id: &str) -> String {
+    format!("{} token print --connection {}", q(&helper.display().to_string()), q(connection_id))
+}
+
 fn render_posix(spec: &AgentSpec, l: &Launch, bin: &Path, helper: &Path, connection_id: &str) -> String {
-    let token_cmd = format!("{} token print --connection {}", q(&helper.display().to_string()), q(connection_id));
+    let token_cmd = posix_token_cmd(helper, connection_id);
     let mut o = format!(
         "#!/bin/sh\n{MARKER} for {} ({connection_id}). Removed on disconnect; edits here are overwritten.\n\
          # The gateway token is fetched at launch from the secure store; nothing secret is stored here.\nset -e\n",
@@ -782,7 +793,7 @@ mod tests {
         "QWEN_HOME", "GOOSE_PATH_ROOT", "CRUSH_GLOBAL_DATA", "FACTORY_HOME_OVERRIDE", "CONTINUE_GLOBAL_DIR", "COPILOT_HOME", "AIDER_CHAT_HISTORY_FILE"];
 
     #[test]
-    fn shared_and_separate_modes() {
+    fn shared_keeps_the_home_separate_moves_it_into_the_connection() {
         for a in AGENTS {
             let script = &files(a.id)[0].1;
             let moved: Vec<&str> = HOME_MOVERS.iter().copied().filter(|m| script.contains(m)).collect();
@@ -790,8 +801,12 @@ mod tests {
                 assert!(moved.is_empty(), "{} (shared) moves its home: {moved:?}", a.id);
             } else {
                 assert!(!moved.is_empty(), "{} (separate) keeps the usual home", a.id);
-                // Everything it moves stays in the connection's folder.
-                assert!(script.contains("/s/agents/x/"), "{}", a.id);
+                // Each thing it moves points into the connection's folder.
+                for m in &moved {
+                    let after = &script[script.find(m).unwrap() + m.len()..];
+                    let value = after.trim_start_matches(['=', ' ', '\'']);
+                    assert!(value.starts_with("/s/agents/x/"), "{}: {m} points at {}", a.id, &value[..value.len().min(40)]);
+                }
             }
             assert!(spec(a.family).is_some(), "{}", a.id);
             assert_eq!(spec(a.family).unwrap().binary, a.binary);

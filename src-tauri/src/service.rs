@@ -89,7 +89,7 @@ type R<T> = Result<T, String>;
 
 /// Every application PrismFlow can connect.
 fn app_ids() -> Vec<&'static str> {
-    let mut v = vec![codex::APP_ID, codex::CLI_SEPARATE_APP_ID, codex::DESKTOP_APP_ID, codex::SEPARATE_APP_ID, claude_code::APP_ID, claude_code::SEPARATE_APP_ID, claude_desktop::APP_ID, claude_desktop::SEPARATE_APP_ID, jetbrains::APP_ID, vscode::CLAUDE_APP_ID, vscode::CLAUDE_SHARED_APP_ID, vscode::CHAT_APP_ID, vscode::SEPARATE_APP_ID];
+    let mut v = vec![codex::APP_ID, codex::CLI_SEPARATE_APP_ID, codex::DESKTOP_APP_ID, codex::DESKTOP_SEPARATE_APP_ID, claude_code::APP_ID, claude_code::SEPARATE_APP_ID, claude_desktop::APP_ID, claude_desktop::SEPARATE_APP_ID, jetbrains::APP_ID, vscode::CLAUDE_APP_ID, vscode::CLAUDE_SHARED_APP_ID, vscode::CHAT_APP_ID, vscode::SEPARATE_APP_ID];
     v.extend(editors::ALL);
     v.extend(agents::AGENTS.iter().map(|a| a.id));
     v
@@ -143,7 +143,7 @@ pub fn app_name(app_id: &str) -> &'static str {
         claude_code::SEPARATE_APP_ID => "Claude Code (separate)",
         codex::CLI_SEPARATE_APP_ID => "Codex CLI (separate)",
         codex::DESKTOP_APP_ID => "Codex app & VS Code",
-        codex::SEPARATE_APP_ID => "Codex app (separate)",
+        codex::DESKTOP_SEPARATE_APP_ID => "Codex app (separate)",
         claude_desktop::APP_ID => "Claude Desktop",
         claude_desktop::SEPARATE_APP_ID => "Claude Desktop (separate)",
         jetbrains::APP_ID => "JetBrains IDEs",
@@ -554,26 +554,32 @@ impl Service {
         adapters::detect_all()
     }
 
-    /// PrismFlow-owned Codex model catalog for a provider (kept in the state
-    /// dir, not in ~/.codex, so the user's Codex home holds only the profile).
     /// The config folder for the Codex / Claude Code CLI: your usual one
     /// (shared), or a folder of PrismFlow's own (separate).
     fn cli_home(&self, app_id: &str) -> PathBuf {
-        let separate = |name: &str| {
-            let d = self.state.dir().join(name);
-            let _ = std::fs::create_dir_all(&d);
-            d
-        };
         match app_id {
-            codex::CLI_SEPARATE_APP_ID => separate("codex-cli-separate"),
-            claude_code::SEPARATE_APP_ID => {
-                let d = separate("claude-separate");
-                let _ = claude_code::prepare_separate_dir(&d);
-                d
-            }
+            codex::CLI_SEPARATE_APP_ID => self.state.dir().join("codex-cli-separate"),
+            claude_code::SEPARATE_APP_ID => self.state.dir().join("claude-separate"),
             a if claude_code::is_cli(a) => self.claude_dir.clone(),
             _ => self.codex_home.clone(),
         }
+    }
+
+    /// Creates a separate app's own folder before PrismFlow writes into it
+    /// or starts the app (previews write nothing).
+    fn prepare_home(&self, app_id: &str) -> R<()> {
+        let dir = match app_id {
+            codex::CLI_SEPARATE_APP_ID => self.cli_home(app_id),
+            claude_code::SEPARATE_APP_ID => {
+                return claude_code::prepare_separate_dir(&self.cli_home(app_id))
+                    .map_err(|e| format!("Couldn't set up Claude Code's own folder: {e}"));
+            }
+            codex::DESKTOP_SEPARATE_APP_ID => self.desktop_home(app_id),
+            vscode::SEPARATE_APP_ID => vscode::separate_data_dir(self.state.dir()).join("User"),
+            editors::ZED_SEPARATE => editors::zed_separate_dir(self.state.dir()).join("config"),
+            _ => return Ok(()),
+        };
+        std::fs::create_dir_all(&dir).map_err(|e| format!("Couldn't create {}: {e}", dir.display()))
     }
 
     /// Environment a launch needs (the separate CLIs' own folders).
@@ -588,17 +594,12 @@ impl Service {
     /// Where a Codex app connection keeps its config: your usual Codex
     /// folder (shared), or PrismFlow's own folder (separate).
     fn desktop_home(&self, app_id: &str) -> PathBuf {
-        if app_id == codex::SEPARATE_APP_ID {
-            let home = codex::separate_home(self.state.dir());
-            let _ = std::fs::create_dir_all(&home);
-            home
-        } else {
-            self.codex_home.clone()
-        }
+        if app_id == codex::DESKTOP_SEPARATE_APP_ID { codex::separate_home(self.state.dir()) } else { self.codex_home.clone() }
     }
 
-    /// One model list per Codex connection (the CLI, shared and separate app
-    /// can each use a different model of the same provider).
+    /// PrismFlow-owned Codex model catalog, kept in the state dir so Codex's
+    /// own folder holds only PrismFlow's profile. One per connection: the
+    /// CLI and both Codex apps can use different models of one provider.
     pub fn codex_catalog_path(&self, app_id: &str, provider_id: &str) -> PathBuf {
         let name = if app_id == codex::APP_ID { provider_id.to_string() } else { format!("{app_id}-{provider_id}") };
         self.state.dir().join("codex-catalogs").join(format!("{name}.json"))
@@ -672,7 +673,7 @@ impl Service {
             return Ok((p, route, config_engine::EditPlan { file: jp.file, before: jp.before, after: jp.after, summary }));
         }
         if editors::ALL.contains(&app_id) {
-            let ep = editors::plan(app_id, &agents::agent_dir(self.state.dir(), &id), &id, &format!("{url}/v1"), model, None)?;
+            let ep = editors::plan(app_id, &agents::agent_dir(self.state.dir(), &id), self.state.dir(), &id, &format!("{url}/v1"), model, None)?;
             let summary = if app_id == editors::ZED_SEPARATE {
                 vec![format!("Set up a Zed of its own in {}", editors::zed_separate_dir(self.state.dir()).display()), "Your usual Zed stays as it is".into()]
             } else if app_id == editors::CONTINUE_IDE || app_id == editors::ZED {
@@ -804,7 +805,14 @@ impl Service {
         }
     }
 
+    /// The start command as the user would type it, with any environment
+    /// it needs written in front.
     fn launch_line(&self, app_id: &str, profile: &str, file: &std::path::Path) -> String {
+        with_env(&self.launch_env(app_id), self.command_line(app_id, profile, file))
+    }
+
+    /// The start command without its environment.
+    fn command_line(&self, app_id: &str, profile: &str, file: &std::path::Path) -> String {
         // The desktop apps are opened with macOS's `open`.
         if !cfg!(target_os = "macos") && (codex::is_desktop(app_id) || claude_desktop::is_claude_desktop(app_id)) {
             return String::new();
@@ -815,7 +823,7 @@ impl Service {
         if app_id == claude_desktop::APP_ID {
             return format!("open -b {}", claude_desktop::BUNDLE_ID);
         }
-        if app_id == codex::SEPARATE_APP_ID {
+        if app_id == codex::DESKTOP_SEPARATE_APP_ID {
             return format!("open -n -b {} --env CODEX_HOME={}", codex::DESKTOP_BUNDLE_ID, quote(&self.desktop_home(app_id).display().to_string()));
         }
         if app_id == codex::DESKTOP_APP_ID {
@@ -831,14 +839,13 @@ impl Service {
         if agents::spec(app_id).is_some() {
             return agents::launch_command_line(file);
         }
-        let line = if claude_code::is_cli(app_id) {
+        if claude_code::is_cli(app_id) {
             let bin = claude_code::find_binary().map(|b| b.display().to_string()).unwrap_or_else(|| "claude".into());
             claude_launch_command(&bin, &file.display().to_string())
         } else {
             let bin = codex::find_binary().map(|b| b.display().to_string()).unwrap_or_else(|| "codex".into());
             launch_command(&bin, profile)
-        };
-        with_env(&self.launch_env(app_id), line)
+        }
     }
 
     pub fn preview(&self, app_id: &str, provider_id: &str, model: &str) -> R<ConnectPreview> {
@@ -884,7 +891,7 @@ impl Service {
         } else if app_id == codex::CLI_SEPARATE_APP_ID || app_id == claude_code::SEPARATE_APP_ID {
             warnings.push(format!("{app} gets its own chats and settings, just for PrismFlow. Your usual one stays as it is."));
             warnings.push("Open it from PrismFlow, or use the command below.".into());
-        } else if app_id == codex::SEPARATE_APP_ID {
+        } else if app_id == codex::DESKTOP_SEPARATE_APP_ID {
             warnings.push("Codex opens with its own chats and settings, just for PrismFlow. Your usual Codex stays as it is.".into());
             warnings.push("Quit the Codex app first, then open it from PrismFlow.".into());
         } else if app_id == codex::DESKTOP_APP_ID {
@@ -918,6 +925,7 @@ impl Service {
                 return Err(format!("{} is connected to {} already. Disconnect it first; the app has one configuration.", app_name(app_id), other.provider_id));
             }
         }
+        self.prepare_home(app_id)?;
         // Desktop: keep the original priors across model switches.
         let desktop_priors = if codex::is_desktop(app_id) {
             match self.state.get(&connection_id(app_id, provider_id)).ok().flatten() {
@@ -967,7 +975,7 @@ impl Service {
         }
         if editors::ALL.contains(&app_id) {
             let token = tokens::ensure(self.store.as_ref(), &id).map_err(|e| format!("Couldn't save a key for this app: {e}"))?;
-            let ep = editors::plan(app_id, &agents::agent_dir(self.state.dir(), &id), &id, &format!("{}/v1", self.broker.url_for_config()), validate_model_id(model)?, Some(&token))?;
+            let ep = editors::plan(app_id, &agents::agent_dir(self.state.dir(), &id), self.state.dir(), &id, &format!("{}/v1", self.broker.url_for_config()), validate_model_id(model)?, Some(&token))?;
             agents::write(&ep.owned).map_err(|e| format!("Nothing usable was written: {e}"))?;
             plan = config_engine::EditPlan { file: ep.file, before: ep.before, after: ep.after, summary: plan.summary };
         }
@@ -1562,7 +1570,7 @@ impl Service {
         if editors::ALL.contains(&record.app_id.as_str()) {
             return Err(format!("Open {}. PrismFlow is set up there.", editors::name(&record.app_id)));
         }
-        if record.app_id == codex::SEPARATE_APP_ID {
+        if record.app_id == codex::DESKTOP_SEPARATE_APP_ID {
             open_separate_codex(&self.desktop_home(&record.app_id))?;
             self.diag.record(Level::Info, "launch", "Opened the Codex app (separate).");
             return Ok(());
@@ -1579,8 +1587,19 @@ impl Service {
         } else {
             codex::find_binary().ok_or("Codex CLI is not installed.")?;
         }
-        let line = self.launch_line(&record.app_id, &record.profile, &record.managed_file);
-        open_terminal(&line, &self.launch_env(&record.app_id))?;
+        self.prepare_home(&record.app_id)?;
+        let env = self.launch_env(&record.app_id);
+        let plain = self.command_line(&record.app_id, &record.profile, &record.managed_file);
+        // The Terminal on macOS/Linux runs the line in a shell, so the
+        // variables go in front of it; on Windows they go on the new window.
+        #[cfg(not(windows))]
+        let line = with_env(&env, plain);
+        #[cfg(not(windows))]
+        open_terminal(&line)?;
+        #[cfg(windows)]
+        let line = plain;
+        #[cfg(windows)]
+        open_terminal(&line, &env)?;
         self.diag.record(Level::Info, "launch", &format!("Opened Terminal with `{line}`."));
         Ok(())
     }
@@ -1620,7 +1639,7 @@ fn open_app(_bundle_id: &str) -> R<()> {
 }
 
 #[cfg(target_os = "macos")]
-fn open_terminal(line: &str, _env: &[(&str, String)]) -> R<()> {
+fn open_terminal(line: &str) -> R<()> {
     let script = line.replace('\\', "\\\\").replace('"', "\\\"");
     let status = std::process::Command::new("osascript")
         .args(["-e", &format!("tell application \"Terminal\" to do script \"{script}\"")])
@@ -1633,7 +1652,7 @@ fn open_terminal(line: &str, _env: &[(&str, String)]) -> R<()> {
 /// Linux: the first available terminal emulator runs the line in a shell
 /// that stays open afterwards.
 #[cfg(all(unix, not(target_os = "macos")))]
-fn open_terminal(line: &str, _env: &[(&str, String)]) -> R<()> {
+fn open_terminal(line: &str) -> R<()> {
     let keep = format!("{line}; exec \"${{SHELL:-/bin/sh}}\"");
     let candidates: [(&str, Vec<&str>); 5] = [
         ("x-terminal-emulator", vec!["-e", "sh", "-c"]),
@@ -1653,11 +1672,10 @@ fn open_terminal(line: &str, _env: &[(&str, String)]) -> R<()> {
 
 /// Windows: a new console window that stays open (`cmd /k`).
 #[cfg(windows)]
-fn open_terminal(line: &str, _env: &[(&str, String)]) -> R<()> {
-    // cmd.exe would read `&&` in the line itself, so the variables go on the
-    // process (the new window inherits them) and the plain command runs.
-    let plain = line.rsplit(" && ").next().unwrap_or(line);
-    std::process::Command::new("cmd").args(["/c", "start", "PrismFlow", "cmd", "/k", plain]).envs(_env.iter().map(|(k, v)| (*k, v.as_str()))).spawn()
+/// `env` goes on the process; the new window inherits it.
+fn open_terminal(line: &str, env: &[(&str, String)]) -> R<()> {
+    std::process::Command::new("cmd").args(["/c", "start", "PrismFlow", "cmd", "/k", line])
+        .envs(env.iter().map(|(k, v)| (*k, v.as_str()))).spawn()
         .map_err(|e| format!("Could not open a console: {e}"))?;
     Ok(())
 }
@@ -2027,17 +2045,17 @@ mod tests {
         // Both at once: the shared app and the separate one.
         let shared = s.connect(codex::DESKTOP_APP_ID, "openrouter", "a/b").await.unwrap();
         let mine = std::fs::read_to_string(&base).unwrap();
-        let sep = s.connect(codex::SEPARATE_APP_ID, "openrouter", "c/d").await.unwrap();
+        let sep = s.connect(codex::DESKTOP_SEPARATE_APP_ID, "openrouter", "c/d").await.unwrap();
         assert_eq!(std::fs::read_to_string(&base).unwrap(), mine, "separate must not touch the usual Codex config");
         let home = codex::separate_home(s.state.dir());
         assert_eq!(sep.managed_file, home.join("config.toml"));
         let cfg = std::fs::read_to_string(&sep.managed_file).unwrap();
         assert!(cfg.contains("model = \"c/d\"") && cfg.contains("model_provider = \"prismflow_openrouter\""), "{cfg}");
-        assert!(s.preview(codex::SEPARATE_APP_ID, "openrouter", "c/d").unwrap().launch_command.contains("--env CODEX_HOME="));
+        assert!(s.preview(codex::DESKTOP_SEPARATE_APP_ID, "openrouter", "c/d").unwrap().launch_command.contains("--env CODEX_HOME="));
         // Each has its own model list (written when the Codex CLI is installed).
-        assert_ne!(s.codex_catalog_path(codex::DESKTOP_APP_ID, "openrouter"), s.codex_catalog_path(codex::SEPARATE_APP_ID, "openrouter"));
+        assert_ne!(s.codex_catalog_path(codex::DESKTOP_APP_ID, "openrouter"), s.codex_catalog_path(codex::DESKTOP_SEPARATE_APP_ID, "openrouter"));
         s.disconnect(&sep.id).await.unwrap();
-        assert!(!s.codex_catalog_path(codex::SEPARATE_APP_ID, "openrouter").exists());
+        assert!(!s.codex_catalog_path(codex::DESKTOP_SEPARATE_APP_ID, "openrouter").exists());
         assert!(!std::fs::read_to_string(&sep.managed_file).unwrap_or_default().contains("prismflow_openrouter"));
         assert!(std::fs::read_to_string(&base).unwrap().contains("prismflow_openrouter"), "the shared one is still connected");
         s.disconnect(&shared.id).await.unwrap();

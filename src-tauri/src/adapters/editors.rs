@@ -44,7 +44,7 @@ pub fn open_zed_separate(state_dir: &Path, token: &str) -> Result<(), String> {
             .find(|p| p.is_file())
             .ok_or("Zed isn't installed.")?
     } else {
-        super::find_exe("zed").or_else(|| super::find_exe("zeditor")).ok_or("Zed's `zed` command wasn't found.")?
+        super::find_exe("zed").or_else(|| super::find_exe("zeditor")).ok_or("Zed isn't installed.")?
     };
     let mut cmd = std::process::Command::new(zed);
     for k in ZED_KEY_VARS {
@@ -113,7 +113,7 @@ pub struct Plan {
 }
 
 /// `token` is None for a preview (a placeholder is shown instead).
-pub fn plan(id: &str, owned_dir: &Path, connection_id: &str, base: &str, model: &str, token: Option<&str>) -> Result<Plan, String> {
+pub fn plan(id: &str, owned_dir: &Path, state_dir: &Path, connection_id: &str, base: &str, model: &str, token: Option<&str>) -> Result<Plan, String> {
     let key = token.unwrap_or("(added when you connect)");
     match id {
         ROO => {
@@ -150,12 +150,7 @@ pub fn plan(id: &str, owned_dir: &Path, connection_id: &str, base: &str, model: 
             Ok(Plan { file, before, after: jsonfile::render(&obj), owned: vec![] })
         }
         ZED | ZED_SEPARATE => {
-            // owned_dir is <state>/agents/<connection>.
-            let state = owned_dir.parent().and_then(Path::parent).unwrap_or(owned_dir);
-            let file = zed_file_for(id, state);
-            if id == ZED_SEPARATE {
-                let _ = std::fs::create_dir_all(file.parent().unwrap_or(state));
-            }
+            let file = zed_file_for(id, state_dir);
             let (before, mut obj) = jsonfile::read_object(&file)?;
             jsonfile::set(&mut obj, &["language_models", "openai_compatible", "PrismFlow"], json!({
                 "api_url": base,
@@ -229,7 +224,7 @@ mod tests {
         std::env::set_var("PRISMFLOW_EDITORS_HOME", h.path());
         std::fs::create_dir_all(h.path().join(".config/kilo")).unwrap();
         std::fs::write(kilo_file(), r#"{"provider":{"mine":{"npm":"x"}},"theme":"dark"}"#).unwrap();
-        let p = plan(KILO, h.path(), "kilo_code:ollama", "http://127.0.0.1:1/v1", "qwen3", Some("pft_t")).unwrap();
+        let p = plan(KILO, h.path(), h.path(), "kilo_code:ollama", "http://127.0.0.1:1/v1", "qwen3", Some("pft_t")).unwrap();
         std::fs::write(&p.file, &p.after).unwrap();
         assert!(check(KILO, "kilo_code:ollama", h.path()).is_ok());
         let v: Value = serde_json::from_str(&p.after).unwrap();
@@ -239,14 +234,14 @@ mod tests {
         let v: Value = serde_json::from_str(&std::fs::read_to_string(kilo_file()).unwrap()).unwrap();
         assert!(v["provider"].get("prismflow").is_none() && v["theme"] == "dark");
 
-        let z = plan(ZED, h.path(), "zed:ollama", "http://127.0.0.1:1/v1", "qwen3", None).unwrap();
+        let z = plan(ZED, h.path(), h.path(), "zed:ollama", "http://127.0.0.1:1/v1", "qwen3", None).unwrap();
         assert!(z.after.contains("openai_compatible") && !z.after.contains("pft_"), "the key isn't written for Zed");
         // Separate Zed: its own settings file under PrismFlow's data.
         let state = h.path().join("state");
         let owned = state.join("agents/zed_separate-ollama");
-        let zs = plan(ZED_SEPARATE, &owned, "zed_separate:ollama", "http://127.0.0.1:1/v1", "qwen3", None).unwrap();
+        let zs = plan(ZED_SEPARATE, &owned, &state, "zed_separate:ollama", "http://127.0.0.1:1/v1", "qwen3", None).unwrap();
         assert_eq!(zs.file, state.join("zed-separate/config/settings.json"));
-        std::fs::create_dir_all(zs.file.parent().unwrap()).unwrap();
+        std::fs::create_dir_all(zs.file.parent().unwrap()).unwrap(); // connect does this
         std::fs::write(&zs.file, &zs.after).unwrap();
         assert!(check(ZED_SEPARATE, "zed_separate:ollama", &state).is_ok());
         assert!(!zed_file().exists(), "usual Zed untouched");
