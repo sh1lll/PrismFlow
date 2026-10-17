@@ -193,6 +193,15 @@ async fn run_codex(
 
 /// True when a `codex exec --json` stream shows a completed command
 /// execution whose output contains the tool token.
+/// Successful model requests this connection made through the gateway since
+/// `since` (unix seconds). A tool call shows as a second request carrying the
+/// tool's result.
+fn model_turns_since(state_dir: &Path, connection: &str, since: u64) -> usize {
+    crate::usage::Store::open(state_dir).recent(200).iter()
+        .filter(|r| r.connection == connection && r.ts >= since && r.status == 200)
+        .count()
+}
+
 pub fn saw_tool_execution(jsonl: &str) -> Option<bool> {
     let mut parsed_any = false;
     for line in jsonl.lines() {
@@ -525,10 +534,19 @@ async fn run_stages(
 
     // Stage 6 — agent compatibility: a real tool call.
     let prompt = format!("Use your shell tool to run `echo {TOOL_TOKEN}`, then reply DONE.");
+    let since = now_secs().saturating_sub(1);
     match run_codex(bin, home, &record.profile, &env.workdir, true, &prompt, env.agent_timeout).await {
         Ok((_, out)) => match saw_tool_execution(&out) {
             Some(true) => {
                 run.push(6, "Tool calling", StageOutcome::Pass, "The model can use tools.");
+                ConnectionStatus::ConnectedAndVerified
+            }
+            // The model asked to run the command and Codex sent the result
+            // back, but Codex's own read-only sandbox didn't run it (Windows
+            // blocks the shell there; some Linux systems can't start it).
+            Some(false) if model_turns_since(&env.state_dir, &record.id, since) >= 2 => {
+                run.push(6, "Tool calling", StageOutcome::Pass,
+                    "The model can use tools. (Codex's own safety sandbox blocked the test command, which is normal for its read-only mode.)");
                 ConnectionStatus::ConnectedAndVerified
             }
             Some(false) => {
