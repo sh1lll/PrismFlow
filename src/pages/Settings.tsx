@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { api, RuntimeSettings, UninstallReport, errText } from "../api";
+import { api, RuntimeSettings, SelfCheckItem, UninstallReport, errText } from "../api";
 
 type NumericKey = "rate_limit_per_minute" | "max_concurrency_per_provider" | "upstream_retries";
 const FIELDS: { key: NumericKey; label: string; help: string; max: number }[] = [
@@ -7,6 +7,27 @@ const FIELDS: { key: NumericKey; label: string; help: string; max: number }[] = 
   { key: "max_concurrency_per_provider", label: "Most requests at once (per provider)", help: "0 means no limit. Extra requests wait their turn.", max: 256 },
   { key: "upstream_retries", label: "Retries when a connection drops", help: "How many times to try again before giving up.", max: 5 },
 ];
+
+/** Checks that PrismFlow itself works on this computer. */
+function SelfCheck() {
+  const [checks, setChecks] = useState<SelfCheckItem[] | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  async function run() {
+    setBusy(true); setError("");
+    try { setChecks(await api.selfCheck()); } catch (e) { setError(errText(e)); } finally { setBusy(false); }
+  }
+  return (
+    <div className="card">
+      <div className="row spread">
+        <div className="section-title">Check PrismFlow</div>
+        <button className="ghost" disabled={busy} onClick={run}>{busy ? "Checking…" : "Run check"}</button>
+      </div>
+      {checks?.map((c) => <div key={c.name} className={`small ${c.ok ? "" : "err"}`}>{c.ok ? "✓" : "✗"} {c.name}: {c.detail}</div>)}
+      {error && <div className="small err">{error}</div>}
+    </div>
+  );
+}
 
 export default function Settings() {
   const [s, setS] = useState<RuntimeSettings | null>(null);
@@ -26,6 +47,7 @@ export default function Settings() {
   return (
     <div>
       <h1>Settings</h1>
+      <SelfCheck />
       <StartUp />
       <BackupCard />
       <div className="card">

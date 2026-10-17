@@ -101,6 +101,8 @@ export type ConnectionStatus =
 export type StageOutcome = "Pass" | "Warn" | "Fail" | "Skipped";
 
 /** How an app starts with a connection: the command to type ("" when there is none) and the button PrismFlow offers. */
+export interface SelfCheckItem { name: string; ok: boolean; detail: string }
+
 /** What a skipped test reports (TEST_SKIPPED in src-tauri/src/lib.rs). */
 export const TEST_SKIPPED = "Test skipped.";
 
@@ -246,6 +248,7 @@ export const api = {
   preview: (appId: AppId, providerId: string, model: string) => invoke<ConnectPreview>("preview_connection", { appId, providerId, model }),
   connect: (appId: AppId, providerId: string, model: string) => invoke<Connection>("connect", { appId, providerId, model }),
   verify: (id: string) => invoke<VerificationReport>("verify_connection", { id }),
+  selfCheck: () => invoke<SelfCheckItem[]>("self_check"),
   launchInfo: (id: string) => invoke<LaunchInfo>("launch_info", { id }),
   /** Stops a running test; its `verify` call then fails with TEST_SKIPPED. */
   cancelVerify: (id: string) => invoke<void>("cancel_verify", { id }),

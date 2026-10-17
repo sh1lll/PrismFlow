@@ -49,3 +49,23 @@ jobs:
             src-tauri/target/release/bundle/deb/*.deb
             src-tauri/target/release/bundle/appimage/*.AppImage
           if-no-files-found: warn
+      # The installed app checks itself: key store, bundled engine and Node,
+      # and one real request through its gateway (no account needed).
+      - name: Install and self-check (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $setup = Get-ChildItem src-tauri/target/release/bundle/nsis/*-setup.exe | Select-Object -First 1
+          Start-Process -FilePath $setup.FullName -ArgumentList '/S' -Wait
+          $exe = Get-ChildItem -Path $env:LOCALAPPDATA, $env:ProgramFiles -Recurse -Depth 3 -Filter prismflow.exe -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $exe) { throw "PrismFlow wasn't installed" }
+          Write-Host "Installed at $($exe.FullName)"
+          $p = Start-Process -FilePath $exe.FullName -ArgumentList 'self-check' -Wait -PassThru -NoNewWindow -RedirectStandardOutput self-check.txt
+          Get-Content self-check.txt
+          if ($p.ExitCode -ne 0) { throw "self-check failed" }
+      - name: Self-check the built app (macOS)
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          app=$(ls -d src-tauri/target/release/bundle/macos/*.app | head -1)
+          "$app/Contents/MacOS/prismflow" self-check

@@ -13,6 +13,7 @@ pub mod mcp;
 pub mod notify;
 pub mod proctree;
 pub mod spawn;
+pub mod selfcheck;
 pub mod tray;
 pub mod usage;
 pub mod ollama;
@@ -699,6 +700,12 @@ fn session_delete(sessions: State<'_, sessions::Sessions>, id: String) -> Cmd<()
 }
 
 #[tauri::command]
+async fn self_check(svc: State<'_, Arc<Service>>) -> Cmd<Vec<selfcheck::Check>> {
+    let svc = svc.inner().clone();
+    Ok(selfcheck::run(svc.store.as_ref(), svc.state.dir()).await)
+}
+
+#[tauri::command]
 fn launch_info(svc: State<'_, Arc<Service>>, id: String) -> Cmd<service::LaunchInfo> {
     svc.launch_info(&id)
 }
@@ -865,6 +872,7 @@ pub fn run() {
         .manage(BotState { bots: bots::Bots::default(), dir: dir.clone() })
         .invoke_handler(tauri::generate_handler![
             cancel_verify,
+            self_check,
             launch_info,
             verify_progress,
             keychain_waiting,

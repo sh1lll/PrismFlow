@@ -42,9 +42,10 @@ pub fn handle_args(
                 }
             }
         }
+        [cmd] if cmd == "self-check" => Some(crate::selfcheck::cli(store, out)),
         [] => None,
         _ => {
-            eprintln!("usage: prismflow [--version | token print --connection <id>]");
+            eprintln!("usage: prismflow [--version | self-check | token print --connection <id>]");
             Some(64)
         }
     }
