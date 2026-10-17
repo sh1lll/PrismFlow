@@ -300,7 +300,7 @@ async fn proxy(State(inner): State<Arc<Inner>>, req: Request) -> Response {
             let target = chain[0].clone();
             let model = if !binding.model.is_empty() || tier != crate::routing::Tier::Default { target.model.clone() } else { String::new() };
             let headers = super::webloop::engine_headers(&base_headers, &target.provider_id, &model);
-            let client = inner.client.clone();
+            let client = inner.http();
             let counter = inner.clone();
             let engine_url = url.clone();
             let send = move |b: serde_json::Value| {
@@ -331,7 +331,8 @@ async fn proxy(State(inner): State<Arc<Inner>>, req: Request) -> Response {
                 }
             }
         }
-        let sent = inner.client.request(method.clone(), &url).headers(headers).body(body.clone()).send().await;
+        let timeout_secs = inner.settings.read().unwrap_or_else(|e| e.into_inner()).provider_timeout_secs;
+        let sent = inner.http().request(method.clone(), &url).headers(headers).body(body.clone()).send().await;
         inner.count(|c| c.requests += 1);
         match sent {
             Ok(r) if !crate::routing::should_fall_back(r.status().as_u16()) || attempt + 1 == chain.len() => {
@@ -355,9 +356,9 @@ async fn proxy(State(inner): State<Arc<Inner>>, req: Request) -> Response {
                 // The engine was up and waiting on the provider the whole time.
                 inner.count(|c| c.upstream_errors += 1);
                 inner.record(Level::Warn, "broker.provider_timeout", &format!(
-                    "{} {method} {path}: {}/{} didn't answer for 5 minutes.", binding.connection_id, target.provider_id, target.model
+                    "{} {method} {path}: {}/{} went silent for {timeout_secs} s.", binding.connection_id, target.provider_id, target.model
                 ));
-                last_error = Some(reject(StatusCode::GATEWAY_TIMEOUT, "api_error", "the provider didn't answer for 5 minutes; it may be down or overloaded"));
+                last_error = Some(reject(StatusCode::GATEWAY_TIMEOUT, "api_error", &format!("the provider went silent for {timeout_secs} seconds; it may be down or overloaded")));
             }
             Err(e) => {
                 inner.count(|c| c.upstream_errors += 1);

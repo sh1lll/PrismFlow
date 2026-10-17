@@ -186,6 +186,7 @@ export interface RuntimeSettings {
   web_tools: WebToolsSettings;
   budgets: Record<string, number>;
   ollama_context: number;
+  provider_timeout_secs: number;
 }
 
 export interface FoundKey { provider_id: string; provider_name: string; variable: string; source: string; masked: string; already_saved: boolean }

@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { ask } from "./bits";
 import { api, errText } from "../api";
 
 const CONTEXTS = [8192, 16384, 32768, 65536, 131072];
@@ -39,7 +40,7 @@ export default function LocalModels() {
           {(v.installed as any[]).filter((m) => !m.prismflow_copy).map((m) => (
             <div key={m.name} className="row spread mt-s small">
               <span><b>{m.name}</b> <span className="muted">{m.parameters} · {m.size_gb.toFixed(1)} GB{m.running ? " · running now" : ""}</span></span>
-              <button className="ghost" onClick={() => { if (confirm(`Delete ${m.name} from this computer?`)) api.ollamaDelete(m.name).then(load).catch((e) => setMsg(errText(e))); }}>Delete</button>
+              <button className="ghost" onClick={async () => { if (await ask(`Delete ${m.name} from this computer?`, "Delete")) api.ollamaDelete(m.name).then(load).catch((e) => setMsg(errText(e))); }}>Delete</button>
             </div>
           ))}
           {(v.installed as any[]).length === 0 && <div className="small muted">No models yet. Download one below.</div>}

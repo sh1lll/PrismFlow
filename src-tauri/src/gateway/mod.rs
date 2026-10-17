@@ -49,11 +49,13 @@ pub struct RuntimeSettings {
     pub budgets: std::collections::BTreeMap<String, u32>,
     /// Context size PrismFlow gives local Ollama models (tokens).
     pub ollama_context: u32,
+    /// Seconds a provider may stay silent mid-request before PrismFlow gives up.
+    pub provider_timeout_secs: u32,
 }
 
 impl Default for RuntimeSettings {
     fn default() -> Self {
-        Self { rate_limit_per_minute: 0, max_concurrency_per_provider: 0, upstream_retries: 1, web_tools: Default::default(), shortcuts: true, budgets: Default::default(), ollama_context: 32_768 }
+        Self { rate_limit_per_minute: 0, max_concurrency_per_provider: 0, upstream_retries: 1, web_tools: Default::default(), shortcuts: true, budgets: Default::default(), ollama_context: 32_768, provider_timeout_secs: 300 }
     }
 }
 
@@ -144,7 +146,7 @@ pub(crate) struct Inner {
     engine: RwLock<EngineState>,
     counters: Mutex<Counters>,
     diag: Option<Arc<DiagnosticsLog>>,
-    client: reqwest::Client,
+    client: RwLock<reqwest::Client>,
     work_dir: PathBuf,
     /// Request log, token usage and spend (see `crate::usage`).
     pub(crate) usage: Arc<crate::usage::Store>,
@@ -202,6 +204,23 @@ struct Running {
     settings: RuntimeSettings,
 }
 
+/// The client the broker sends requests on with. Its limit is on silence
+/// (no bytes for that long), not total time: long streams are fine.
+fn provider_client(timeout_secs: u32) -> reqwest::Client {
+    reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .read_timeout(Duration::from_secs(u64::from(timeout_secs.clamp(30, 3600))))
+        .no_proxy()
+        .build()
+        .expect("reqwest client")
+}
+
+impl Inner {
+    pub(crate) fn http(&self) -> reqwest::Client {
+        self.client.read().unwrap_or_else(|e| e.into_inner()).clone()
+    }
+}
+
 /// The broker. Cheap to share; all methods take `&self`.
 pub struct Broker {
     inner: Arc<Inner>,
@@ -213,13 +232,7 @@ impl Broker {
     /// `port` 0 picks an ephemeral port (tests); production uses
     /// [`configured_port`].
     pub fn new(port: u16, work_dir: PathBuf, diag: Option<Arc<DiagnosticsLog>>) -> Self {
-        let client = reqwest::Client::builder()
-            .redirect(reqwest::redirect::Policy::none())
-            // Idle (not total) limit: long streams are fine while bytes flow.
-            .read_timeout(Duration::from_secs(300))
-            .no_proxy()
-            .build()
-            .expect("reqwest client");
+        let client = provider_client(RuntimeSettings::default().provider_timeout_secs);
         Self {
             inner: Arc::new(Inner {
                 port: Mutex::new(port),
@@ -236,7 +249,7 @@ impl Broker {
                 }),
                 counters: Mutex::new(Counters::default()),
                 diag,
-                client,
+                client: RwLock::new(client),
                 usage: Arc::new(crate::usage::Store::open(&work_dir)),
                 work_dir,
             }),
@@ -289,6 +302,10 @@ impl Broker {
 
     /// Update limits; engine-side ones apply on the next `start`.
     pub fn set_settings(&self, settings: RuntimeSettings) {
+        let old = self.settings().provider_timeout_secs;
+        if settings.provider_timeout_secs != old {
+            *self.inner.client.write().unwrap_or_else(|e| e.into_inner()) = provider_client(settings.provider_timeout_secs);
+        }
         *self.inner.settings.write().unwrap_or_else(|e| e.into_inner()) = settings;
     }
 
@@ -369,7 +386,7 @@ impl Broker {
         let listener = match tokio::net::TcpListener::bind(("127.0.0.1", want)).await {
             Ok(l) => l,
             Err(e) if e.kind() == std::io::ErrorKind::AddrInUse => {
-                let err = if server::is_prismflow_broker(&self.inner.client, want).await {
+                let err = if server::is_prismflow_broker(&self.inner.http(), want).await {
                     BrokerError::OtherInstance(want)
                 } else {
                     BrokerError::PortInUse(want)
@@ -433,7 +450,7 @@ async fn supervise(inner: Arc<Inner>, rt: GatewayRuntime, specs: Vec<UpstreamSpe
         let mut child: Option<EngineChild> = None;
         let error = match attempt {
             Err(e) => e,
-            Ok(mut c) => match c.wait_ready(&inner.client, READY_TIMEOUT).await {
+            Ok(mut c) => match c.wait_ready(&inner.http(), READY_TIMEOUT).await {
                 Err(e) => {
                     c.shutdown().await;
                     e

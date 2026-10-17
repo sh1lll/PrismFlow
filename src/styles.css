@@ -149,3 +149,10 @@ textarea { width: 100%; resize: vertical; font: inherit; }
 .step.now { color: var(--accent-text); background: var(--accent); border-color: var(--accent); font-weight: 600; }
 .step.past { color: var(--text); }
 .pad { padding: 8px 10px; }
+
+.accounts { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 10px; }
+.accounts .card { margin: 0; display: flex; flex-direction: column; gap: 4px; }
+.fields { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 10px 14px; margin-top: 10px; }
+.fields label { display: block; margin-bottom: 4px; }
+.ask-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,.5); display: flex; align-items: center; justify-content: center; z-index: 50; }
+.ask { width: min(420px, calc(100vw - 32px)); margin: 0; }

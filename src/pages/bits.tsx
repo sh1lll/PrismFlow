@@ -104,3 +104,32 @@ export function EditorGuide({ id }: { id: string }) {
     </details>
   );
 }
+
+/**
+ * "Are you sure?" inside the app. The web view's own confirm() box doesn't
+ * reliably appear in the desktop app, which made those buttons do nothing.
+ */
+let openAsk: ((q: { text: string; yes: string; done: (ok: boolean) => void }) => void) | null = null;
+
+export function ask(text: string, yes = "OK"): Promise<boolean> {
+  return new Promise((done) => (openAsk ? openAsk({ text, yes, done }) : done(window.confirm(text))));
+}
+
+export function AskHost() {
+  const [q, setQ] = useState<{ text: string; yes: string; done: (ok: boolean) => void } | null>(null);
+  useEffect(() => { openAsk = setQ; return () => { openAsk = null; }; }, []);
+  if (!q) return null;
+  const close = (ok: boolean) => { q.done(ok); setQ(null); };
+  return (
+    <div className="ask-backdrop" onClick={() => close(false)}>
+      <div className="card ask" role="dialog" aria-modal="true" onClick={(e) => e.stopPropagation()}
+        onKeyDown={(e) => { if (e.key === "Escape") close(false); }}>
+        <div className="pre-wrap">{q.text}</div>
+        <div className="row mt">
+          <button className="ghost" onClick={() => close(false)}>Cancel</button>
+          <button className="primary" autoFocus onClick={() => close(true)}>{q.yes}</button>
+        </div>
+      </div>
+    </div>
+  );
+}

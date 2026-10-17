@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { ask } from "./bits";
 import { api, CompanionView, PairingView, errText, when } from "../api";
 
 /** Fingerprint in readable groups of four. */
@@ -82,7 +83,7 @@ export default function Remote({ onChange }: { onChange: () => void }) {
             <div className="row">
               <label className="small nowrap"><input type="checkbox" className="check" checked={d.allow_actions}
                 onChange={(e) => act(api.companionAllowActions(d.id, e.target.checked))} /> Allow actions</label>
-              <button className="danger" onClick={() => { if (confirm(`Remove ${d.name}? It will need to pair again.`)) act(api.companionRevoke(d.id), "Device removed."); }}>Remove</button>
+              <button className="danger" onClick={async () => { if (await ask(`Remove ${d.name}? It will need to pair again.`, "Remove")) act(api.companionRevoke(d.id), "Device removed."); }}>Remove</button>
             </div>
           </div>
         ))}

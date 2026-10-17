@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { ask } from "./bits";
 import { api, FoundKey, Protocol, Provider, UrlCheck, errText } from "../api";
 
 /** Plain names for the API styles a custom server can speak. */
@@ -47,7 +48,7 @@ function KeyEditor({ p, onChange, setMsg }: { p: Provider; onChange: () => void;
   }
 
   async function remove() {
-    if (!confirm(`Remove your ${p.display_name} key?`)) return;
+    if (!(await ask(`Remove your ${p.display_name} key?`, "Remove"))) return;
     try {
       await api.deleteCredential(p.id);
       setMsg({ tone: "ok", text: "Key removed." });
@@ -127,7 +128,7 @@ function SignIn({ p, onChange, setMsg }: { p: Provider; onChange: () => void; se
   ) : (
     <div>
       <div className="small muted">{info.note}</div>
-      <button className="ghost mt" onClick={() => { if (confirm(`${info.note}\n\nUse your ${info.tool} account in PrismFlow?`)) set(true); }}>Use my {info.tool} account</button>
+      <button className="ghost mt" onClick={async () => { if (await ask(`${info.note}\n\nUse your ${info.tool} account in PrismFlow?`, "Use it")) set(true); }}>Use my {info.tool} account</button>
     </div>
   );
 }
@@ -159,7 +160,7 @@ function ProviderRow({ p, onChange }: { p: Provider; onChange: () => void }) {
   const [msg, setMsg] = useState<Msg>(null);
 
   async function removeProvider() {
-    if (!confirm(`Remove ${p.display_name}?`)) return;
+    if (!(await ask(`Remove ${p.display_name}?`, "Remove"))) return;
     try {
       await api.removeCustomProvider(p.id);
       onChange();
@@ -336,6 +337,75 @@ function AddCustom({ onDone }: { onDone: () => void }) {
   );
 }
 
+/** Accounts you sign in to instead of pasting a key. */
+const isAccount = (p: Provider) => (p.credential_source !== "keychain" || p.id === "openrouter") && !p.custom;
+
+function AccountCard({ p, onChange }: { p: Provider; onChange: () => void }) {
+  const info = SIGNIN[p.credential_source] ?? { tool: "OpenRouter", login: "", note: "Signs in through your browser and saves an OpenRouter key." };
+  const [models, setModels] = useState<number | null>(null);
+  const [modelErr, setModelErr] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<Msg>(null);
+  useEffect(() => {
+    if (!p.has_credential) return;
+    setModels(null); setModelErr("");
+    api.discoverModels(p.id).then((m) => setModels(m.length)).catch((e) => setModelErr(errText(e)));
+  }, [p.id, p.has_credential]);
+  async function run(f: () => Promise<unknown>, ok: string) {
+    setBusy(true); setMsg(null);
+    try { await f(); setMsg({ tone: "ok", text: ok }); onChange(); }
+    catch (e) { setMsg({ tone: "err", text: errText(e) }); }
+    finally { setBusy(false); }
+  }
+  const connect = async () => p.id === "openrouter"
+    ? run(() => api.openrouterSignIn(), "Signed in.")
+    : (await ask(`${info.note}\n\nUse your ${info.tool} account in PrismFlow?`, "Connect")) && run(() => api.setSigninConsent(p.id, true), "Connected.");
+  const disconnect = async () => p.id === "openrouter"
+    ? (await ask("Remove your OpenRouter key from PrismFlow?", "Disconnect")) && run(() => api.deleteCredential(p.id), "Disconnected.")
+    : run(() => api.setSigninConsent(p.id, false), "Disconnected.");
+  const canConnect = p.id === "openrouter" || p.signin_available;
+  return (
+    <div className="card account">
+      <div className="app-name">{p.display_name}</div>
+      {p.has_credential ? (
+        <div className={`small ${modelErr ? "warn" : "ok"}`}>{modelErr ? modelErr : models === null ? "Checking models…" : `${models} model${models === 1 ? "" : "s"} available`}</div>
+      ) : canConnect ? (
+        <div className="small muted">{info.note}</div>
+      ) : (
+        <div className="small muted">Sign in first: run <code className="selectable">{info.login}</code> in Terminal.</div>
+      )}
+      <div className="row mt">
+        {p.has_credential
+          ? <button className="ghost danger-text" disabled={busy} onClick={disconnect}>Disconnect</button>
+          : canConnect
+            ? <button className="primary" disabled={busy} onClick={connect}>{busy ? (p.id === "openrouter" ? "Waiting for the browser…" : "Connecting…") : "Connect"}</button>
+            : <button className="ghost" disabled={busy} onClick={onChange}>Check again</button>}
+      </div>
+      {msg && <div className={`small mt-s ${msg.tone}`}>{msg.text}</div>}
+    </div>
+  );
+}
+
+function CustomProviders({ list, onChange }: { list: Provider[]; onChange: () => void }) {
+  const [adding, setAdding] = useState(false);
+  return (
+    <div className="card">
+      <div className="row spread">
+        <div className="section-title">Custom providers</div>
+        {!adding && <button className="primary" onClick={() => setAdding(true)}>Add provider</button>}
+      </div>
+      {list.length === 0 && !adding && <div className="small muted">None yet. Add any server that speaks the OpenAI or Anthropic API.</div>}
+      {list.map((p) => <ProviderRow key={p.id} p={p} onChange={onChange} />)}
+      {adding && (
+        <>
+          <AddCustom onDone={() => { setAdding(false); onChange(); }} />
+          <button className="ghost mt-s" onClick={() => setAdding(false)}>Cancel</button>
+        </>
+      )}
+    </div>
+  );
+}
+
 export default function Providers() {
   const [providers, setProviders] = useState<Provider[] | null>(null);
   const [error, setError] = useState("");
@@ -348,10 +418,8 @@ export default function Providers() {
     const match = (p: Provider) => !f || p.display_name.toLowerCase().includes(f) || p.id.includes(f);
     const list = (providers ?? []).filter(match).sort((a, b) => Number(b.has_credential) - Number(a.has_credential));
     return [
-      { title: "Use an account you already have", items: list.filter((p) => p.credential_source !== "keychain" && !p.custom), alwaysShow: false },
-      { title: "AI providers", items: list.filter((p) => !p.local && !p.custom && p.credential_source === "keychain"), alwaysShow: false },
+      { title: "AI providers", items: list.filter((p) => !p.local && !p.custom && !isAccount(p)), alwaysShow: false },
       { title: "Running on this computer", items: list.filter((p) => p.local && !p.custom), alwaysShow: false },
-      { title: "Added by you", items: list.filter((p) => p.custom), alwaysShow: false },
     ];
   }, [providers, q]);
 
@@ -360,6 +428,22 @@ export default function Providers() {
       <div className="head"><h1>Providers</h1></div>
       {error && <div className="card err">{error}</div>}
       <input className="mb" placeholder="Search" value={q} onChange={(e) => setQ(e.target.value)} />
+      {providers && !q && (() => {
+        const accounts = providers.filter(isAccount);
+        const on = accounts.filter((p) => p.has_credential);
+        const off = accounts.filter((p) => !p.has_credential);
+        return (
+          <>
+            <h2>Sign-in accounts</h2>
+            {on.length > 0 && <div className="label">Connected</div>}
+            {on.length > 0 && <div className="accounts">{on.map((p) => <AccountCard key={p.id} p={p} onChange={load} />)}</div>}
+            {off.length > 0 && <div className="label mt">Not connected</div>}
+            {off.length > 0 && <div className="accounts">{off.map((p) => <AccountCard key={p.id} p={p} onChange={load} />)}</div>}
+            <h2>Custom providers</h2>
+            <CustomProviders list={providers.filter((p) => p.custom)} onChange={load} />
+          </>
+        );
+      })()}
       {!providers ? (
         <div className="card muted">Loading…</div>
       ) : (
@@ -372,10 +456,6 @@ export default function Providers() {
       )}
       <h2>More</h2>
       <ImportKeys onDone={load} />
-      <details className="card">
-        <summary>Add a provider that isn't listed</summary>
-        <AddCustom onDone={load} />
-      </details>
     </div>
   );
 }

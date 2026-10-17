@@ -5,6 +5,7 @@ import Usage from "./pages/Usage";
 import More from "./pages/More";
 import Settings from "./pages/Settings";
 import Setup from "./pages/Setup";
+import { AskHost } from "./pages/bits";
 import { api, AppId } from "./api";
 
 type Page = "Home" | "Providers" | "Usage" | "More" | "Settings";
@@ -68,6 +69,7 @@ export default function App() {
         )}
         </PageGuard>
       </main>
+      <AskHost />
     </div>
   );
 }

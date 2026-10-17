@@ -3,7 +3,7 @@ import {
   api, AppDetection, AppId, Connection, LaunchInfo, Provider, appLabel, errText, isSeparate,
   modePair, providerName, shortStatus, statusTone,
 } from "../api";
-import { EditorGuide, GuidedSetup, ModelPicker, Stages } from "./bits";
+import { EditorGuide, GuidedSetup, ModelPicker, Stages, ask } from "./bits";
 import RoutingPanel from "./RoutingPanel";
 import TestRunning from "./TestRunning";
 
@@ -102,7 +102,7 @@ function AppRow({ c, providers, installed, onChange }: { c: Connection; provider
             )}
             <SeparateToggle c={c} installed={installed} busy={busy !== ""} run={run} />
             <button className="ghost danger-text" disabled={busy !== ""}
-              onClick={() => { if (confirm(`Remove ${name} from PrismFlow?`)) run("remove", () => api.disconnect(c.id)); }}>Remove</button>
+              onClick={async () => { if (await ask(`Remove ${name} from PrismFlow?`, "Remove")) run("remove", () => api.disconnect(c.id)); }}>Remove</button>
           </div>
           {busy === "test" && <TestRunning id={c.id} />}
           {c.last_report && c.status !== "ConnectedAndVerified" && busy !== "test" && <Stages stages={c.last_report.stages} />}

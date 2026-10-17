@@ -1,11 +1,13 @@
 import { useEffect, useState } from "react";
 import { api, RuntimeSettings, SelfCheckItem, UninstallReport, errText } from "../api";
 
-type NumericKey = "rate_limit_per_minute" | "max_concurrency_per_provider" | "upstream_retries";
-const FIELDS: { key: NumericKey; label: string; max: number }[] = [
-  { key: "rate_limit_per_minute", label: "Requests per minute, per app (0 = no limit)", max: 10000 },
-  { key: "max_concurrency_per_provider", label: "Requests at once, per provider (0 = no limit)", max: 256 },
-  { key: "upstream_retries", label: "Retries when a connection drops", max: 5 },
+type NumericKey = "rate_limit_per_minute" | "max_concurrency_per_provider" | "upstream_retries" | "provider_timeout_secs" | "ollama_context";
+const FIELDS: { key: NumericKey; label: string; min: number; max: number }[] = [
+  { key: "rate_limit_per_minute", label: "Requests per minute, per app (0 = no limit)", min: 0, max: 10000 },
+  { key: "max_concurrency_per_provider", label: "Requests at once, per provider (0 = no limit)", min: 0, max: 256 },
+  { key: "upstream_retries", label: "Retries when a connection drops", min: 0, max: 5 },
+  { key: "provider_timeout_secs", label: "Give up on a silent provider after (seconds)", min: 30, max: 3600 },
+  { key: "ollama_context", label: "Room for local models (tokens)", min: 2048, max: 1048576 },
 ];
 
 /** Checks that PrismFlow itself works on this computer. */
@@ -51,27 +53,41 @@ export default function Settings() {
       <StartUp />
       <Updates />
       <BackupCard />
-      <details className="card">
-        <summary className="section-title">More settings</summary>
+      <div className="card">
+        <div className="section-title">Gateway</div>
+        <GatewayAddress />
         {!s ? <div className="muted">Loading…</div> : (
           <>
+            <div className="fields">
+              {FIELDS.map((f) => (
+                <div key={f.key}>
+                  <label className="small">{f.label}</label>
+                  <input type="number" min={f.min} max={f.max} value={s[f.key]}
+                    onChange={(e) => setS({ ...s, [f.key]: Number(e.target.value) || 0 })}
+                    onBlur={() => setS({ ...s, [f.key]: Math.max(f.min, Math.min(f.max, s[f.key])) })} />
+                </div>
+              ))}
+            </div>
             <label className="small mt-block"><input type="checkbox" className="check" checked={s.shortcuts} onChange={(e) => setS({ ...s, shortcuts: e.target.checked })} /> Answer Claude Code's small side requests myself (faster)</label>
-            {FIELDS.map((f) => (
-              <div key={f.key} className="mt">
-                <label className="small">{f.label}</label>
-                <input type="number" min={0} max={f.max} value={s[f.key]}
-                  onChange={(e) => setS({ ...s, [f.key]: Math.max(0, Math.min(f.max, Number(e.target.value) || 0)) })} />
-              </div>
-            ))}
-            <WebTools s={s} setS={setS} />
+            <details className="mt-s">
+              <summary className="small">Show advanced</summary>
+              <WebTools s={s} setS={setS} />
+            </details>
             <div className="row mt"><button className="primary" onClick={save}>Save</button></div>
             {msg && <div className={`small mt ${msg.tone}`}>{msg.text}</div>}
           </>
         )}
-      </details>
+      </div>
       <RemoveAll />
     </div>
   );
+}
+
+/** Where apps reach PrismFlow; it only listens on this computer. */
+function GatewayAddress() {
+  const [url, setUrl] = useState("");
+  useEffect(() => { api.gatewayStatus().then((g) => setUrl(g.url)).catch(() => setUrl("")); }, []);
+  return <div className="small muted">{url ? <>Apps reach PrismFlow at <code className="selectable">{url}</code>. Only this computer can connect.</> : "Starts when you add an app. Only this computer can connect."}</div>;
 }
 
 function RemoveAll() {

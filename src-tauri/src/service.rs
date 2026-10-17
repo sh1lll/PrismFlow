@@ -531,6 +531,12 @@ impl Service {
         if settings.rate_limit_per_minute > 10_000 || settings.max_concurrency_per_provider > 256 || settings.upstream_retries > 5 {
             return Err("Limits out of range: up to 10000 requests/min, 256 concurrent, 5 retries.".into());
         }
+        if !(30..=3600).contains(&settings.provider_timeout_secs) {
+            return Err("The provider wait must be between 30 and 3600 seconds.".into());
+        }
+        if !(2048..=1_048_576).contains(&settings.ollama_context) {
+            return Err("The local model room must be between 2048 and 1048576 tokens.".into());
+        }
         self.state.save_settings(&settings).map_err(|e| e.to_string())?;
         self.broker.set_settings(settings.clone());
         self.diag.record(Level::Info, "settings.saved", &format!("Gateway limits: {settings:?}."));
