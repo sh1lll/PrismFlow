@@ -434,8 +434,17 @@ async fn stress(svc: &Service, id: &str, failures: &mut Vec<String>) {
     let send = |body: serde_json::Value, key: String| {
         let (client, url) = (client.clone(), url.clone());
         async move {
-            let r = client.post(format!("{url}/v1/messages")).header("x-api-key", key)
-                .header("anthropic-version", "2023-06-01").json(&body).send().await.map_err(|e| e.to_string())?;
+            // Like real clients, retry once when a brand-new connection is
+            // refused (a burst of 200 can overflow macOS's accept queue).
+            let post = || client.post(format!("{url}/v1/messages")).header("x-api-key", key.clone())
+                .header("anthropic-version", "2023-06-01").json(&body).send();
+            let r = match post().await {
+                Err(e) if e.is_connect() || e.is_request() => {
+                    tokio::time::sleep(Duration::from_millis(200)).await;
+                    post().await
+                }
+                other => other,
+            }.map_err(|e| e.to_string())?;
             let status = r.status().as_u16();
             let body = r.text().await.map_err(|e| format!("connection cut mid-answer ({e})"))?;
             Ok::<_, String>((status, body))
