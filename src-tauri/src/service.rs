@@ -30,6 +30,17 @@ pub struct ProviderView {
     pub address: String,
     /// How each app would reach this provider, or None when it cannot.
     pub routes: BTreeMap<&'static str, Option<Route>>,
+    /// Local providers only: whether something answers at its address now.
+    pub running: Option<bool>,
+}
+
+/// Is anything listening at this URL's host and port? (A quick local check.)
+fn listening(url: &str) -> bool {
+    use std::net::ToSocketAddrs;
+    let Ok(u) = reqwest::Url::parse(url) else { return false };
+    let (Some(host), Some(port)) = (u.host_str(), u.port_or_known_default()) else { return false };
+    (host, port).to_socket_addrs().ok().into_iter().flatten()
+        .any(|a| std::net::TcpStream::connect_timeout(&a, Duration::from_millis(200)).is_ok())
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -391,6 +402,7 @@ impl Service {
                 signin_available: def.credential_source != providers::CredentialSource::Keychain && self.signin_available(def),
                 key_optional: !def.requires_key,
                 routes: app_ids().into_iter().map(|a| (a, route_for(a, def))).collect(),
+                running: def.local.then(|| listening(&self.upstream_url(def))),
             })
             .collect()
     }
@@ -446,6 +458,10 @@ impl Service {
 
     pub async fn discover_models(&self, provider_id: &str) -> R<Vec<ModelInfo>> {
         let mut models = self.discover_models_raw(provider_id).await?;
+        // PrismFlow's own larger-context Ollama copies aren't separate choices.
+        if provider_id == "ollama" {
+            models.retain(|m| !(m.id.contains("-pf") && m.id.ends_with('k')));
+        }
         discovery::enrich(provider_id, &mut models);
         Ok(models)
     }

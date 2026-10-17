@@ -84,7 +84,9 @@ function PickProvider({ app, providers, onPick, onKeySaved, onBack }: {
   const [search, setSearch] = useState("");
   const [needsKey, setNeedsKey] = useState<Provider | null>(null);
   const usable = providers.filter((p) => p.routes[app] != null);
-  const ready = (p: Provider) => p.has_credential || p.key_optional;
+  const offline = (p: Provider) => p.local && p.running === false;
+  const ready = (p: Provider) => (p.has_credential || p.key_optional) && !offline(p);
+  const [stopped, setStopped] = useState<Provider | null>(null);
   // Accounts you're already signed in to on this computer (GitHub, ChatGPT…).
   const found = (p: Provider) => p.credential_source !== "keychain" && p.signin_available && !p.has_credential;
   const groups = useMemo(() => {
@@ -94,8 +96,28 @@ function PickProvider({ app, providers, onPick, onKeySaved, onBack }: {
       { title: "Found on this computer", items: usable.filter(found) },
       { title: "Ready to use", items: usable.filter(ready) },
       { title: "Popular", items: POPULAR.map((id) => usable.find((p) => p.id === id)).filter((p): p is Provider => !!p && !ready(p) && !found(p)) },
+      { title: "Not running right now", items: usable.filter(offline) },
     ];
   }, [providers, app, search]);
+  // Started meanwhile ("Check again"): carry on with it.
+  const stoppedNow = stopped && (providers.find((x) => x.id === stopped.id) ?? stopped);
+  useEffect(() => {
+    if (stoppedNow && !offline(stoppedNow)) { setStopped(null); onPick(stoppedNow.id); }
+  }, [stoppedNow]);
+  if (stopped && stoppedNow && offline(stoppedNow)) {
+    const current = stoppedNow;
+    const name = current.display_name.replace(/ \(local\)$/, "");
+    return (
+      <div className="card">
+        <div className="label">{name} isn't running</div>
+        <div className="small">Open {name} and start it (in LM Studio: turn on its local server), then check again.</div>
+        <div className="row mt">
+          <button className="ghost" onClick={() => setStopped(null)}>Back</button>
+          <button className="ghost" onClick={() => onKeySaved()}>Check again</button>
+        </div>
+      </div>
+    );
+  }
   if (needsKey) {
     // Read the latest state (a sign-in may have happened meanwhile).
     const current = providers.find((x) => x.id === needsKey.id) ?? needsKey;
@@ -109,9 +131,9 @@ function PickProvider({ app, providers, onPick, onKeySaved, onBack }: {
           {g.title && <h2>{g.title}</h2>}
           <div className="tiles">
             {g.items.map((p) => (
-              <button key={p.id} className="tile" onClick={() => (ready(p) ? onPick(p.id) : setNeedsKey(p))}>
+              <button key={p.id} className="tile" onClick={() => (offline(p) ? setStopped(p) : ready(p) ? onPick(p.id) : setNeedsKey(p))}>
                 {p.display_name}
-                <span className="small muted">{p.local ? "On this computer · free" : found(p) ? `Use your ${SIGNIN[p.credential_source]?.tool ?? ""} sign-in` : ready(p) ? "Ready" : p.credential_source !== "keychain" ? "Needs a sign-in" : "Needs a key"}</span>
+                <span className="small muted">{offline(p) ? "Not running" : p.local ? "On this computer · free" : found(p) ? `Use your ${SIGNIN[p.credential_source]?.tool ?? ""} sign-in` : ready(p) ? "Ready" : p.credential_source !== "keychain" ? "Needs a sign-in" : "Needs a key"}</span>
               </button>
             ))}
           </div>

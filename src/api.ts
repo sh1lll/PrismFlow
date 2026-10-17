@@ -18,6 +18,8 @@ export interface Provider {
   verified_at: string;
   credential_source: "keychain" | "gh_cli" | "codex_login" | "gcloud" | "copilot_cli";
   signin_available: boolean;
+  /** Local providers: whether something answers at their address now. */
+  running?: boolean | null;
   has_credential: boolean;
   key_count: number;
   address: string;
@@ -239,12 +241,23 @@ export interface ConnectPreview {
 
 export interface DiagEvent { ts: number; level: "info" | "warn" | "error"; code: string; message: string }
 
+/** Finding apps takes seconds; Home and Setup share one recent result. */
+let appsCache: { at: number; p: Promise<AppDetection[]> } | null = null;
+function cachedApps(): Promise<AppDetection[]> {
+  if (!appsCache || Date.now() - appsCache.at > 60_000) {
+    const p = invoke<AppDetection[]>("list_applications");
+    p.catch(() => { appsCache = null; });
+    appsCache = { at: Date.now(), p };
+  }
+  return appsCache.p;
+}
+
 export const api = {
   providers: () => invoke<Provider[]>("list_providers"),
   setCredential: (providerId: string, secret: string) => invoke<void>("set_credential", { providerId, secret }),
   deleteCredential: (providerId: string) => invoke<void>("delete_credential", { providerId }),
   discoverModels: (providerId: string) => invoke<ModelInfo[]>("discover_models", { providerId }),
-  applications: () => invoke<AppDetection[]>("list_applications"),
+  applications: () => cachedApps(),
   preview: (appId: AppId, providerId: string, model: string) => invoke<ConnectPreview>("preview_connection", { appId, providerId, model }),
   connect: (appId: AppId, providerId: string, model: string) => invoke<Connection>("connect", { appId, providerId, model }),
   verify: (id: string) => invoke<VerificationReport>("verify_connection", { id }),
