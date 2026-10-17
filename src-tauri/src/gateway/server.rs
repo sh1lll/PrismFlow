@@ -351,10 +351,18 @@ async fn proxy(State(inner): State<Arc<Inner>>, req: Request) -> Response {
                     binding.connection_id, target.provider_id, target.model, r.status().as_u16()
                 ));
             }
+            Err(e) if e.is_timeout() => {
+                // The engine was up and waiting on the provider the whole time.
+                inner.count(|c| c.upstream_errors += 1);
+                inner.record(Level::Warn, "broker.provider_timeout", &format!(
+                    "{} {method} {path}: {}/{} didn't answer for 5 minutes.", binding.connection_id, target.provider_id, target.model
+                ));
+                last_error = Some(reject(StatusCode::GATEWAY_TIMEOUT, "api_error", "the provider didn't answer for 5 minutes; it may be down or overloaded"));
+            }
             Err(e) => {
                 inner.count(|c| c.upstream_errors += 1);
                 let msg = format!("{} {method} {path}: gateway engine unreachable ({})", binding.connection_id,
-                    if e.is_timeout() { "timeout" } else if e.is_connect() { "connect" } else { "transport" });
+                    if e.is_connect() { "connect" } else { "transport" });
                 inner.record(Level::Error, "broker.engine_unreachable", &msg);
                 last_error = Some(reject(StatusCode::BAD_GATEWAY, "api_error", "the gateway engine is unreachable"));
             }

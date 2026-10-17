@@ -179,15 +179,30 @@ fn main() {
     }
     // Sandbox first, before any thread starts: every child process inherits it.
     let dir = tempfile::tempdir().unwrap();
-    let home = dir.path().join("home");
+    // A user name with a space and an accent, like many real ones.
+    let root = dir.path().join("Ann Lée");
+    let home = root.join("home");
     std::fs::create_dir_all(home.join(".claude")).unwrap();
     std::fs::create_dir_all(home.join(".codex")).unwrap();
     std::env::set_var("HOME", &home);
     std::env::set_var("USERPROFILE", &home);
     std::env::set_var("CODEX_HOME", home.join(".codex"));
     std::env::remove_var("CLAUDE_CONFIG_DIR");
-    std::env::set_var("PRISMFLOW_E2E_STORE", dir.path().join("store.json"));
-    let failures = tokio::runtime::Runtime::new().unwrap().block_on(run(dir.path(), &home));
+    // Every other app's settings files, inside the sandbox too.
+    std::env::set_var("PRISMFLOW_CLAUDE_3P_DIR", home.join("claude-3p"));
+    std::env::set_var("PRISMFLOW_VSCODE_USER_DIR", home.join("vscode-user"));
+    std::env::set_var("PRISMFLOW_EDITORS_HOME", &home);
+    std::env::set_var("PRISMFLOW_JETBRAINS_ACP_FILE", home.join(".jetbrains/acp.json"));
+    std::env::set_var("PRISMFLOW_MCP_HOME", &home);
+    std::env::set_var("PRISMFLOW_E2E_STORE", root.join("store.json"));
+    let failures = tokio::runtime::Runtime::new().unwrap().block_on(async {
+        let mut f = run(&root, &home).await;
+        // Hard conditions run with the default app set only.
+        if std::env::var_os("PRISMFLOW_E2E_HOLD").is_none() && std::env::var_os("PRISMFLOW_E2E_APPS").is_none() {
+            f.extend(conditions(&root, &home).await);
+        }
+        f
+    });
     if failures.is_empty() {
         println!("\nsandbox_e2e: PASS");
     } else {
@@ -205,6 +220,12 @@ fn report(svc: &Service, label: &str, r: &prismflow_lib::state::VerificationRepo
                 eprintln!("      | {l}");
             }
         }
+    }
+    // Apps PrismFlow can't drive itself (desktop apps, editors) stop at
+    // "not tested in the app" once the gateway answered for them.
+    let gateway_ok = r.stages.iter().any(|s| s.stage == 5 && s.outcome == prismflow_lib::state::StageOutcome::Pass);
+    if matches!(r.status, ConnectionStatus::Unverified) && gateway_ok {
+        return;
     }
     if !matches!(r.status, ConnectionStatus::ConnectedAndVerified) {
         for e in svc.diagnostics(30).iter().filter(|e| e.code.starts_with("broker.")) {
@@ -502,4 +523,349 @@ async fn stress(svc: &Service, id: &str, failures: &mut Vec<String>) {
     }
     let st = svc.gateway_status();
     eprintln!("  gateway: {:?}, {} requests, {} rejected, {} upstream errors", st.phase, st.requests, st.rejected, st.upstream_errors);
+}
+
+
+// ---------------------------------------------------------------------------
+// Hard conditions: no internet, services off, broken files, crashes, races.
+// Each case must end in bounded time, tell the user something plain, and
+// leave the user's own files as they were.
+
+/// A key store that refuses everything (Keychain locked, Credential Manager
+/// or Secret Service off).
+struct BrokenStore;
+
+impl CredentialStore for BrokenStore {
+    fn set(&self, _: &str, _: &str) -> Result<(), CredentialError> {
+        Err(CredentialError::Store("User interaction is not allowed.".into()))
+    }
+    fn get(&self, _: &str) -> Result<String, CredentialError> {
+        Err(CredentialError::Store("User interaction is not allowed.".into()))
+    }
+    fn delete(&self, _: &str) -> Result<(), CredentialError> {
+        Err(CredentialError::Store("User interaction is not allowed.".into()))
+    }
+}
+
+fn service(root: &Path, home: &Path, state: &str, store: Box<dyn CredentialStore>, port: u16, overrides: &[(&str, String)]) -> Service {
+    let state_dir = root.join(state);
+    let diag = Arc::new(DiagnosticsLog::new(state_dir.join("diagnostics.jsonl")));
+    let helper = if cfg!(windows) { root.join("prismflow-helper.cmd") } else { root.join("prismflow-helper") };
+    Service {
+        store,
+        state: StateStore::open(&state_dir).unwrap(),
+        broker: Broker::new(port, state_dir.clone(), Some(diag.clone())),
+        diag,
+        client: prismflow_lib::discovery::client(),
+        codex_home: home.join(".codex"),
+        claude_dir: home.join(".claude"),
+        helper,
+        agent_timeout: Duration::from_secs(90),
+        upstream_overrides: overrides.iter().map(|(k, v)| (k.to_string(), v.clone())).collect(),
+    }
+}
+
+fn free_port() -> u16 {
+    std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap().local_addr().unwrap().port()
+}
+
+/// Words that mean the user is looking at raw internals instead of a message.
+fn technical(msg: &str) -> Option<&'static str> {
+    ["os error", "reqwest", "hyper::", "error sending request", "Error {", "kind:", "panicked", "Os {", "serde", "expected value at line", "ECONNREFUSED", "tcp connect"]
+        .into_iter()
+        .find(|w| msg.contains(w))
+}
+
+struct Case<'a> {
+    name: &'a str,
+    failures: &'a mut Vec<String>,
+    started: Instant,
+}
+
+impl<'a> Case<'a> {
+    fn start(name: &'a str, failures: &'a mut Vec<String>) -> Self {
+        eprintln!("\n-- {name}");
+        Self { name, failures, started: Instant::now() }
+    }
+    /// What the user would read; flags raw internals.
+    fn says(&mut self, what: &str, msg: &str) {
+        let first = msg.lines().next().unwrap_or("");
+        eprintln!("   {what}: {first}  [{:.1?}]", self.started.elapsed());
+        if let Some(w) = technical(msg) {
+            self.failures.push(format!("{}: {what} shows raw internals ({w}): {}", self.name, msg.chars().take(200).collect::<String>()));
+        }
+    }
+    fn fail(&mut self, why: String) {
+        eprintln!("   FAIL: {why}");
+        self.failures.push(format!("{}: {why}", self.name));
+    }
+    fn within(&mut self, secs: u64) {
+        if self.started.elapsed() > Duration::from_secs(secs) {
+            let took = self.started.elapsed();
+            self.fail(format!("took {took:.0?} (limit {secs}s)"));
+        }
+    }
+}
+
+async fn verify_says(svc: &Service, id: &str, case: &mut Case<'_>) -> Option<ConnectionStatus> {
+    match svc.verify(id).await {
+        Ok(r) => {
+            let bad: Vec<String> = r.stages.iter()
+                .filter(|s| !matches!(s.outcome, prismflow_lib::state::StageOutcome::Pass | prismflow_lib::state::StageOutcome::Skipped))
+                .map(|s| format!("{} — {}", s.name, s.detail.lines().next().unwrap_or(""))).collect();
+            case.says(&format!("test → {:?}", r.status), &bad.join(" | "));
+            Some(r.status)
+        }
+        Err(e) => { case.says("test error", &e); None }
+    }
+}
+
+async fn conditions(root: &Path, home: &Path) -> Vec<String> {
+    let mut failures = Vec::new();
+    eprintln!("\n================ hard conditions ================");
+    let upstream = MockServer::start().await;
+    Mock::given(method("GET")).and(path("/v1/models"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({"data": [{"id": MOCK_MODEL}]})))
+        .mount(&upstream).await;
+    Mock::given(method("POST")).and(path("/v1/chat/completions")).respond_with(ToolModel).mount(&upstream).await;
+    let good = format!("{}/v1", upstream.uri());
+
+    // A server that accepts connections and never answers.
+    let silent = tokio::net::TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+    let silent_url = format!("http://{}/v1", silent.local_addr().unwrap());
+    tokio::spawn(async move {
+        let mut held = Vec::new();
+        while let Ok((sock, _)) = silent.accept().await { held.push(sock); }
+    });
+    // A Wi-Fi login page answering everything with HTML.
+    let portal = MockServer::start().await;
+    Mock::given(wiremock::matchers::any())
+        .respond_with(ResponseTemplate::new(200).set_body_raw("<html><body>Sign in to Airport Wi-Fi</body></html>", "text/html"))
+        .mount(&portal).await;
+    let nothing = "http://127.0.0.1:1/v1".to_string();
+    let before = snapshot(home);
+
+    // 1. No internet, three ways.
+    for (label, url) in [("no internet: connection refused", nothing.clone()), ("no internet: provider never answers", silent_url.clone()), ("no internet: Wi-Fi login page", format!("{}/v1", portal.uri()))] {
+        let mut case = Case::start(label, &mut failures);
+        let svc = service(root, home, &format!("state-{}", label.len()), Box::new(store()), free_port(), &[("groq", url)]);
+        let _ = svc.set_credential("groq", UPSTREAM_KEY);
+        match svc.discover_models("groq").await {
+            Ok(m) => case.says("model list", &format!("{} models (expected an error)", m.len())),
+            Err(e) => case.says("model list", &e),
+        }
+        case.within(40);
+        match svc.connect(claude_code::APP_ID, "groq", MOCK_MODEL).await {
+            Ok(rec) => {
+                verify_says(&svc, &rec.id, &mut case).await;
+                let _ = svc.disconnect(&rec.id).await;
+            }
+            Err(e) => case.says("connect", &e),
+        }
+        case.within(150);
+    }
+
+    // 2. The key store refuses (Keychain locked, Credential Manager off).
+    {
+        let mut case = Case::start("key store refuses", &mut failures);
+        let svc = service(root, home, "state-broken-store", Box::new(BrokenStore), free_port(), &[("groq", good.clone())]);
+        match svc.set_credential("groq", UPSTREAM_KEY) {
+            Ok(()) => case.fail("saving a key 'worked' with a broken store".into()),
+            Err(e) => case.says("save key", &e),
+        }
+        match svc.connect(claude_code::APP_ID, "ollama", "qwen3:4b").await {
+            Ok(_) => case.fail("connect 'worked' with a broken store".into()),
+            Err(e) => case.says("connect", &e),
+        }
+        let checks = prismflow_lib::selfcheck::run(&BrokenStore, &root.join("sc")).await;
+        let store_check = checks.iter().find(|c| c.name == "Saving keys");
+        match store_check {
+            Some(c) if !c.ok => case.says("self-check", &c.detail),
+            _ => case.fail("self-check didn't flag the key store".into()),
+        }
+        case.within(30);
+    }
+
+    // 3. The key can't be read when the app asks for it.
+    {
+        let mut case = Case::start("key unreadable at run time", &mut failures);
+        let svc = service(root, home, "state-key-gone", Box::new(store()), free_port(), &[("groq", good.clone())]);
+        let _ = svc.set_credential("groq", UPSTREAM_KEY);
+        match svc.connect(claude_code::APP_ID, "groq", MOCK_MODEL).await {
+            Ok(rec) => {
+                let token_acct = tokens::account(&rec.id);
+                let saved = svc.store.get(&token_acct).ok();
+                let _ = svc.store.delete(&token_acct);
+                verify_says(&svc, &rec.id, &mut case).await;
+                if let Some(t) = saved { let _ = svc.store.set(&token_acct, &t); }
+                let _ = svc.disconnect(&rec.id).await;
+            }
+            Err(e) => case.fail(format!("connect: {e}")),
+        }
+        case.within(120);
+    }
+
+    // 4. The engine or Node is missing.
+    for (label, var, val) in [("engine missing", "PRISMFLOW_GATEWAY_DIR", root.join("no-engine")), ("Node missing", "PRISMFLOW_NODE_BIN", root.join("no-node"))] {
+        let mut case = Case::start(label, &mut failures);
+        let old = std::env::var_os(var);
+        std::env::set_var(var, &val);
+        let svc = service(root, home, &format!("state-{var}"), Box::new(store()), free_port(), &[("groq", good.clone())]);
+        let _ = svc.set_credential("groq", UPSTREAM_KEY);
+        let files = snapshot(home);
+        match svc.connect(claude_code::APP_ID, "groq", MOCK_MODEL).await {
+            Ok(rec) => {
+                case.says("connect", "connected anyway");
+                verify_says(&svc, &rec.id, &mut case).await;
+                let _ = svc.disconnect(&rec.id).await;
+            }
+            Err(e) => case.says("connect", &e),
+        }
+        let checks = prismflow_lib::selfcheck::run(&store(), &root.join("sc2")).await;
+        if let Some(c) = checks.iter().find(|c| !c.ok) { case.says("self-check", &c.detail) } else { case.fail("self-check passed with no engine".into()) }
+        match old { Some(v) => std::env::set_var(var, v), None => std::env::remove_var(var) }
+        if snapshot(home) != files { case.fail("user files changed".into()); }
+        case.within(60);
+    }
+
+    // 5. The gateway's port is taken by something else.
+    {
+        let mut case = Case::start("gateway port taken", &mut failures);
+        let squatter = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let port = squatter.local_addr().unwrap().port();
+        let svc = service(root, home, "state-port", Box::new(store()), port, &[("groq", good.clone())]);
+        let _ = svc.set_credential("groq", UPSTREAM_KEY);
+        let files = snapshot(home);
+        match svc.connect(claude_code::APP_ID, "groq", MOCK_MODEL).await {
+            Ok(rec) => {
+                case.says("connect", "connected anyway");
+                verify_says(&svc, &rec.id, &mut case).await;
+                let _ = svc.disconnect(&rec.id).await;
+            }
+            Err(e) => case.says("connect", &e),
+        }
+        if !svc.connections().unwrap_or_default().is_empty() { case.fail("a connection is left over".into()); }
+        if snapshot(home) != files { case.fail("user files changed".into()); }
+        drop(squatter);
+        case.within(60);
+    }
+
+    // 6. Ollama installed but not running.
+    {
+        let mut case = Case::start("Ollama not running", &mut failures);
+        let svc = service(root, home, "state-ollama-off", Box::new(store()), free_port(), &[("ollama", nothing.clone())]);
+        match svc.discover_models("ollama").await {
+            Ok(m) => case.says("model list", &format!("{} models (expected an error)", m.len())),
+            Err(e) => case.says("model list", &e),
+        }
+        match svc.connect(codex::APP_ID, "ollama", "qwen3:4b").await {
+            Ok(rec) => {
+                verify_says(&svc, &rec.id, &mut case).await;
+                let _ = svc.disconnect(&rec.id).await;
+            }
+            Err(e) => case.says("connect", &e),
+        }
+        case.within(150);
+    }
+
+    // 7. The user's own settings files are broken.
+    {
+        let mut case = Case::start("broken user settings", &mut failures);
+        let toml = home.join(".codex/config.toml");
+        let json = home.join(".claude/settings.json");
+        let (old_toml, old_json) = (std::fs::read_to_string(&toml).ok(), std::fs::read_to_string(&json).ok());
+        std::fs::write(&toml, "model = \"gpt-5\"\n[profiles.mine\nthis is = = not toml\n").unwrap();
+        std::fs::write(&json, "{ \"theme\": \"dark\", oops }").unwrap();
+        let broken = snapshot(home);
+        let svc = service(root, home, "state-broken-files", Box::new(store()), free_port(), &[("groq", good.clone())]);
+        let _ = svc.set_credential("groq", UPSTREAM_KEY);
+        for app in [codex::APP_ID, claude_code::APP_ID] {
+            match svc.connect(app, "groq", MOCK_MODEL).await {
+                Ok(rec) => {
+                    case.says(&format!("connect {app}"), "connected");
+                    verify_says(&svc, &rec.id, &mut case).await;
+                    let _ = svc.disconnect(&rec.id).await;
+                }
+                Err(e) => case.says(&format!("connect {app}"), &e),
+            }
+        }
+        if snapshot(home) != broken { case.fail("a broken user file was rewritten".into()); }
+        match old_toml { Some(t) => std::fs::write(&toml, t).unwrap(), None => { let _ = std::fs::remove_file(&toml); } }
+        match old_json { Some(t) => std::fs::write(&json, t).unwrap(), None => { let _ = std::fs::remove_file(&json); } }
+        case.within(120);
+    }
+
+    // 8. PrismFlow crashes while apps are connected, then starts again.
+    {
+        let mut case = Case::start("crash and restart", &mut failures);
+        let port = free_port();
+        let ids: Vec<String> = {
+            let svc = service(root, home, "state-crash", Box::new(store()), port, &[("groq", good.clone())]);
+            let _ = svc.set_credential("groq", UPSTREAM_KEY);
+            let mut ids = Vec::new();
+            for app in [claude_code::APP_ID, codex::APP_ID] {
+                match svc.connect(app, "groq", MOCK_MODEL).await {
+                    Ok(r) => ids.push(r.id),
+                    Err(e) => case.fail(format!("connect {app}: {e}")),
+                }
+            }
+            // No disconnect: the process just goes away. Its port is freed
+            // and the engine exits (its stdin closes), which is what stop does.
+            svc.broker.stop().await;
+            drop(svc);
+            ids
+        };
+        let svc = service(root, home, "state-crash", Box::new(store()), port, &[("groq", good.clone())]);
+        match svc.sync_gateway().await {
+            Ok(st) => case.says("restart gateway", &format!("{:?}", st.phase)),
+            Err(e) => case.says("restart gateway", &e),
+        }
+        for id in &ids {
+            if verify_says(&svc, id, &mut case).await != Some(ConnectionStatus::ConnectedAndVerified) {
+                case.fail(format!("{id} doesn't work after a restart"));
+            }
+        }
+        for id in &ids { if let Err(e) = svc.disconnect(id).await { case.fail(format!("remove {id}: {e}")); } }
+        case.within(120);
+    }
+
+    // 9. Two apps switch at the same moment; the same app is set up twice at once.
+    {
+        let mut case = Case::start("switching at the same moment", &mut failures);
+        let svc = service(root, home, "state-race", Box::new(store()), free_port(), &[("groq", good.clone()), ("nvidia_nim", good.clone())]);
+        let _ = svc.set_credential("groq", UPSTREAM_KEY);
+        let _ = svc.set_credential("nvidia_nim", UPSTREAM_KEY);
+        let a = svc.connect(claude_code::APP_ID, "groq", MOCK_MODEL).await;
+        let b = svc.connect(codex::APP_ID, "groq", MOCK_MODEL).await;
+        if let (Ok(a), Ok(b)) = (a, b) {
+            let (x, y) = tokio::join!(
+                prismflow_lib::tray::switch(&svc, &a.id, "nvidia_nim", MOCK_MODEL),
+                prismflow_lib::tray::switch(&svc, &b.id, "nvidia_nim", MOCK_MODEL),
+            );
+            if let Err(e) = x { case.fail(format!("switch Claude Code: {e}")); }
+            if let Err(e) = y { case.fail(format!("switch Codex: {e}")); }
+            let (p, q) = tokio::join!(
+                svc.connect(claude_code::APP_ID, "groq", MOCK_MODEL),
+                svc.connect(claude_code::APP_ID, "groq", MOCK_MODEL),
+            );
+            case.says("double setup", &format!("{} / {}", p.is_ok(), q.is_ok()));
+            let conns = svc.connections().unwrap_or_default();
+            eprintln!("   connections now: {:?}", conns.iter().map(|c| c.id.clone()).collect::<Vec<_>>());
+            for c in &conns {
+                if verify_says(&svc, &c.id, &mut case).await != Some(ConnectionStatus::ConnectedAndVerified) {
+                    case.fail(format!("{} doesn't work after the race", c.id));
+                }
+            }
+            for c in conns { let _ = svc.disconnect(&c.id).await; }
+            if svc.broker.is_running().await { case.fail("gateway still running after removing everything".into()); }
+        } else {
+            case.fail("couldn't connect the two apps".into());
+        }
+        case.within(120);
+    }
+
+    if snapshot(home) != before {
+        failures.push("hard conditions: the user's files differ from before".into());
+    }
+    failures
 }

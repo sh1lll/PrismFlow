@@ -155,21 +155,23 @@ function StartUp() {
 function Updates() {
   const [msg, setMsg] = useState<{ tone: string; text: string } | null>(null);
   const [available, setAvailable] = useState<string | null>(null);
+  const [busy, setBusy] = useState<"" | "check" | "install">("");
   async function check() {
-    setMsg(null);
+    setMsg(null); setBusy("check");
     try {
       const u = await api.checkUpdate();
       setAvailable(u.available);
       setMsg(u.available ? { tone: "ok", text: `Version ${u.available} is ready (you have ${u.current}).` } : { tone: "ok", text: `Up to date (${u.current}).` });
-    } catch (e) { setMsg({ tone: "muted", text: errText(e) }); }
+    } catch { setMsg({ tone: "muted", text: "Couldn't check for updates. Check your internet connection and try again." }); }
+    finally { setBusy(""); }
   }
   return (
     <div className="card">
       <div className="row spread">
         <div className="section-title">Updates</div>
-        <button className="ghost" onClick={check}>Check</button>
+        <button className="ghost" disabled={busy !== ""} onClick={check}>{busy === "check" ? "Checking…" : "Check"}</button>
       </div>
-      {available && <button className="primary mt-s" onClick={() => api.installUpdate().catch((e) => setMsg({ tone: "err", text: errText(e) }))}>Install {available} and restart</button>}
+      {available && <button className="primary mt-s" disabled={busy !== ""} onClick={() => { setBusy("install"); api.installUpdate().catch(() => setMsg({ tone: "err", text: "The update didn't download. Check your internet connection and try again." })).finally(() => setBusy("")); }}>{busy === "install" ? "Installing…" : `Install ${available} and restart`}</button>}
       {msg && <div className={`small mt ${msg.tone}`}>{msg.text}</div>}
     </div>
   );

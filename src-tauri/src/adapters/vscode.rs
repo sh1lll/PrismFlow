@@ -110,8 +110,15 @@ pub fn bundled_claude() -> Option<PathBuf> {
     found.pop()
 }
 
+/// Whether the Claude Code extension is installed (in any version).
+fn claude_extension_installed() -> bool {
+    let Some(ext) = dirs::home_dir().map(|h| h.join(".vscode").join("extensions")) else { return false };
+    std::fs::read_dir(ext).is_ok_and(|d| d.flatten().any(|e| e.file_name().to_string_lossy().starts_with("anthropic.claude-code-")))
+}
+
 pub fn detect(app_id: &str) -> AppDetection {
-    let found = installed();
+    // The Claude Code modes also need the extension, not just VS Code.
+    let found = installed() && (!matches!(app_id, CLAUDE_APP_ID | CLAUDE_SHARED_APP_ID) || claude_extension_installed() || cfg!(test));
     let (name, notes) = if app_id == CLAUDE_APP_ID {
         ("Claude Code for VS Code (separate)", vec!["Uses PrismFlow in the Claude Code extension, with its own chats. Your own ~/.claude stays as it is.".to_string()])
     } else if app_id == CLAUDE_SHARED_APP_ID {
@@ -204,7 +211,7 @@ fn plan_extension(user: &Path, connection_id: &str, var_name: &str, value: &Path
     vars.push(json!({ "name": CONNECTION_VAR, "value": connection_id }));
     vars.push(json!({ "name": ADDED_VAR, "value": added.join(",") }));
     jsonfile::set(&mut obj, &[ENV_KEY], Value::Array(vars))?;
-    Ok((file, before, jsonfile::render(&obj)))
+    { let after = jsonfile::render_like(&before, &obj); Ok((file, before, after)) }
 }
 
 /// Claude Code extension, separate: its own Claude config folder (owned by
@@ -241,7 +248,7 @@ pub fn disconnect_claude_in(user: &Path, connection_id: &str) -> Result<(), Stri
     if !file.exists() {
         return Ok(());
     }
-    let (_, mut obj) = jsonfile::read_object(&file)?;
+    let (before, mut obj) = jsonfile::read_object(&file)?;
     let vars = vars_of(&obj);
     if var(&vars, CONNECTION_VAR) != Some(connection_id) {
         return Ok(());
@@ -259,7 +266,7 @@ pub fn disconnect_claude_in(user: &Path, connection_id: &str) -> Result<(), Stri
     for key in added.iter().filter(|k| !k.is_empty()) {
         obj.remove(key.as_str());
     }
-    crate::config_engine::atomic_write(&file, &jsonfile::render(&obj)).map_err(|e| e.to_string())
+    crate::config_engine::atomic_write(&file, &jsonfile::render_like(&before, &obj)).map_err(|e| e.to_string())
 }
 
 /// The shared mode's settings file, if VS Code still runs the extension

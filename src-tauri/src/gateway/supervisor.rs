@@ -115,13 +115,17 @@ impl GatewayRuntime {
                 "The installed gateway engine is not the reviewed {ENGINE} {ENGINE_VERSION} (MIT). Run scripts/fetch-gateway.sh."
             ));
         }
-        let node = find_node().ok_or_else(|| format!(
-            "Node.js {NODE_MIN_MAJOR} or newer is required to run the gateway and was not found. Install it from nodejs.org or with Homebrew."
-        ))?;
+        // Release builds carry their own Node; if it's gone, reinstalling is the fix.
+        let missing = if option_env!("PRISMFLOW_RELEASE").is_some() {
+            "Part of PrismFlow is missing or was blocked (sometimes by antivirus). Reinstall PrismFlow.".to_string()
+        } else {
+            format!("Node.js {NODE_MIN_MAJOR} or newer is needed and wasn't found. Install it from nodejs.org.")
+        };
+        let node = find_node().ok_or_else(|| missing.clone())?;
         let out = crate::spawn::command(&node)
             .arg("--version")
             .output()
-            .map_err(|e| format!("Could not run {}: {e}", node.display()))?;
+            .map_err(|_| missing.clone())?;
         let node_version = String::from_utf8_lossy(&out.stdout).trim().to_string();
         match node_major(&node_version) {
             Some(m) if m >= NODE_MIN_MAJOR => Ok(Self { node, node_version, package_dir }),

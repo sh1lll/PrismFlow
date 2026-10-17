@@ -22,6 +22,8 @@ pub fn for_event(code: &str, message: &str) -> Option<(String, String)> {
         "broker.request" if m.contains("→ 401") || m.contains("→ 403") => ("A key was rejected".into(), "A provider turned down its key. Check it on the Providers page.".into()),
         "broker.request" if m.contains("→ 429") => ("A provider is busy".into(), "A provider said you're over its limit. Try again soon, or add a backup model.".into()),
         "broker.fallback" => ("Using a backup model".into(), "Your main model failed, so PrismFlow used your backup.".into()),
+        // Offline is the usual cause, and PrismFlow retries every minute.
+        "gateway.copilot" | "gateway.copilot_refresh" if m.contains("didn't answer in time") || m.contains("trying again") => ("GitHub Copilot is unreachable".into(), "PrismFlow keeps trying. If you're online and it still fails, run `copilot login`.".into()),
         "gateway.copilot" | "gateway.copilot_refresh" => ("GitHub Copilot needs attention".into(), "Copilot isn't available. Run `copilot login`, then reopen PrismFlow.".into()),
         "gateway.refresh" => ("Google Cloud sign-in expired".into(), "Run `gcloud auth login` to keep using Vertex AI.".into()),
         "gateway.startup" | "connect.gateway" => ("PrismFlow's background service stopped".into(), "Connected apps can't reach their models. Open PrismFlow to restart it.".into()),

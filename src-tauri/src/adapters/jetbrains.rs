@@ -182,7 +182,7 @@ pub fn plan(
         "env": { "CODEX_HOME": codex_home.display().to_string(), MARKER_ENV: connection_id }
     }))?;
     Ok(Plan {
-        after: jsonfile::render(&obj),
+        after: jsonfile::render_like(&before, &obj),
         file,
         before,
         owned: vec![(claude_dir.join("settings.json"), claude_settings), (codex_home.join("config.toml"), codex_config)],
@@ -192,7 +192,7 @@ pub fn plan(
 /// Removes this connection's entries from acp.json (only ones it wrote).
 pub fn disconnect(connection_id: &str) -> Result<(), String> {
     let file = acp_file();
-    let (_, mut obj) = jsonfile::read_object(&file)?;
+    let (before, mut obj) = jsonfile::read_object(&file)?;
     let names: Vec<String> = jsonfile::get(&obj, &["agent_servers"])
         .and_then(Value::as_object)
         .map(|m| m.iter().filter(|(_, v)| v["env"][MARKER_ENV] == connection_id).map(|(k, _)| k.clone()).collect())
@@ -203,7 +203,7 @@ pub fn disconnect(connection_id: &str) -> Result<(), String> {
     for n in &names {
         jsonfile::remove_if(&mut obj, &["agent_servers", n], |v| v["env"][MARKER_ENV] == connection_id);
     }
-    crate::config_engine::atomic_write(&file, &jsonfile::render(&obj)).map_err(|e| e.to_string())
+    crate::config_engine::atomic_write(&file, &jsonfile::render_like(&before, &obj)).map_err(|e| e.to_string())
 }
 
 /// This connection's entry `name` as written in acp.json (for testing it).

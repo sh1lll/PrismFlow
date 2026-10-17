@@ -11,7 +11,28 @@ use std::path::Path;
 
 /// A Google Cloud access token from the user's own `gcloud` sign-in (Vertex
 /// AI's documented way; tokens last one hour).
+/// Last good Google Cloud token and when it was fetched. Tokens last an hour:
+/// reuse one for a few minutes instead of running gcloud on every screen,
+/// and keep using it through a network blip while it's still valid.
+static GCLOUD: std::sync::Mutex<Option<(String, std::time::Instant)>> = std::sync::Mutex::new(None);
+
 pub fn gcloud_token() -> Option<String> {
+    let cached = GCLOUD.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    if let Some((t, at)) = &cached {
+        if at.elapsed() < std::time::Duration::from_secs(5 * 60) {
+            return Some(t.clone());
+        }
+    }
+    match fetch_gcloud_token() {
+        Some(t) => {
+            *GCLOUD.lock().unwrap_or_else(|e| e.into_inner()) = Some((t.clone(), std::time::Instant::now()));
+            Some(t)
+        }
+        None => cached.filter(|(_, at)| at.elapsed() < std::time::Duration::from_secs(50 * 60)).map(|(t, _)| t),
+    }
+}
+
+fn fetch_gcloud_token() -> Option<String> {
     let gcloud = crate::adapters::find_exe("gcloud")?;
     let out = crate::spawn::command(gcloud).args(["auth", "print-access-token", "--quiet"]).stdin(std::process::Stdio::null()).output().ok()?;
     if !out.status.success() {

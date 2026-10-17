@@ -28,7 +28,10 @@ export default function TryChat() {
     try {
       const reply = await api.tryChat(providerId, model, next);
       setMsgs([...next, { role: "assistant", content: reply || "(no reply)" }]);
-    } catch (e) { setError(errText(e)); }
+    } catch (e) {
+      // Put the message back in the box so it can be sent again.
+      setMsgs(msgs); setText(next[next.length - 1].content); setError(errText(e));
+    }
     finally { setBusy(false); }
   }
 

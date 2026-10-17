@@ -136,7 +136,7 @@ pub fn plan(id: &str, owned_dir: &Path, state_dir: &Path, connection_id: &str, b
                 }
             }
             obj.insert("roo-cline.autoImportSettingsPath".into(), json!(import.display().to_string()));
-            Ok(Plan { file, before, after: jsonfile::render(&obj), owned: vec![(import, serde_json::to_string_pretty(&body).unwrap_or_default())] })
+            Ok(Plan { file, after: jsonfile::render_like(&before, &obj), before, owned: vec![(import, serde_json::to_string_pretty(&body).unwrap_or_default())] })
         }
         KILO => {
             let file = kilo_file();
@@ -149,7 +149,7 @@ pub fn plan(id: &str, owned_dir: &Path, state_dir: &Path, connection_id: &str, b
                 "options": { "baseURL": base, "apiKey": key },
                 "models": { model: { "name": format!("{model} (PrismFlow)") } }
             }))?;
-            Ok(Plan { file, before, after: jsonfile::render(&obj), owned: vec![] })
+            Ok(Plan { file, after: jsonfile::render_like(&before, &obj), before, owned: vec![] })
         }
         ZED | ZED_SEPARATE => {
             let file = zed_file_for(id, state_dir);
@@ -158,7 +158,7 @@ pub fn plan(id: &str, owned_dir: &Path, state_dir: &Path, connection_id: &str, b
                 "api_url": base,
                 "available_models": [{ "name": model, "display_name": format!("{model} (PrismFlow)"), "max_tokens": 32768 }]
             }))?;
-            Ok(Plan { file, before, after: jsonfile::render(&obj), owned: vec![] })
+            Ok(Plan { file, after: jsonfile::render_like(&before, &obj), before, owned: vec![] })
         }
         _ => Ok(Plan { file: home().join(".continue/config.yaml"), before: String::new(), after: String::new(), owned: vec![] }),
     }
@@ -192,14 +192,14 @@ pub fn disconnect(id: &str, connection_id: &str, state_dir: &Path) -> Result<(),
     if !file.exists() {
         return Ok(());
     }
-    let (_, mut obj) = jsonfile::read_object(&file)?;
+    let (before, mut obj) = jsonfile::read_object(&file)?;
     let removed = match id {
         ROO => jsonfile::remove_if(&mut obj, &path, |v| v.as_str().is_some_and(|s| s.contains("prismflow") || s.contains("PrismFlow"))),
         KILO => jsonfile::remove_if(&mut obj, &path, |v| v[MARKER] == connection_id),
         _ => jsonfile::remove_if(&mut obj, &path, |_| true),
     };
     if removed {
-        crate::config_engine::atomic_write(&file, &jsonfile::render(&obj)).map_err(|e| e.to_string())?;
+        crate::config_engine::atomic_write(&file, &jsonfile::render_like(&before, &obj)).map_err(|e| e.to_string())?;
     }
     Ok(())
 }

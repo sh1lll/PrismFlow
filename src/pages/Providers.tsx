@@ -57,8 +57,11 @@ function KeyEditor({ p, onChange, setMsg }: { p: Provider; onChange: () => void;
     }
   }
 
+  // Sign-in waits on the browser; it has its own flag so pasting a key
+  // instead stays possible meanwhile.
+  const [signingIn, setSigningIn] = useState(false);
   async function signIn() {
-    setBusy(true);
+    setSigningIn(true);
     setMsg({ tone: "muted", text: "Finish signing in in your browser…" });
     try {
       await api.openrouterSignIn();
@@ -67,7 +70,7 @@ function KeyEditor({ p, onChange, setMsg }: { p: Provider; onChange: () => void;
     } catch (e) {
       setMsg({ tone: "err", text: errText(e) });
     } finally {
-      setBusy(false);
+      setSigningIn(false);
     }
   }
 
@@ -95,7 +98,7 @@ function KeyEditor({ p, onChange, setMsg }: { p: Provider; onChange: () => void;
     </div>
   ) : (
     <div className="row">
-      {p.id === "openrouter" && !p.has_credential && <button className="primary" disabled={busy} onClick={signIn}>Sign in with OpenRouter</button>}
+      {p.id === "openrouter" && !p.has_credential && <button className="primary" disabled={signingIn} onClick={signIn}>{signingIn ? "Waiting for the browser…" : "Sign in with OpenRouter"}</button>}
       <button className="ghost" onClick={() => setEditing(true)}>{p.has_credential ? "Change key" : p.key_optional ? "Add key (optional)" : p.id === "openrouter" ? "Paste a key instead" : "Add key"}</button>
       {p.has_credential && <button className="ghost" onClick={() => setAdding(true)}>Add another key</button>}
       {p.key_count > 1 && <button className="ghost" onClick={() => api.removeExtraKeys(p.id).then(() => { setMsg({ tone: "ok", text: "Extra keys removed." }); onChange(); }).catch((e) => setMsg({ tone: "err", text: errText(e) }))}>Remove extra keys</button>}

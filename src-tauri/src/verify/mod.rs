@@ -457,11 +457,23 @@ async fn run_stages(
     // Gateway connections also need the local broker + engine up.
     if let Some(g) = &env.gateway {
         if g.phase == Phase::Ready {
-            run.push(3, "Gateway", StageOutcome::Pass, "Running.");
             let _ = (&g.url, &g.engine);
+            // The app reads its PrismFlow key at run time; without it every
+            // request is refused (and some apps retry for minutes first).
+            match env.store.get(&crate::gateway::tokens::account(&record.id)) {
+                Ok(_) => run.push(3, "Gateway", StageOutcome::Pass, "Running."),
+                Err(crate::credentials::CredentialError::NotFound(_)) => {
+                    run.push(3, "Gateway", StageOutcome::Fail, "This app's PrismFlow key is missing. Remove the app and add it again.");
+                    return ConnectionStatus::AuthenticationFailed;
+                }
+                Err(e) => {
+                    run.push(3, "Gateway", StageOutcome::Fail, crate::credentials::store_problem(&e));
+                    return ConnectionStatus::AuthenticationFailed;
+                }
+            }
         } else {
             run.push(3, "Gateway", StageOutcome::Fail, format!(
-                "PrismFlow's background service isn't running. Restart it on the Overview page.{}",
+                "PrismFlow's background service isn't running. Restart it under More → Activity.{}",
                 g.detail.clone().map(|d| format!("\n\n{d}")).unwrap_or_default()
             ));
             return ConnectionStatus::RequiresAttention;
@@ -1192,6 +1204,10 @@ esac"#;
     }
 
     async fn run_claude_fixture(claude_body: &str, phase: Phase) -> VerificationReport {
+        run_claude_fixture_with(claude_body, phase, true).await
+    }
+
+    async fn run_claude_fixture_with(claude_body: &str, phase: Phase, with_app_key: bool) -> VerificationReport {
         let home = tempfile::tempdir().unwrap();
         let helper = fake_codex(home.path(), "echo helper");
         let nim = providers::get("nvidia_nim").unwrap();
@@ -1204,6 +1220,9 @@ esac"#;
             .mount(&server).await;
         let store = InMemoryStore::new();
         store.set(&account_key("nvidia_nim", "default"), "nvapi-secretsecretsecret").unwrap();
+        if with_app_key {
+            store.set(&crate::gateway::tokens::account("claude_code:nvidia_nim"), "pft_fixture").unwrap();
+        }
         let bin_dir = tempfile::tempdir().unwrap();
         let claude = bin_dir.path().join("claude");
         std::fs::write(&claude, format!("#!/bin/sh\n{claude_body}\n")).unwrap();
@@ -1239,6 +1258,13 @@ esac"#;
         let last = r.stages.last().unwrap();
         assert_eq!(last.name, "Gateway");
         assert!(last.detail.contains("Node.js"));
+    }
+
+    #[tokio::test]
+    async fn missing_app_key_is_named_before_running_the_app() {
+        let r = run_claude_fixture_with(GOOD_CLAUDE, Phase::Ready, false).await;
+        assert_eq!(r.status, ConnectionStatus::AuthenticationFailed, "{:#?}", r.stages);
+        assert!(r.stages.last().unwrap().detail.contains("key is missing"));
     }
 
     #[tokio::test]

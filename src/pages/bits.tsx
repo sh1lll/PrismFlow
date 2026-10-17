@@ -8,10 +8,11 @@ const notForChat = (id: string) => /embed|rerank|whisper|tts|moderation|image|vi
 export function ModelPicker({ provider, value, onChange }: { provider: Provider; value: string; onChange: (m: string) => void }) {
   const [models, setModels] = useState<ModelInfo[] | null>(null);
   const [error, setError] = useState("");
-  const [codingOnly, setCodingOnly] = useState(true);
+  // Local model names rarely say "coder"; don't hide them by default.
+  const [codingOnly, setCodingOnly] = useState(!provider.local);
   const [filter, setFilter] = useState("");
   useEffect(() => {
-    setModels(null); setError("");
+    setModels(null); setError(""); setFilter(""); setCodingOnly(!provider.local);
     api.discoverModels(provider.id).then(setModels).catch((e) => setError(errText(e)));
   }, [provider.id]);
   const shown = useMemo(() => {
@@ -30,6 +31,9 @@ export function ModelPicker({ provider, value, onChange }: { provider: Provider;
       )}
       {!models && !error && <div className="small muted">Loading models…</div>}
       {error && <div className="small muted">Couldn't load the list. Type the model name instead.</div>}
+      {models && models.length > 0 && value && !models.some((m) => m.id === value) && (
+        <div className="small warn">"{value}" isn't in {provider.display_name}'s list. Pick one below, or check the spelling.</div>
+      )}
       {models && (
         <div className="model-list">
           {shown.map((m) => (

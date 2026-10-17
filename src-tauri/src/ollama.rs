@@ -140,8 +140,15 @@ fn set_pull(name: &str, p: Pull) {
 }
 
 /// Downloads `name` in the background; progress via `pulls()`.
-pub fn start_pull(client: reqwest::Client, root: String, name: String) {
+pub fn start_pull(_shared: reqwest::Client, root: String, name: String) {
     set_pull(&name, Pull { status: "Starting".into(), ..Default::default() });
+    // A download takes minutes; the shared client's 30 s limit covers the
+    // whole body and cut every download short. Only a stall ends this one.
+    let client = reqwest::Client::builder()
+        .connect_timeout(std::time::Duration::from_secs(10))
+        .read_timeout(std::time::Duration::from_secs(120))
+        .build()
+        .unwrap_or_default();
     tokio::spawn(async move {
         use futures_util::StreamExt;
         let r = client.post(format!("{root}/api/pull")).json(&json!({ "model": name, "stream": true })).send().await;

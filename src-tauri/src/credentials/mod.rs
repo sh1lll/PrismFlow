@@ -22,6 +22,24 @@ pub trait CredentialStore: Send + Sync {
 
 pub const SERVICE_NAME: &str = "app.prismflow.desktop";
 
+/// What to tell the user when the system's key store isn't working (locked,
+/// turned off, or missing), as opposed to a key simply not being there.
+pub fn store_problem(e: &CredentialError) -> String {
+    match e {
+        CredentialError::NotFound(_) => "That key isn't saved anymore.".into(),
+        CredentialError::Store(_) => {
+            let fix = if cfg!(target_os = "macos") {
+                "If your Mac asked for a password, enter it and click Always Allow, then try again."
+            } else if cfg!(windows) {
+                "Make sure you're signed in to Windows normally, then try again."
+            } else {
+                "Unlock your keyring (for example GNOME Keyring or KWallet), or install one, then try again."
+            };
+            format!("PrismFlow can't use your computer's password store right now (it may be locked or turned off). {fix}")
+        }
+    }
+}
+
 pub fn account_key(provider_id: &str, account_name: &str) -> String {
     format!("prismflow:{}:{}", provider_id, account_name)
 }

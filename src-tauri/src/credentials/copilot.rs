@@ -131,6 +131,7 @@ impl Cli {
             .spawn()
             .map_err(|e| format!("Couldn't start the Copilot CLI: {e}"))?;
         let out = BufReader::new(child.stdout.take().ok_or("no stdout")?);
+        LIVE.lock().unwrap_or_else(|e| e.into_inner()).push(child.id());
         Ok(Self { child, out, next: 0 })
     }
 
@@ -159,19 +160,37 @@ impl Cli {
 
 impl Drop for Cli {
     fn drop(&mut self) {
+        let id = self.child.id();
+        LIVE.lock().unwrap_or_else(|e| e.into_inner()).retain(|p| *p != id);
         let _ = self.child.kill();
         let _ = self.child.wait();
     }
 }
 
-/// Runs `f` with a deadline; the CLI is killed if it hangs.
+/// Copilot CLIs started and not yet finished.
+static LIVE: Mutex<Vec<u32>> = Mutex::new(Vec::new());
+
+/// Runs `f` with a deadline; the CLI is killed if it hangs (which also
+/// unblocks the worker thread reading from it).
 fn with_timeout<T: Send + 'static>(secs: u64, f: impl FnOnce() -> Result<T, String> + Send + 'static) -> Result<T, String> {
     let (tx, rx) = std::sync::mpsc::channel();
+    let before: Vec<u32> = LIVE.lock().unwrap_or_else(|e| e.into_inner()).clone();
     std::thread::spawn(move || {
         let _ = tx.send(f());
     });
-    rx.recv_timeout(Duration::from_secs(secs)).map_err(|_| "The Copilot CLI didn't answer in time.".to_string())?
+    rx.recv_timeout(Duration::from_secs(secs)).map_err(|_| {
+        let stuck: Vec<u32> = LIVE.lock().unwrap_or_else(|e| e.into_inner()).iter().copied().filter(|p| !before.contains(p)).collect();
+        for pid in stuck {
+            #[cfg(unix)]
+            let _ = crate::spawn::command("kill").args(["-KILL", &pid.to_string()]).status();
+            #[cfg(windows)]
+            let _ = crate::spawn::command("taskkill").args(["/T", "/F", "/PID", &pid.to_string()]).status();
+        }
+        TIMED_OUT.to_string()
+    })?
 }
+
+const TIMED_OUT: &str = "The Copilot CLI didn't answer in time.";
 
 static SIGNED_IN: Mutex<Option<(Instant, bool)>> = Mutex::new(None);
 static EXPIRY: Mutex<Option<SystemTime>> = Mutex::new(None);
@@ -183,13 +202,20 @@ pub fn signed_in() -> bool {
             return v;
         }
     }
-    let v = find_cli().is_some()
-        && with_timeout(20, || {
-            let mut cli = Cli::start()?;
-            cli.call("ping", json!({ "message": "prismflow" }))?;
-            Ok(cli.call("auth.getStatus", json!({}))?["isAuthenticated"] == true)
-        })
-        .unwrap_or(false);
+    if find_cli().is_none() {
+        return false;
+    }
+    let v = with_timeout(20, || {
+        let mut cli = Cli::start()?;
+        cli.call("ping", json!({ "message": "prismflow" }))?;
+        Ok(cli.call("auth.getStatus", json!({}))?["isAuthenticated"] == true)
+    });
+    // A CLI that didn't answer (often: offline) says nothing about sign-in;
+    // don't remember it as "signed out".
+    let v = match v {
+        Err(e) if e == TIMED_OUT => return false,
+        other => other.unwrap_or(false),
+    };
     *SIGNED_IN.lock().unwrap_or_else(|e| e.into_inner()) = Some((Instant::now(), v));
     v
 }
@@ -230,6 +256,12 @@ pub fn endpoint(model: Option<&str>) -> Result<Endpoint, String> {
 /// True when a Copilot token the gateway holds expires within `margin`.
 pub fn expiring_within(margin: Duration) -> bool {
     EXPIRY.lock().unwrap_or_else(|e| e.into_inner()).is_some_and(|t| t <= SystemTime::now() + margin)
+}
+
+/// A refresh failed (often: offline). Ask the 60 s refresher to try again
+/// soon instead of waiting for an expiry that was never recorded.
+pub fn retry_soon() {
+    *EXPIRY.lock().unwrap_or_else(|e| e.into_inner()) = Some(SystemTime::now());
 }
 
 /// Forget the recorded expiry (before a refresh fetches new tokens).

@@ -121,9 +121,22 @@ pub async fn run(
     status: Arc<Mutex<PlatformStatus>>,
     mut stop: tokio::sync::watch::Receiver<bool>,
 ) {
-    let name = match api.me().await {
-        Ok(n) => n,
-        Err(e) => return set_status(&status, false, e),
+    // At login the network is often not up yet: keep trying, slower each time.
+    let mut wait = 5u64;
+    let name = loop {
+        match api.me().await {
+            Ok(n) => break n,
+            // A wrong token won't fix itself; only network trouble is retried.
+            Err(e) if !e.starts_with("Couldn't reach Telegram") => return set_status(&status, false, e),
+            Err(e) => {
+                set_status(&status, false, format!("{e} Trying again shortly."));
+                tokio::select! {
+                    _ = stop.changed() => return,
+                    _ = tokio::time::sleep(std::time::Duration::from_secs(wait)) => {}
+                }
+                wait = (wait * 2).min(300);
+            }
+        }
     };
     set_status(&status, true, format!("Running as @{name}"));
     let mut offset: i64 = 0;

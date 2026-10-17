@@ -34,11 +34,15 @@ pub fn handle_args(
                     let _ = writeln!(out, "{}", token);
                     Some(0)
                 }
-                Err(_) => {
+                Err(crate::credentials::CredentialError::NotFound(_)) => {
                     eprintln!(
                         "prismflow: connection '{connection}' has no gateway token (it was disconnected or revoked). Reconnect it in the app."
                     );
                     Some(2)
+                }
+                Err(e) => {
+                    eprintln!("prismflow: {}", crate::credentials::store_problem(&e));
+                    Some(3)
                 }
             }
         }

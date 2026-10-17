@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { api, AppDetection, AppId, Provider, TEST_SKIPPED, VerificationReport, appLabel, errText, isSeparate, shortStatus, statusTone } from "../api";
-import { ModelPicker, Stages } from "./bits";
+import { GuidedSetup, ModelPicker, Stages } from "./bits";
 import TestRunning from "./TestRunning";
 
 const POPULAR = ["openrouter", "anthropic", "openai", "gemini", "groq", "deepseek", "nvidia_nim", "mistral", "xai"];
@@ -16,6 +16,7 @@ export default function Setup({ initialApp, onDone }: { initialApp?: AppId; onDo
   const [pid, setPid] = useState("");
   const [model, setModel] = useState("");
   const [connId, setConnId] = useState("");
+  const [connecting, setConnecting] = useState(false);
   const [error, setError] = useState("");
   const loadProviders = () => api.providers().then(setProviders).catch((e) => setError(errText(e)));
   useEffect(() => { api.applications().then(setApps).catch(() => setApps([])); loadProviders(); }, []);
@@ -26,7 +27,7 @@ export default function Setup({ initialApp, onDone }: { initialApp?: AppId; onDo
     <div className="setup">
       <div className="row spread head">
         <h1>{step === "app" ? "Add an app" : appLabel(app)}</h1>
-        <button className="ghost" onClick={onDone}>{step === "done" ? "Done" : "Cancel"}</button>
+        <button className="ghost" disabled={connecting} onClick={onDone}>{step === "done" ? "Done" : "Cancel"}</button>
       </div>
       <Steps step={step} />
       {step === "app" && <PickApp apps={apps} onPick={(a) => { setApp(a); go("provider"); }} />}
@@ -39,12 +40,13 @@ export default function Setup({ initialApp, onDone }: { initialApp?: AppId; onDo
           <div className="label">Model from {provider.display_name}</div>
           <ModelPicker provider={provider} value={model} onChange={setModel} />
           <div className="row mt">
-            <button className="ghost" onClick={() => go("provider")}>Back</button>
-            <button className="primary" disabled={!model.trim()} onClick={async () => {
-              setError("");
+            <button className="ghost" disabled={connecting} onClick={() => go("provider")}>Back</button>
+            <button className="primary" disabled={!model.trim() || connecting} onClick={async () => {
+              setError(""); setConnecting(true);
               try { const c = await api.connect(app as AppId, pid, model.trim()); setConnId(c.id); go("done"); }
               catch (e) { setError(errText(e)); }
-            }}>Connect</button>
+              finally { setConnecting(false); }
+            }}>{connecting ? "Connecting…" : "Connect"}</button>
           </div>
         </div>
       )}
@@ -149,8 +151,9 @@ function AddKey({ p, onSaved, onBack }: { p: Provider; onSaved: () => Promise<vo
 function Connected({ id, app }: { id: string; app: AppId }) {
   const [report, setReport] = useState<VerificationReport | null>(null);
   const [testing, setTesting] = useState(true);
+  const [testError, setTestError] = useState("");
   useEffect(() => {
-    api.verify(id).then(setReport).catch((e) => { if (errText(e) !== TEST_SKIPPED) setReport(null); }).finally(() => setTesting(false));
+    api.verify(id).then(setReport).catch((e) => { if (errText(e) !== TEST_SKIPPED) setTestError(errText(e)); }).finally(() => setTesting(false));
   }, [id]);
   return (
     <div className="card">
@@ -162,6 +165,8 @@ function Connected({ id, app }: { id: string; app: AppId }) {
           {report.status !== "ConnectedAndVerified" && <Stages stages={report.stages} />}
         </>
       )}
+      {testError && <div className="small err">{testError}</div>}
+      {app === "claude_desktop" && report?.status !== "ConnectedAndVerified" && <GuidedSetup id={id} />}
       <div className="small muted mt">Restart {appLabel(app)} if it's open.</div>
     </div>
   );

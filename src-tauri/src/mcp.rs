@@ -126,7 +126,7 @@ pub fn apply(app: &str, servers: &[Server], previously: &[String]) -> R<Vec<Stri
     if app == "codex" {
         return apply_codex(&file, servers, previously);
     }
-    let (_, mut obj) = jsonfile::read_object(&file)?;
+    let (before, mut obj) = jsonfile::read_object(&file)?;
     let key = container(app);
     let mut map = obj.get(key).and_then(Value::as_object).cloned().unwrap_or_default();
     for name in previously {
@@ -145,7 +145,7 @@ pub fn apply(app: &str, servers: &[Server], previously: &[String]) -> R<Vec<Stri
         std::fs::create_dir_all(d).map_err(|e| e.to_string())?;
     }
     crate::config_engine::backup(&file).map_err(|e| e.to_string())?;
-    crate::config_engine::atomic_write(&file, &jsonfile::render(&obj)).map_err(|e| e.to_string())?;
+    crate::config_engine::atomic_write(&file, &jsonfile::render_like(&before, &obj)).map_err(|e| e.to_string())?;
     Ok(servers.iter().map(|s| s.name.clone()).collect())
 }
 

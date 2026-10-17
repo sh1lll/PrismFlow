@@ -34,6 +34,9 @@ type Cmd<T> = Result<T, String>;
 
 /// Runs work that may wait on the Keychain or start other programs off the
 /// main thread, so the window keeps drawing (and can say what it waits for).
+/// Whether the menu bar / tray icon exists (hiding the window is only safe then).
+static TRAY_OK: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
 async fn blocking<T: Send + 'static>(f: impl FnOnce() -> T + Send + 'static) -> Cmd<T> {
     tauri::async_runtime::spawn_blocking(f).await.map_err(|e| e.to_string())
 }
@@ -378,8 +381,10 @@ async fn restart_gateway(svc: State<'_, Arc<Service>>) -> Cmd<gateway::BrokerSta
 }
 
 #[tauri::command]
-fn running_sessions(svc: State<'_, Arc<Service>>, id: String) -> Cmd<Vec<u32>> {
-    svc.running_sessions(&id)
+async fn running_sessions(svc: State<'_, Arc<Service>>, id: String) -> Cmd<Vec<u32>> {
+    // Scans processes (PowerShell on Windows); keep it off the window's thread.
+    let svc = svc.inner().clone();
+    blocking(move || svc.running_sessions(&id)).await?
 }
 
 #[tauri::command]
@@ -725,8 +730,10 @@ fn list_connections(svc: State<'_, Arc<Service>>) -> Cmd<Vec<state::ConnectionRe
 }
 
 #[tauri::command]
-fn launch_connection(svc: State<'_, Arc<Service>>, id: String) -> Cmd<()> {
-    svc.launch(&id)
+async fn launch_connection(svc: State<'_, Arc<Service>>, id: String) -> Cmd<()> {
+    // May wait on a macOS permission prompt; keep the window responsive.
+    let svc = svc.inner().clone();
+    blocking(move || svc.launch(&id)).await?
 }
 
 #[tauri::command]
@@ -762,14 +769,28 @@ pub fn run() {
     }
     service.diag.record(diagnostics::Level::Info, "app.start", concat!("PrismFlow ", env!("CARGO_PKG_VERSION"), " started."));
     let builder = tauri::Builder::default()
+        // Opening PrismFlow again shows the copy that's already running
+        // (a second copy couldn't start the gateway anyway).
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            use tauri::Manager;
+            if let Some(w) = app.get_webview_window("main") {
+                let _ = w.show();
+                let _ = w.unminimize();
+                let _ = w.set_focus();
+            }
+        }))
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_autostart::init(tauri_plugin_autostart::MacosLauncher::LaunchAgent, Some(vec!["--background"])))
         // Closing the window keeps PrismFlow (and the apps using it) running
         // in the menu bar; Quit is in the menu.
         .on_window_event(|window, event| {
+            // Without a menu bar icon (some Linux desktops) a hidden window
+            // could never come back, so closing quits instead.
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-                api.prevent_close();
-                let _ = window.hide();
+                if TRAY_OK.load(std::sync::atomic::Ordering::Relaxed) {
+                    api.prevent_close();
+                    let _ = window.hide();
+                }
             }
         });
     #[cfg(feature = "updater")]
@@ -790,11 +811,13 @@ pub fn run() {
             if let Ok(res) = app.path().resource_dir() {
                 gateway::supervisor::use_bundled_runtime(&res);
             }
-            if let Err(e) = tray::install(app.handle()) {
-                eprintln!("prismflow: menu bar icon unavailable: {e}");
+            match tray::install(app.handle()) {
+                Ok(()) => TRAY_OK.store(true, std::sync::atomic::Ordering::Relaxed),
+                Err(e) => eprintln!("prismflow: menu bar icon unavailable: {e}"),
             }
-            // Started at login: stay in the menu bar until opened.
-            if std::env::args().any(|a| a == "--background") {
+            // Started at login: stay in the menu bar until opened (only if
+            // there is a menu bar icon to open it from).
+            if std::env::args().any(|a| a == "--background") && TRAY_OK.load(std::sync::atomic::Ordering::Relaxed) {
                 if let Some(w) = app.get_webview_window("main") {
                     let _ = w.hide();
                 }
@@ -868,8 +891,21 @@ pub fn run() {
                 let c = handle.state::<Companion>();
                 let settings = c.registry.settings();
                 if settings.keep_on {
-                    if let Err(e) = companion_start(&svc, &c, settings).await {
-                        svc.diag.record(diagnostics::Level::Error, "companion.startup", &e);
+                    // Its network address may not exist yet at login (Wi-Fi,
+                    // Tailscale): retry for a while before giving up.
+                    let mut tries = 0;
+                    loop {
+                        match companion_start(&svc, &c, settings.clone()).await {
+                            Ok(()) => break,
+                            Err(e) if tries >= 20 => {
+                                svc.diag.record(diagnostics::Level::Error, "companion.startup", &e);
+                                break;
+                            }
+                            Err(_) => {
+                                tries += 1;
+                                tokio::time::sleep(Duration::from_secs(30)).await;
+                            }
+                        }
                     }
                 }
             });

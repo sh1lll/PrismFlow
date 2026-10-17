@@ -298,6 +298,10 @@ pub fn atomic_write(path: &Path, content: &str) -> Result<(), ConfigError> {
     let file_name = path.file_name().unwrap_or_default().to_string_lossy();
     let tmp = path.with_file_name(format!(".{file_name}.prismflow-tmp-{}", uuid::Uuid::new_v4()));
     let write_result = (|| {
+        // An app installed but never opened may not have its settings folder yet.
+        if let Some(dir) = path.parent() {
+            fs::create_dir_all(dir)?;
+        }
         let mut f = new_private_file(&tmp)?;
         f.write_all(content.as_bytes())?;
         f.sync_all()?;

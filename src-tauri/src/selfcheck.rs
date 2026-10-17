@@ -42,7 +42,7 @@ fn secure_store(store: &dyn CredentialStore) -> Check {
     match result {
         Ok(true) => Check { name: "Saving keys", ok: true, detail: "Keys can be saved and read.".into() },
         Ok(false) => Check { name: "Saving keys", ok: false, detail: "A saved key read back differently.".into() },
-        Err(e) => Check { name: "Saving keys", ok: false, detail: format!("The system's key store refused: {e}") },
+        Err(e) => Check { name: "Saving keys", ok: false, detail: crate::credentials::store_problem(&e) },
     }
 }
 

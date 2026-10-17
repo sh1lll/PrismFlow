@@ -1,8 +1,10 @@
 //! Editing another app's JSON file: add or remove PrismFlow's own entries
 //! and keep everything else exactly as it was (key order included).
 //!
-//! Files with comments or trailing commas (JSONC) are refused rather than
-//! rewritten, because rewriting would drop the user's comments.
+//! A block of comment lines at the top (Zed's default settings file starts
+//! with one) is kept exactly as it was. Comments or trailing commas inside
+//! the settings are refused rather than rewritten, because rewriting would
+//! drop them.
 
 use serde_json::{Map, Value};
 use std::path::Path;
@@ -16,14 +18,33 @@ pub fn read_object(file: &Path) -> Result<(String, Map<String, Value>), String> 
     if text.trim().is_empty() {
         return Ok((text, Map::new()));
     }
-    match serde_json::from_str::<Value>(&text) {
+    match serde_json::from_str::<Value>(&text[header(&text).len()..]) {
         Ok(Value::Object(m)) => Ok((text, m)),
         Ok(_) => Err(format!("{} doesn't hold a JSON object, so PrismFlow won't change it.", file.display())),
         Err(_) => Err(format!(
-            "{} has comments or a mistake in it, so PrismFlow won't rewrite it. Add the entry by hand (shown under Details), or remove the comments.",
+            "{} has comments or a mistake inside its settings, so PrismFlow won't rewrite it. Set it up by hand (on Home, ⋯ → Finish in the app), or remove those comments.",
             file.display()
         )),
     }
+}
+
+/// The comment lines (and blank lines) before the opening `{`.
+pub fn header(text: &str) -> &str {
+    let mut end = 0;
+    for line in text.split_inclusive('\n') {
+        let t = line.trim();
+        if t.is_empty() || t.starts_with("//") {
+            end += line.len();
+        } else {
+            break;
+        }
+    }
+    &text[..end]
+}
+
+/// `render`, keeping the original file's leading comment block.
+pub fn render_like(before: &str, obj: &Map<String, Value>) -> String {
+    format!("{}{}", header(before), render(obj))
 }
 
 /// `obj[path[0]][path[1]]… = value`, creating objects on the way.
@@ -85,6 +106,15 @@ mod tests {
 
         std::fs::write(&f, "{\n  // my comment\n  \"a\": 1,\n}").unwrap();
         assert!(read_object(&f).unwrap_err().contains("comments"));
+
+        // Zed's default file: a comment block on top, plain JSON below.
+        let zed = "// Zed settings\n//\n// For information on how to configure Zed, see the docs.\n{\n  \"theme\": \"One Dark\"\n}\n";
+        std::fs::write(&f, zed).unwrap();
+        let (before, mut m) = read_object(&f).unwrap();
+        set(&mut m, &["language_models", "x"], json!(1)).unwrap();
+        let out = render_like(&before, &m);
+        assert!(out.starts_with("// Zed settings\n//\n// For information"), "{out}");
+        assert!(out.contains("\"theme\": \"One Dark\"") && out.contains("language_models"));
         assert!(read_object(&dir.path().join("missing.json")).unwrap().1.is_empty());
     }
 }

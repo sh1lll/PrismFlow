@@ -119,16 +119,24 @@ pub fn refresh<R: Runtime>(app: &AppHandle<R>) {
 pub async fn switch(svc: &Service, conn_id: &str, provider_id: &str, model: &str) -> Result<(), String> {
     let old = svc.connections()?.into_iter().find(|c| c.id == conn_id).ok_or("Unknown connection.")?;
     if old.provider_id != provider_id && crate::service::one_setup(&old.app_id) {
+        // Fail before giving up the working setup when we already can.
+        svc.ready_to_connect(&old.app_id, provider_id, model)?;
         svc.disconnect(&old.id).await?;
         if let Err(e) = svc.connect(&old.app_id, provider_id, model).await {
-            let _ = svc.connect(&old.app_id, &old.provider_id, &old.model).await;
-            return Err(e);
+            return match svc.connect(&old.app_id, &old.provider_id, &old.model).await {
+                Ok(_) => {
+                    // Put back its routing choices too.
+                    let _ = svc.set_routing(&old.id, old.routing.clone()).await;
+                    Err(format!("Couldn't switch, so the previous setup was put back. {e}"))
+                }
+                Err(back) => Err(format!("Couldn't switch ({e}), and the previous setup couldn't be put back ({back}). Set the app up again on Home.")),
+            };
         }
         return Ok(());
     }
     let new = svc.connect(&old.app_id, provider_id, model).await?;
     if new.id != old.id {
-        svc.disconnect(&old.id).await?;
+        svc.disconnect(&old.id).await.map_err(|e| format!("Switched, but the previous setup is still listed: {e}"))?;
     }
     Ok(())
 }

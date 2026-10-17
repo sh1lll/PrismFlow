@@ -21,11 +21,11 @@ pub enum ProbeError {
 impl std::fmt::Display for ProbeError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            ProbeError::Unauthorized(code) => write!(f, "the provider rejected the credential (HTTP {code})"),
-            ProbeError::NotFound => write!(f, "the endpoint was not found (HTTP 404)"),
-            ProbeError::RateLimited => write!(f, "the provider is rate-limiting requests (HTTP 429)"),
-            ProbeError::Unavailable(d) => write!(f, "the provider could not be reached: {d}"),
-            ProbeError::BadResponse(d) => write!(f, "unexpected response: {d}"),
+            ProbeError::Unauthorized(code) => write!(f, "the provider turned down the key (HTTP {code})"),
+            ProbeError::NotFound => write!(f, "the provider's address looks wrong (HTTP 404)"),
+            ProbeError::RateLimited => write!(f, "the provider is limiting requests right now (HTTP 429); wait a minute and try again"),
+            ProbeError::Unavailable(d) => write!(f, "{d}"),
+            ProbeError::BadResponse(d) => write!(f, "{d}"),
         }
     }
 }
@@ -108,23 +108,35 @@ async fn get(
             AuthStyle::Anthropic => req.header("x-api-key", k),
         };
     }
-    let resp = req.send().await.map_err(|e| {
-        // reqwest errors can embed the URL but never headers; still sanitize.
-        ProbeError::Unavailable(crate::diagnostics::redact(&e.without_url().to_string()))
-    })?;
+    let resp = req.send().await.map_err(|e| ProbeError::Unavailable(unreachable_text(&e)))?;
     let status = resp.status().as_u16();
+    let is_page = resp.headers().get("content-type").and_then(|v| v.to_str().ok()).is_some_and(|t| t.contains("text/html"));
     match status {
+        200..=299 if is_page => Err(ProbeError::BadResponse(WEB_PAGE.into())),
         200..=299 => resp
             .json::<serde_json::Value>()
             .await
-            .map_err(|e| ProbeError::BadResponse(e.without_url().to_string())),
-        300..=399 => Err(ProbeError::Unavailable(format!(
-            "the endpoint redirected (HTTP {status}); PrismFlow does not follow redirects with credentials"
-        ))),
+            .map_err(|_| ProbeError::BadResponse("the provider's answer wasn't in the expected format. Check its address.".into())),
+        300..=399 => Err(ProbeError::Unavailable(WEB_PAGE.into())),
+        500..=599 => Err(ProbeError::Unavailable(format!("the provider is having problems right now (HTTP {status}); try again later"))),
         401 | 403 => Err(ProbeError::Unauthorized(status)),
         404 => Err(ProbeError::NotFound),
         429 => Err(ProbeError::RateLimited),
         _ => Err(ProbeError::Unavailable(format!("HTTP {status}"))),
+    }
+}
+
+/// A sign-in page or proxy answered instead of the provider.
+const WEB_PAGE: &str = "a web page answered instead of the provider. If your Wi-Fi needs you to sign in, do that first; otherwise check the provider's address";
+
+/// Plain words for a request that never got an answer.
+pub fn unreachable_text(e: &reqwest::Error) -> String {
+    if e.is_timeout() {
+        "the provider didn't answer in time. Check your internet connection, or try again".into()
+    } else if e.is_connect() {
+        "couldn't connect to the provider. Check your internet connection, or that it's running".into()
+    } else {
+        "the connection to the provider failed. Check your internet connection and try again".into()
     }
 }
 
@@ -298,7 +310,7 @@ mod tests {
             .mount(&server)
             .await;
         let err = check_credential(&client(), &server.uri(), "/key", "k").await.unwrap_err();
-        assert!(matches!(err, ProbeError::Unavailable(ref d) if d.contains("redirect")));
+        assert!(matches!(err, ProbeError::Unavailable(ref d) if d.contains("web page answered")));
     }
 
     #[tokio::test]

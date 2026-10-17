@@ -162,6 +162,8 @@ impl Drop for RunningTest {
 pub fn one_setup(app_id: &str) -> bool {
     codex::is_desktop(app_id) || claude_desktop::is_claude_desktop(app_id)
         || [editors::ZED, editors::ZED_SEPARATE, editors::ROO, editors::KILO].contains(&app_id)
+        // The Claude Code extension keeps one connection in VS Code's settings.
+        || [vscode::CLAUDE_APP_ID, vscode::CLAUDE_SHARED_APP_ID, vscode::SEPARATE_APP_ID].contains(&app_id)
 }
 
 pub fn connection_id(app_id: &str, provider_id: &str) -> String {
@@ -380,7 +382,7 @@ impl Service {
         }
         self.store
             .set(&account_key(p.id, "default"), secret)
-            .map_err(|e| format!("Could not save to the secure store: {e}"))?;
+            .map_err(|e| crate::credentials::store_problem(&e))?;
         // A new key invalidates earlier verification results.
         let mut records = self.state.load().map_err(|e| e.to_string())?;
         for r in records.iter_mut().filter(|r| r.provider_id == p.id) {
@@ -437,7 +439,13 @@ impl Service {
         discovery::list_models_as(&self.client, &self.upstream_url(p), path, key.as_deref(), p.auth_style)
             .await
             .map_err(|e| {
-                let msg = format!("Model discovery for {} failed: {e}", p.display_name);
+                // A local app that isn't running is the usual cause; say that.
+                let msg = if p.local && matches!(e, discovery::ProbeError::Unavailable(_)) {
+                    let name = p.display_name.trim_end_matches(" (local)");
+                    format!("{name} isn't running. Open the {name} app, then try again.")
+                } else {
+                    format!("Couldn't get {}'s model list: {e}.", p.display_name)
+                };
                 self.diag.record(Level::Warn, "discovery.failed", &msg);
                 msg
             })
@@ -548,6 +556,11 @@ impl Service {
             return Err(format!("'{name}' clashes with a built-in provider; choose another name."));
         }
         let mut list = self.state.load_custom_providers().map_err(|e| e.to_string())?;
+        // Different names can make the same ID ("Work Server" / "work-server");
+        // replacing that one would hand it the other's saved key.
+        if let Some(other) = list.iter().find(|c| c.id == id && !c.display_name.eq_ignore_ascii_case(name)) {
+            return Err(format!("'{name}' is too close to your provider '{}'. Choose a different name.", other.display_name));
+        }
         if self.connections()?.iter().any(|r| r.provider_id == id) {
             return Err(format!("{name} has connections; disconnect them before changing it."));
         }
@@ -946,13 +959,38 @@ impl Service {
         })
     }
 
+    /// The checks `connect` would fail on, without changing anything: used
+    /// before an app with one setup gives up its current one.
+    pub fn ready_to_connect(&self, app_id: &str, provider_id: &str, model: &str) -> R<()> {
+        let (p, route, _) = self.plan(app_id, provider_id, model)?;
+        if self.usable_key(p).is_none() {
+            return Err(format!("Add a {} key under Providers first.", p.display_name));
+        }
+        if route == Route::Gateway {
+            GatewayRuntime::discover()?;
+        }
+        Ok(())
+    }
+
     pub async fn connect(&self, app_id: &str, provider_id: &str, model: &str) -> R<ConnectionRecord> {
+        let id = connection_id(app_id, provider_id);
+        let existed = self.state.get(&id).ok().flatten().is_some();
+        let result = self.connect_inner(app_id, provider_id, model).await;
+        // A new app that couldn't be set up keeps no PrismFlow key behind.
+        if result.is_err() && !existed && self.state.get(&id).ok().flatten().is_none() {
+            let _ = tokens::revoke(self.store.as_ref(), &id);
+        }
+        result
+    }
+
+    async fn connect_inner(&self, app_id: &str, provider_id: &str, model: &str) -> R<ConnectionRecord> {
         if one_setup(app_id) {
             if let Some(other) = self.connections()?.into_iter().find(|r| r.app_id == app_id && r.provider_id != provider_id) {
                 let name = providers::get(&other.provider_id).map_or(other.provider_id.as_str(), |p| p.display_name);
                 return Err(format!("{} is connected to {name} already. Disconnect it first; the app has one setup.", app_name(app_id)));
             }
         }
+        let existed = self.state.get(&connection_id(app_id, provider_id)).ok().flatten().is_some();
         self.prepare_home(app_id)?;
         // Desktop: keep the original priors across model switches.
         let desktop_priors = if codex::is_desktop(app_id) {
@@ -974,6 +1012,11 @@ impl Service {
             }
         }
         if self.usable_key(p).is_none() {
+            if p.credential_source == providers::CredentialSource::Keychain {
+                if let Err(e @ crate::credentials::CredentialError::Store(_)) = self.store.get(&account_key(p.id, "default")) {
+                    return Err(crate::credentials::store_problem(&e));
+                }
+            }
             return Err(format!("Add a {} key under Providers first.", p.display_name));
         }
         if route == Route::Gateway {
@@ -981,7 +1024,7 @@ impl Service {
         }
         let id = connection_id(app_id, p.id);
         if route == Route::Gateway {
-            tokens::ensure(self.store.as_ref(), &id).map_err(|e| format!("Couldn't save a key for this app: {e}"))?;
+            tokens::ensure(self.store.as_ref(), &id).map_err(|e| crate::credentials::store_problem(&e))?;
         }
         if let Some(spec) = agents::spec(app_id) {
             agents::write(&self.agent_files(spec, p, validate_model_id(model)?)?).map_err(|e| format!("Nothing usable was written: {e}"))?;
@@ -991,24 +1034,24 @@ impl Service {
             agents::write(&jp.owned).map_err(|e| format!("Nothing usable was written: {e}"))?;
         }
         if app_id == claude_desktop::SEPARATE_APP_ID {
-            let token = tokens::ensure(self.store.as_ref(), &id).map_err(|e| format!("Couldn't save a key for this app: {e}"))?;
+            let token = tokens::ensure(self.store.as_ref(), &id).map_err(|e| crate::credentials::store_problem(&e))?;
             claude_desktop::connect_auto_in(&claude_desktop::separate_root(self.state.dir()), &self.broker.url_for_config(), &token, &id)?;
         }
         if app_id == claude_desktop::APP_ID {
-            let token = tokens::ensure(self.store.as_ref(), &id).map_err(|e| format!("Couldn't save a key for this app: {e}"))?;
+            let token = tokens::ensure(self.store.as_ref(), &id).map_err(|e| crate::credentials::store_problem(&e))?;
             if let Err(e) = claude_desktop::connect_auto(&self.broker.url_for_config(), &token, &id) {
                 // Fall back to the guided steps (shown on the connection).
                 self.diag.record(Level::Warn, "connect.claude_desktop", &format!("Automatic setup skipped: {e}"));
             }
         }
         if editors::ALL.contains(&app_id) {
-            let token = tokens::ensure(self.store.as_ref(), &id).map_err(|e| format!("Couldn't save a key for this app: {e}"))?;
+            let token = tokens::ensure(self.store.as_ref(), &id).map_err(|e| crate::credentials::store_problem(&e))?;
             let ep = editors::plan(app_id, &agents::agent_dir(self.state.dir(), &id), self.state.dir(), &id, &format!("{}/v1", self.broker.url_for_config()), validate_model_id(model)?, Some(&token))?;
             agents::write(&ep.owned).map_err(|e| format!("Nothing usable was written: {e}"))?;
             plan = config_engine::EditPlan { file: ep.file, before: ep.before, after: ep.after, summary: plan.summary };
         }
         if vscode::is_vscode(app_id) {
-            let token = tokens::ensure(self.store.as_ref(), &id).map_err(|e| format!("Couldn't save a key for this app: {e}"))?;
+            let token = tokens::ensure(self.store.as_ref(), &id).map_err(|e| crate::credentials::store_problem(&e))?;
             let vp = self.vscode_plan(app_id, p, validate_model_id(model)?, &id, &self.broker.url_for_config(), Some(&token))?;
             agents::write(&vp.owned).map_err(|e| format!("Nothing usable was written: {e}"))?;
             plan = config_engine::EditPlan { file: vp.file, before: vp.before, after: vp.after, summary: plan.summary };
@@ -1051,6 +1094,12 @@ impl Service {
         if route == Route::Gateway {
             if let Err(e) = self.sync_gateway().await {
                 self.diag.record(Level::Error, "connect.gateway", &format!("{id} is configured, but the gateway is not running: {e}"));
+                // A new app that can't reach PrismFlow would only fail later;
+                // undo it and say why now.
+                if !existed {
+                    let _ = self.disconnect(&id).await;
+                    return Err(format!("Nothing was changed: {e}"));
+                }
             }
         }
         Ok(record)
@@ -1172,7 +1221,14 @@ impl Service {
         };
         let mut bindings = Vec::new();
         for r in &records {
-            let token = tokens::ensure(self.store.as_ref(), &r.id).map_err(|e| format!("Couldn't read the saved key: {e}"))?;
+            let token = match tokens::ensure(self.store.as_ref(), &r.id) {
+                Ok(t) => t,
+                Err(e) => {
+                    // Leave this app out; the others keep working.
+                    self.diag.record(Level::Error, "gateway.token", &format!("{}: {}", r.id, crate::credentials::store_problem(&e)));
+                    continue;
+                }
+            };
             let mut routing = r.routing.clone();
             routing.tiers = routing.tiers.iter().map(|(t, m)| (*t, rename(m))).collect();
             routing.fallbacks = routing.fallbacks.iter().map(&rename).collect();
@@ -1218,7 +1274,10 @@ impl Service {
                         headers: ep.headers,
                         extra_keys: Vec::new(),
                     }),
-                    Err(e) => self.diag.record(Level::Warn, "gateway.copilot", &format!("GitHub Copilot isn't available: {e}")),
+                    Err(e) => {
+                        crate::credentials::copilot::retry_soon();
+                        self.diag.record(Level::Warn, "gateway.copilot", &format!("GitHub Copilot isn't available right now (trying again in a minute): {e}"));
+                    }
                 }
                 continue;
             }
@@ -1259,7 +1318,7 @@ impl Service {
         let body = serde_json::json!({ "model": model, "messages": messages, "max_tokens": 2048, "stream": false });
         let r = self.client.post(format!("{}/v1/chat/completions", self.broker.url())).bearer_auth(&token)
             .json(&body).timeout(self.agent_timeout).send().await
-            .map_err(|_| "PrismFlow's background service didn't answer.".to_string())?;
+            .map_err(|e| if e.is_timeout() { "The model didn't answer in time. It may be busy or down; try again.".to_string() } else { "PrismFlow's background service didn't answer.".to_string() })?;
         let status = r.status().as_u16();
         let text = r.text().await.unwrap_or_default();
         if status >= 400 {
@@ -1325,9 +1384,16 @@ impl Service {
             gateway: (record.route == Route::Gateway).then(|| self.broker.status()),
         };
         let report = verify::verify(&env, p, &record).await;
+        // The app may have been removed or switched while the test ran;
+        // only record the result on the setup that was tested.
+        if let Some(mut now) = self.state.get(id).map_err(|e| e.to_string())? {
+            if now.provider_id == record.provider_id && now.model == record.model {
+                now.status = report.status;
+                now.last_report = Some(report.clone());
+                self.state.upsert(now).map_err(|e| e.to_string())?;
+            }
+        }
         record.status = report.status;
-        record.last_report = Some(report.clone());
-        self.state.upsert(record).map_err(|e| e.to_string())?;
         let level = match report.status {
             ConnectionStatus::ConnectedAndVerified => Level::Info,
             ConnectionStatus::PartiallyCompatible => Level::Warn,
@@ -1349,7 +1415,12 @@ impl Service {
         } else if record.app_id == claude_desktop::APP_ID {
             // Automatic setup: back to the Claude account, PrismFlow's entry removed.
             // Guided setup wrote nothing; revoking the token below is the disconnect.
-            claude_desktop::disconnect_auto(&record.id).map(|()| None)
+            // If its settings are locked by a policy or damaged, PrismFlow
+            // couldn't have written there, so removing the record is enough.
+            claude_desktop::disconnect_auto(&record.id).map(|()| None).or_else(|e| {
+                self.diag.record(Level::Warn, "disconnect.claude_desktop", &format!("Left Claude Desktop's files as they are: {e}"));
+                Ok(None)
+            })
         } else if codex::is_desktop(&record.app_id) {
             codex::plan_disconnect_base(&self.desktop_home(&record.app_id), &record.provider_id, &record.priors)
                 .map_err(|e| e.to_string())
@@ -1423,7 +1494,11 @@ impl Service {
             }
         }
         if record.route == Route::Gateway {
-            tokens::revoke(self.store.as_ref(), id).map_err(|e| format!("Couldn't remove this app's key: {e}"))?;
+            if let Err(e) = tokens::revoke(self.store.as_ref(), id) {
+                // The app's files are already restored; finish removing it.
+                // The key is useless once the broker forgets this connection.
+                self.diag.record(Level::Warn, "disconnect.token", &format!("{id}: couldn't delete its key: {}", crate::credentials::store_problem(&e)));
+            }
         }
         self.state.remove(id).map_err(|e| e.to_string())?;
         self.diag.record(Level::Info, "disconnect.done", &format!(

@@ -8,6 +8,11 @@ import Setup from "./pages/Setup";
 import { api, AppId } from "./api";
 
 type Page = "Home" | "Providers" | "Usage" | "More" | "Settings";
+
+/// Shown while the system's password store is slow to answer (usually a prompt).
+const KEY_PROMPT = /Mac/i.test(navigator.userAgent)
+  ? "macOS is asking to let PrismFlow use its saved keys. Enter your Mac password and click Always Allow."
+  : "Waiting for your computer's password store. If it asked you to unlock it, do that now.";
 const PAGES: Page[] = ["Home", "Providers", "Usage", "More", "Settings"];
 
 export default function App() {
@@ -47,7 +52,7 @@ export default function App() {
         ))}
       </nav>
       <main className="content">
-        {keychain && <div className="banner">macOS is asking to let PrismFlow use its saved keys. Enter your Mac password and click Always Allow.</div>}
+        {keychain && <div className="banner">{KEY_PROMPT}</div>}
         {remoteUrl && <div className="banner">Remote access is on. <a onClick={() => go("More")}>Manage</a></div>}
         <PageGuard key={visit} onHome={() => go("Home")}>
         {setup ? (

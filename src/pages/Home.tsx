@@ -30,6 +30,7 @@ export default function Home({ onSetup }: { onSetup: (app?: AppId) => void }) {
         <button className="primary" onClick={() => onSetup()}>Add app</button>
       </div>
       {error && <div className="card err small">{error}</div>}
+      {!conns && !error && <div className="muted">Loading…</div>}
       {conns && conns.length === 0 && (
         <div className="card empty">
           <div className="empty-title">Connect your first app</div>
@@ -89,7 +90,7 @@ function AppRow({ c, providers, installed, onChange }: { c: Connection; provider
       </div>
 
       {panel === "change" && (
-        <ChangePanel c={c} providers={providers} onDone={(text) => { setPanel(""); setMsg({ tone: "ok", text }); onChange(); }} />
+        <ChangePanel c={c} providers={providers} onRefresh={onChange} onDone={(text) => { setPanel(""); setMsg({ tone: "ok", text }); onChange(); }} />
       )}
 
       {panel === "more" && (
@@ -118,7 +119,7 @@ function AppRow({ c, providers, installed, onChange }: { c: Connection; provider
 }
 
 /** Switch to another provider and/or model. */
-function ChangePanel({ c, providers, onDone }: { c: Connection; providers: Provider[]; onDone: (msg: string) => void }) {
+function ChangePanel({ c, providers, onDone, onRefresh }: { c: Connection; providers: Provider[]; onDone: (msg: string) => void; onRefresh: () => void }) {
   const usable = providers.filter((p) => p.routes[c.app_id as AppId] != null && (p.has_credential || p.key_optional));
   const [pid, setPid] = useState(c.provider_id);
   const [model, setModel] = useState(c.model);
@@ -131,7 +132,7 @@ function ChangePanel({ c, providers, onDone }: { c: Connection; providers: Provi
       const n = await api.switchConnection(c.id, pid, model.trim());
       const running = await api.runningSessions(n.id).catch(() => []);
       onDone(running.length > 0 ? `Switched. Restart ${appLabel(c.app_id)} to use it.` : "Switched.");
-    } catch (e) { setError(errText(e)); }
+    } catch (e) { setError(errText(e)); onRefresh(); }
     finally { setBusy(false); }
   }
   return (
@@ -139,7 +140,7 @@ function ChangePanel({ c, providers, onDone }: { c: Connection; providers: Provi
       <select value={pid} onChange={(e) => { setPid(e.target.value); setModel(""); }}>
         {usable.map((p) => <option key={p.id} value={p.id}>{p.display_name}</option>)}
       </select>
-      {provider && <ModelPicker provider={provider} value={model} onChange={setModel} />}
+      {provider && <ModelPicker key={provider.id} provider={provider} value={model} onChange={setModel} />}
       <div className="row mt">
         <button className="primary" disabled={busy || !model.trim() || (pid === c.provider_id && model.trim() === c.model)} onClick={apply}>{busy ? "Switching…" : "Switch"}</button>
         {usable.length < providers.filter((p) => p.routes[c.app_id as AppId] != null).length && <span className="small muted">Add keys on Providers for more choices.</span>}

@@ -102,7 +102,7 @@ pub struct BrokerStatus {
 pub enum BrokerError {
     #[error("Another PrismFlow instance is already running the gateway on 127.0.0.1:{0}. Close it, or use that instance.")]
     OtherInstance(u16),
-    #[error("Port {0} on 127.0.0.1 is used by another program. Free it, or set PRISMFLOW_BROKER_PORT and reconnect.")]
+    #[error("Another program is using the port PrismFlow needs ({0}). Quit that program or restart your computer, then try again.")]
     PortInUse(u16),
     #[error("{0}")]
     Engine(String),
@@ -486,7 +486,7 @@ async fn supervise(inner: Arc<Inner>, rt: GatewayRuntime, specs: Vec<UpstreamSpe
                 s.upstream = None;
             });
             inner.record(Level::Error, "gateway.gave_up", &format!(
-                "The gateway engine failed {MAX_RESTARTS} times in a row; restart it from the Overview page."
+                "The gateway engine failed {MAX_RESTARTS} times in a row; restart it under More → Activity."
             ));
             return;
         }
