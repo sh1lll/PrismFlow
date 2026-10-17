@@ -621,8 +621,7 @@ fn check_claude_config(file: &Path, claude_bin: Option<&Path>) -> Result<String,
     }
     let v: serde_json::Value = serde_json::from_str(&content).map_err(|e| e.to_string())?;
     let helper = v["apiKeyHelper"].as_str().unwrap_or_default();
-    // The helper command starts with the single-quoted binary path.
-    let bin = helper.strip_prefix('\'').and_then(|r| r.split_once("' ")).map(|(p, _)| p.replace(r"'\''", "'"));
+    let bin = claude_code::helper_program(helper);
     match bin {
         Some(b) if Path::new(&b).is_file() => {}
         Some(b) => return Err(format!("The token helper {b} no longer exists (was PrismFlow moved?). Reconnect to repair.")),

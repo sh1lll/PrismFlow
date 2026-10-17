@@ -109,10 +109,16 @@ impl Respond for ToolModel {
         } else if users.contains(&format!("echo {TOOL_TOKEN}")) && tools.iter().any(|t| t == "exec_command") {
             call = Some(("exec_command".into(), serde_json::json!({ "cmd": format!("echo {TOOL_TOKEN}") })));
             answer = String::new();
+        } else if users.contains(&format!("echo {TOOL_TOKEN}")) && tools.iter().any(|t| t == "shell_command") {
+            call = Some(("shell_command".into(), serde_json::json!({ "command": format!("echo {TOOL_TOKEN}") })));
+            answer = String::new();
         } else if users.contains(&format!("echo {TOOL_TOKEN}")) && tools.iter().any(|t| t == "shell") {
             call = Some(("shell".into(), serde_json::json!({ "command": ["echo", TOOL_TOKEN] })));
             answer = String::new();
         } else {
+            if users.contains(&format!("echo {TOOL_TOKEN}")) {
+                eprintln!("[stand-in] asked to run a command but no known shell tool among {tools:?}");
+            }
             answer = "PRISMFLOW_OK".into();
         }
         let chunk = |delta: serde_json::Value, finish: Option<&str>| serde_json::json!({

@@ -161,6 +161,15 @@ pub fn shell_quote(s: &str) -> String {
     }
 }
 
+/// The program path at the start of a helper command written by
+/// `helper_command`, in either quoting.
+pub fn helper_program(command: &str) -> Option<String> {
+    if let Some(rest) = command.strip_prefix('"') {
+        return rest.split_once("\" ").map(|(p, _)| p.to_string());
+    }
+    command.strip_prefix('\'').and_then(|r| r.split_once("' ")).map(|(p, _)| p.replace(r"'\''", "'"))
+}
+
 pub fn helper_command(helper: &Path, connection_id: &str) -> String {
     format!(
         "{} token print --connection {}",
@@ -353,6 +362,14 @@ mod tests {
         assert!(!p.file.exists());
         assert!(is_ours(&fs::read_to_string(backup).unwrap()));
         assert!(disconnect(&p.file, backups.path()).unwrap().is_none());
+    }
+
+    #[test]
+    fn helper_program_reads_both_quotings() {
+        assert_eq!(helper_program(r#""C:\P F\prismflow.exe" token print --connection "a:b""#).as_deref(), Some(r"C:\P F\prismflow.exe"));
+        assert_eq!(helper_program("'/it'\\''s/pf' token print --connection 'a:b'").as_deref(), Some("/it's/pf"));
+        assert_eq!(helper_program(&helper_command(Path::new("/A B/pf"), "c:d")).as_deref(), Some("/A B/pf"));
+        assert_eq!(helper_program("pf token print"), None);
     }
 
     #[test]
