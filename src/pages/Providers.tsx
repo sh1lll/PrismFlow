@@ -110,7 +110,7 @@ function KeyEditor({ p, onChange, setMsg }: { p: Provider; onChange: () => void;
 
 export const SIGNIN: Record<string, { tool: string; login: string; note: string }> = {
   gh_cli: { tool: "GitHub", login: "gh auth login", note: "Uses your GitHub account's free AI models." },
-  codex_login: { tool: "ChatGPT", login: "codex login", note: "Uses your ChatGPT plan. OpenAI may stop allowing this at any time." },
+  codex_login: { tool: "ChatGPT", login: "codex login", note: "Uses your ChatGPT plan." },
   copilot_cli: { tool: "GitHub Copilot", login: "copilot login", note: "Uses your Copilot plan through GitHub's official Copilot CLI." },
   gcloud: { tool: "Google Cloud", login: "gcloud auth login", note: "Uses your Google Cloud sign-in. Usage is charged to your Google Cloud project." },
 };
