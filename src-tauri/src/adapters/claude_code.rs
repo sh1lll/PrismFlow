@@ -149,9 +149,16 @@ pub fn settings_file(dir: &Path, provider_id: &str) -> PathBuf {
     dir.join(format!("{}.settings.json", profile_name(provider_id)))
 }
 
-/// POSIX single-quote a word for the shell that runs `apiKeyHelper`.
+/// Quote a word for the shell that runs `apiKeyHelper`. macOS/Linux: POSIX
+/// single quotes. Windows: double quotes, which both cmd.exe and Git Bash
+/// read (single quotes mean nothing to cmd.exe, so the helper never ran and
+/// Claude Code was refused). A Windows path can't contain `"`.
 pub fn shell_quote(s: &str) -> String {
-    format!("'{}'", s.replace('\'', r"'\''"))
+    if cfg!(windows) {
+        format!("\"{s}\"")
+    } else {
+        format!("'{}'", s.replace('\'', r"'\''"))
+    }
 }
 
 pub fn helper_command(helper: &Path, connection_id: &str) -> String {
@@ -303,10 +310,12 @@ mod tests {
             assert_eq!(v["env"][*k], tier.alias(), "{k}");
         }
         assert_eq!(v["env"]["ANTHROPIC_DEFAULT_OPUS_MODEL_NAME"], "meta/llama-3.3-70b-instruct (nvidia_nim)");
-        assert_eq!(
-            v["apiKeyHelper"],
+        let helper = if cfg!(windows) {
+            "\"/Applications/Prism Flow.app/Contents/MacOS/prismflow\" token print --connection \"claude_code:nvidia_nim\""
+        } else {
             "'/Applications/Prism Flow.app/Contents/MacOS/prismflow' token print --connection 'claude_code:nvidia_nim'"
-        );
+        };
+        assert_eq!(v["apiKeyHelper"], helper);
         assert!(is_ours(&p.after));
         assert!(!p.after.contains("pft_") && !p.after.contains("nvapi-") && !p.after.contains("sk-"));
     }
@@ -347,8 +356,24 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(windows))]
     fn quoting_survives_hostile_paths() {
         assert_eq!(shell_quote("/it's/x"), r"'/it'\''s/x'");
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn windows_helper_runs_under_cmd() {
+        use std::os::windows::process::CommandExt;
+        let line = helper_command(Path::new(r"C:\Users\Ann Lee\AppData\Local\PrismFlow\prismflow.exe"), "claude_code:groq");
+        assert_eq!(line, r#""C:\Users\Ann Lee\AppData\Local\PrismFlow\prismflow.exe" token print --connection "claude_code:groq""#);
+        // cmd.exe runs it as-is: a real program with spaces in its path.
+        let dir = tempfile::tempdir().unwrap();
+        let exe = dir.path().join("with space").join("echo args.cmd");
+        std::fs::create_dir_all(exe.parent().unwrap()).unwrap();
+        std::fs::write(&exe, "@echo %*\r\n").unwrap();
+        let out = std::process::Command::new("cmd").args(["/d", "/s", "/c"]).raw_arg(format!("\"{}\"", helper_command(&exe, "claude_code:groq"))).output().unwrap();
+        assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), r#"token print --connection "claude_code:groq""#);
     }
 }
 

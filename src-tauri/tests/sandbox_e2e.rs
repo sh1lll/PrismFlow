@@ -194,6 +194,11 @@ fn report(svc: &Service, label: &str, r: &prismflow_lib::state::VerificationRepo
     eprintln!("\n== {label}: {:?} ({:.0?})", r.status, took);
     for s in &r.stages {
         eprintln!("  {} {:<13} {:?}: {}", s.stage, s.name, s.outcome, s.detail.lines().next().unwrap_or(""));
+        if matches!(s.outcome, prismflow_lib::state::StageOutcome::Fail) {
+            for l in s.detail.lines().skip(1).filter(|l| !l.trim().is_empty()).take(30) {
+                eprintln!("      | {l}");
+            }
+        }
     }
     if !matches!(r.status, ConnectionStatus::ConnectedAndVerified) {
         for e in svc.diagnostics(30).iter().filter(|e| e.code.starts_with("broker.")) {
