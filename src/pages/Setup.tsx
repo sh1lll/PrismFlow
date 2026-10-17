@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { api, AppDetection, AppId, Provider, TEST_SKIPPED, VerificationReport, appLabel, errText, isSeparate, shortStatus, statusTone } from "../api";
 import { GuidedSetup, ModelPicker, Stages } from "./bits";
 import TestRunning from "./TestRunning";
+import { SIGNIN } from "./Providers";
 
 const POPULAR = ["openrouter", "anthropic", "openai", "gemini", "groq", "deepseek", "nvidia_nim", "mistral", "xai"];
 
@@ -84,15 +85,22 @@ function PickProvider({ app, providers, onPick, onKeySaved, onBack }: {
   const [needsKey, setNeedsKey] = useState<Provider | null>(null);
   const usable = providers.filter((p) => p.routes[app] != null);
   const ready = (p: Provider) => p.has_credential || p.key_optional;
+  // Accounts you're already signed in to on this computer (GitHub, ChatGPT…).
+  const found = (p: Provider) => p.credential_source !== "keychain" && p.signin_available && !p.has_credential;
   const groups = useMemo(() => {
     const f = search.toLowerCase();
     if (f) return [{ title: "", items: usable.filter((p) => p.display_name.toLowerCase().includes(f)) }];
     return [
+      { title: "Found on this computer", items: usable.filter(found) },
       { title: "Ready to use", items: usable.filter(ready) },
-      { title: "Popular", items: POPULAR.map((id) => usable.find((p) => p.id === id)).filter((p): p is Provider => !!p && !ready(p)) },
+      { title: "Popular", items: POPULAR.map((id) => usable.find((p) => p.id === id)).filter((p): p is Provider => !!p && !ready(p) && !found(p)) },
     ];
   }, [providers, app, search]);
-  if (needsKey) return <AddKey p={needsKey} onSaved={async () => { await onKeySaved(); onPick(needsKey.id); }} onBack={() => setNeedsKey(null)} />;
+  if (needsKey) {
+    // Read the latest state (a sign-in may have happened meanwhile).
+    const current = providers.find((x) => x.id === needsKey.id) ?? needsKey;
+    return <AddKey p={current} onReload={onKeySaved} onSaved={async () => { await onKeySaved(); onPick(needsKey.id); }} onBack={() => setNeedsKey(null)} />;
+  }
   return (
     <div>
       <input placeholder="Search all providers" value={search} onChange={(e) => setSearch(e.target.value)} />
@@ -103,7 +111,7 @@ function PickProvider({ app, providers, onPick, onKeySaved, onBack }: {
             {g.items.map((p) => (
               <button key={p.id} className="tile" onClick={() => (ready(p) ? onPick(p.id) : setNeedsKey(p))}>
                 {p.display_name}
-                <span className="small muted">{p.local ? "On this computer · free" : ready(p) ? "Ready" : "Needs a key"}</span>
+                <span className="small muted">{p.local ? "On this computer · free" : found(p) ? `Use your ${SIGNIN[p.credential_source]?.tool ?? ""} sign-in` : ready(p) ? "Ready" : p.credential_source !== "keychain" ? "Needs a sign-in" : "Needs a key"}</span>
               </button>
             ))}
           </div>
@@ -115,19 +123,11 @@ function PickProvider({ app, providers, onPick, onKeySaved, onBack }: {
 }
 
 /** A provider's key, right where it's needed. */
-function AddKey({ p, onSaved, onBack }: { p: Provider; onSaved: () => Promise<void>; onBack: () => void }) {
+function AddKey({ p, onSaved, onReload, onBack }: { p: Provider; onSaved: () => Promise<void>; onReload: () => Promise<void>; onBack: () => void }) {
   const [key, setKey] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  if (p.credential_source !== "keychain") {
-    return (
-      <div className="card">
-        <div className="label">{p.display_name}</div>
-        <div className="muted">Sign in to {p.display_name} on the Providers page first.</div>
-        <button className="ghost mt" onClick={onBack}>Back</button>
-      </div>
-    );
-  }
+  if (p.credential_source !== "keychain") return <UseSignIn p={p} onSaved={onSaved} onReload={onReload} onBack={onBack} />;
   return (
     <div className="card">
       <div className="label">{p.display_name} key</div>
@@ -142,6 +142,42 @@ function AddKey({ p, onSaved, onBack }: { p: Provider; onSaved: () => Promise<vo
           finally { setBusy(false); }
         }}>{busy ? "Saving…" : "Save key"}</button>
       </div>
+      {error && <div className="err small mt-s">{error}</div>}
+    </div>
+  );
+}
+
+/** An account already signed in on this computer: one click to use it. */
+function UseSignIn({ p, onSaved, onReload, onBack }: { p: Provider; onSaved: () => Promise<void>; onReload: () => Promise<void>; onBack: () => void }) {
+  const info = SIGNIN[p.credential_source];
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  async function use() {
+    setBusy(true); setError("");
+    try { await api.setSigninConsent(p.id, true); await onSaved(); }
+    catch (e) { setError(errText(e)); }
+    finally { setBusy(false); }
+  }
+  return (
+    <div className="card">
+      <div className="label">{p.display_name}</div>
+      {p.signin_available ? (
+        <>
+          <div className="small muted">{info?.note}</div>
+          <div className="row mt">
+            <button className="ghost" onClick={onBack}>Back</button>
+            <button className="primary" disabled={busy} onClick={use}>{busy ? "Setting up…" : `Use my ${info?.tool ?? ""} account`}</button>
+          </div>
+        </>
+      ) : (
+        <>
+          <div className="small">Sign in first: run <code className="selectable">{info?.login}</code> in Terminal, then come back.</div>
+          <div className="row mt">
+            <button className="ghost" onClick={onBack}>Back</button>
+            <button className="ghost" disabled={busy} onClick={async () => { setBusy(true); await onReload().catch(() => {}); setBusy(false); }}>Check again</button>
+          </div>
+        </>
+      )}
       {error && <div className="err small mt-s">{error}</div>}
     </div>
   );

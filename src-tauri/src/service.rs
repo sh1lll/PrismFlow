@@ -85,6 +85,30 @@ pub struct Service {
 
 type R<T> = Result<T, String>;
 
+/// The models a ChatGPT plan offers, from the list Codex keeps after it
+/// signs in (`models_cache.json`: no secrets). Hidden entries are skipped.
+fn codex_plan_models(codex_home: &std::path::Path) -> R<Vec<ModelInfo>> {
+    let text = std::fs::read_to_string(codex_home.join("models_cache.json"))
+        .map_err(|_| "Open Codex once so it can fetch your plan's models, or type a model name.".to_string())?;
+    let v: serde_json::Value = serde_json::from_str(&text).map_err(|_| "Codex's model list couldn't be read. Type a model name.".to_string())?;
+    let models: Vec<ModelInfo> = v["models"].as_array().into_iter().flatten()
+        .filter(|m| m["visibility"].as_str() != Some("hide"))
+        .filter_map(|m| Some(ModelInfo {
+            id: m["slug"].as_str()?.to_string(),
+            name: m["display_name"].as_str().map(String::from),
+            context_length: m["context_window"].as_u64(),
+            reports_tools: Some(true),
+            price_in: None,
+            price_out: None,
+            coding: true,
+        }))
+        .collect();
+    if models.is_empty() {
+        return Err("Codex's model list is empty. Type a model name.".into());
+    }
+    Ok(models)
+}
+
 /// Every application PrismFlow can connect.
 fn app_ids() -> Vec<&'static str> {
     let mut v = vec![codex::APP_ID, codex::CLI_SEPARATE_APP_ID, codex::DESKTOP_APP_ID, codex::DESKTOP_SEPARATE_APP_ID, claude_code::APP_ID, claude_code::SEPARATE_APP_ID, claude_desktop::APP_ID, claude_desktop::SEPARATE_APP_ID, jetbrains::APP_ID, vscode::CLAUDE_APP_ID, vscode::CLAUDE_SHARED_APP_ID, vscode::CHAT_APP_ID, vscode::SEPARATE_APP_ID];
@@ -430,6 +454,9 @@ impl Service {
         let p = provider(provider_id)?;
         if p.credential_source == providers::CredentialSource::CopilotCli {
             return self.copilot_models().await;
+        }
+        if p.credential_source == providers::CredentialSource::CodexLogin {
+            return codex_plan_models(&self.codex_home);
         }
         let path = p.model_list_path.ok_or("This provider doesn't list its models. Type the model name.")?;
         if p.base_url.is_empty() {
@@ -1839,6 +1866,18 @@ fn open_terminal(line: &str, env: &[(&str, String)]) -> R<()> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn chatgpt_models_come_from_codex_cache_without_hidden_ones() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(super::codex_plan_models(dir.path()).unwrap_err().contains("Open Codex once"));
+        std::fs::write(dir.path().join("models_cache.json"), r#"{"models":[
+            {"slug":"gpt-a","display_name":"GPT-A","visibility":"list","context_window":272000},
+            {"slug":"gpt-hidden","visibility":"hide"}]}"#).unwrap();
+        let m = super::codex_plan_models(dir.path()).unwrap();
+        assert_eq!(m.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(), ["gpt-a"]);
+        assert_eq!(m[0].context_length, Some(272000));
+    }
+
     use super::*;
     use crate::credentials::memory::InMemoryStore;
 

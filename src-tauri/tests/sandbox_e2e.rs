@@ -194,7 +194,8 @@ fn main() {
     std::env::set_var("PRISMFLOW_EDITORS_HOME", &home);
     std::env::set_var("PRISMFLOW_JETBRAINS_ACP_FILE", home.join(".jetbrains/acp.json"));
     std::env::set_var("PRISMFLOW_MCP_HOME", &home);
-    std::env::set_var("PRISMFLOW_E2E_STORE", root.join("store.json"));
+    // Outside the accented folder: cmd.exe misreads non-ASCII in .cmd files.
+    std::env::set_var("PRISMFLOW_E2E_STORE", dir.path().join("store.json"));
     let failures = tokio::runtime::Runtime::new().unwrap().block_on(async {
         let mut f = run(&root, &home).await;
         // Hard conditions run with the default app set only.
@@ -285,14 +286,14 @@ async fn run(root: &Path, home: &Path) -> Vec<String> {
     #[cfg(windows)]
     let helper = {
         let h = root.join("prismflow-helper.cmd");
-        std::fs::write(&h, format!("@set \"PRISMFLOW_E2E_STORE={}\"\r\n@\"{}\" helper %*\r\n", root.join("store.json").display(), me.display())).unwrap();
+        std::fs::write(&h, format!("@set \"PRISMFLOW_E2E_STORE={}\"\r\n@\"{}\" helper %*\r\n", std::env::var("PRISMFLOW_E2E_STORE").unwrap(), me.display())).unwrap();
         h
     };
     #[cfg(unix)]
     let helper = {
         use std::os::unix::fs::PermissionsExt;
         let h = root.join("prismflow-helper");
-        std::fs::write(&h, format!("#!/bin/sh\nPRISMFLOW_E2E_STORE='{}' exec '{}' helper \"$@\"\n", root.join("store.json").display(), me.display())).unwrap();
+        std::fs::write(&h, format!("#!/bin/sh\nPRISMFLOW_E2E_STORE='{}' exec '{}' helper \"$@\"\n", std::env::var("PRISMFLOW_E2E_STORE").unwrap(), me.display())).unwrap();
         std::fs::set_permissions(&h, std::fs::Permissions::from_mode(0o755)).unwrap();
         h
     };
@@ -1008,6 +1009,39 @@ async fn features(root: &Path, home: &Path) -> Vec<String> {
             }
             Err(e) => case.fail(format!("start: {e}")),
         }
+        case.within(60);
+    }
+
+    // An existing ChatGPT sign-in (Codex's) is found and used in one step.
+    {
+        let mut case = Case::start("ChatGPT sign-in found on this computer", &mut failures);
+        let codex = home.join(".codex");
+        std::fs::write(codex.join("auth.json"), r#"{"auth_mode":"chatgpt","tokens":{"access_token":"at-sandbox-not-real","refresh_token":"rt"}}"#).unwrap();
+        std::fs::write(codex.join("models_cache.json"), r#"{"models":[{"slug":"gpt-sandbox","display_name":"GPT Sandbox","visibility":"list","context_window":272000},{"slug":"gpt-hidden","visibility":"hide"}]}"#).unwrap();
+        let view = svc.providers().into_iter().find(|p| p.def.id == "chatgpt");
+        match view {
+            Some(v) if v.signin_available && !v.has_credential => case.says("found", "ChatGPT sign-in available, not yet in use"),
+            other => case.fail(format!("ChatGPT sign-in not offered: {:?}", other.map(|v| (v.signin_available, v.has_credential)))),
+        }
+        match svc.set_signin_consent("chatgpt", true).await {
+            Ok(()) => case.says("use it", "turned on"),
+            Err(e) => case.fail(format!("turn on: {e}")),
+        }
+        match svc.discover_models("chatgpt").await {
+            Ok(m) => {
+                let ids: Vec<String> = m.into_iter().map(|m| m.id).collect();
+                case.says("models", &format!("{ids:?}"));
+                if ids != ["gpt-sandbox"] { case.fail(format!("expected the plan's visible models, got {ids:?}")); }
+            }
+            Err(e) => case.fail(format!("models: {e}")),
+        }
+        match svc.connect(claude_code::APP_ID, "chatgpt", "gpt-sandbox").await {
+            Ok(r) => { case.says("connect Claude Code", "connected"); let _ = svc.disconnect(&r.id).await; }
+            Err(e) => case.fail(format!("connect: {e}")),
+        }
+        let _ = svc.set_signin_consent("chatgpt", false).await;
+        let _ = std::fs::remove_file(codex.join("auth.json"));
+        let _ = std::fs::remove_file(codex.join("models_cache.json"));
         case.within(60);
     }
 

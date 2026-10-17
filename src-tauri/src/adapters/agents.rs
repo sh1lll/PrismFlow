@@ -678,7 +678,14 @@ pub fn write(files: &[(PathBuf, String)]) -> Result<(), String> {
         if let Some(d) = path.parent() {
             std::fs::create_dir_all(d).map_err(|e| format!("{}: {e}", d.display()))?;
         }
-        crate::config_engine::atomic_write(path, body).map_err(|e| e.to_string())?;
+        // Windows PowerShell 5.1 reads a script without a UTF-8 BOM in the
+        // old code page, which breaks paths like C:\Users\Ann Lée\…
+        let body = if path.extension().is_some_and(|e| e == "ps1") && !body.starts_with('\u{feff}') {
+            std::borrow::Cow::Owned(format!("\u{feff}{body}"))
+        } else {
+            std::borrow::Cow::Borrowed(body.as_str())
+        };
+        crate::config_engine::atomic_write(path, &body).map_err(|e| e.to_string())?;
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
