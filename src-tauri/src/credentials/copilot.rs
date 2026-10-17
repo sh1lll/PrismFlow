@@ -14,7 +14,7 @@
 use serde_json::{json, Value};
 use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 use std::sync::Mutex;
 use std::time::{Duration, Instant, SystemTime};
 
@@ -122,7 +122,7 @@ struct Cli {
 impl Cli {
     fn start() -> Result<Self, String> {
         let bin = find_cli().ok_or("Install GitHub's Copilot CLI and run `copilot login` first.")?;
-        let mut child = Command::new(bin)
+        let mut child = crate::spawn::command(bin)
             .args(["--headless", "--no-auto-update", "--stdio"])
             .env("COPILOT_ALLOW_GET_PROVIDER_ENDPOINT", "true")
             // Its own login only, never a token from the environment.

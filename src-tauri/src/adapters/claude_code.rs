@@ -22,7 +22,6 @@ use crate::providers::ProviderDefinition;
 use crate::routing::{ModelRef, Routing, Tier};
 use serde_json::json;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 pub const APP_ID: &str = "claude_code";
 /// Claude Code with its own CLAUDE_CONFIG_DIR inside PrismFlow's data.
@@ -114,7 +113,7 @@ pub fn detect() -> AppDetection {
             notes: vec!["Claude Code isn't installed.".into()],
         };
     };
-    let raw = Command::new(&bin)
+    let raw = crate::spawn::command(&bin)
         .arg("--version")
         .env("PATH", child_path(&bin))
         .output()

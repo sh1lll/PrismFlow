@@ -27,7 +27,7 @@ pub async fn prompt(
     text: &str,
     timeout: Duration,
 ) -> Result<AcpRun, String> {
-    let mut cmd = tokio::process::Command::new(command);
+    let mut cmd = crate::spawn::async_command(command);
     cmd.args(args)
         .env_clear()
         .envs(["PATH", "HOME", "TMPDIR", "LANG", "USER", "SHELL"].iter().filter_map(|k| std::env::var(k).ok().map(|v| (k.to_string(), v))))

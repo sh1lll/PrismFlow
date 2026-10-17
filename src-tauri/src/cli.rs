@@ -66,7 +66,7 @@ pub fn claude_wrapper(args: &[String]) -> Option<i32> {
             }
         },
     };
-    let mut cmd = std::process::Command::new(&claude);
+    let mut cmd = crate::spawn::command(&claude);
     // Claude's own tools (and PrismFlow's token helper) must not see this.
     cmd.arg("--settings").arg(&settings).args(rest).env_remove(crate::adapters::vscode::SETTINGS_VAR);
     #[cfg(unix)]

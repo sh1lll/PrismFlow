@@ -14,7 +14,6 @@ use super::{extra_bin_dirs, AppDetection};
 use crate::config_engine::{self, ConfigError, EditPlan, TomlVal};
 use crate::providers::ProviderDefinition;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 pub const APP_ID: &str = "codex_cli";
 /// Codex CLI with its own CODEX_HOME inside PrismFlow's data (own chats, settings).
@@ -80,7 +79,7 @@ pub fn detect() -> AppDetection {
             notes: vec!["Codex isn't installed.".into()],
         };
     };
-    let output = Command::new(&bin).arg("--version").env("PATH", child_path(&bin)).output();
+    let output = crate::spawn::command(&bin).arg("--version").env("PATH", child_path(&bin)).output();
     let raw = output
         .ok()
         .filter(|o| o.status.success())
@@ -276,7 +275,7 @@ pub fn template_from_models(raw: &str) -> Result<CatalogTemplate, String> {
 pub fn catalog_template(bin: &Path) -> Result<CatalogTemplate, String> {
     let scratch = std::env::temp_dir().join(format!("prismflow-codex-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&scratch).map_err(|e| e.to_string())?;
-    let out = Command::new(bin)
+    let out = crate::spawn::command(bin)
         .args(["debug", "models"])
         .env("CODEX_HOME", &scratch)
         .env("PATH", child_path(bin))
@@ -453,7 +452,7 @@ pub fn detect_desktop() -> AppDetection {
         .map(PathBuf::from)
         .chain(dirs::home_dir().map(|h| h.join("Applications/ChatGPT.app")))
         .find(|p| {
-            Command::new("/usr/bin/defaults")
+            crate::spawn::command("/usr/bin/defaults")
                 .args(["read", &p.join("Contents/Info").display().to_string(), "CFBundleIdentifier"])
                 .output()
                 .is_ok_and(|o| String::from_utf8_lossy(&o.stdout).trim() == DESKTOP_BUNDLE_ID)
@@ -472,7 +471,7 @@ pub fn detect_desktop() -> AppDetection {
         ],
     };
     if let Some(p) = &app {
-        d.version = Command::new("/usr/bin/defaults")
+        d.version = crate::spawn::command("/usr/bin/defaults")
             .args(["read", &p.join("Contents/Info").display().to_string(), "CFBundleShortVersionString"])
             .output()
             .ok()

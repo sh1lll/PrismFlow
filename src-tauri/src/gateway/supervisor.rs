@@ -21,7 +21,7 @@ use std::process::Stdio;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tokio::io::{AsyncBufReadExt, BufReader};
-use tokio::process::{Child, ChildStdin, Command};
+use tokio::process::{Child, ChildStdin};
 
 pub const ENGINE: &str = "@the-next-ai/ai-gateway";
 pub const ENGINE_VERSION: &str = "1.0.21";
@@ -59,7 +59,7 @@ pub fn use_bundled_runtime(resource_dir: &Path) {
     if let (Some(node), None) = (node, std::env::var_os("PRISMFLOW_NODE_BIN")) {
         // Only adopt a bundled runtime that actually starts; otherwise the
         // system Node (if any) is still found and the failure is diagnosable.
-        let runs = std::process::Command::new(&node).arg("--version").output().is_ok_and(|o| o.status.success());
+        let runs = crate::spawn::command(&node).arg("--version").output().is_ok_and(|o| o.status.success());
         if runs {
             std::env::set_var("PRISMFLOW_NODE_BIN", node);
         }
@@ -118,7 +118,7 @@ impl GatewayRuntime {
         let node = find_node().ok_or_else(|| format!(
             "Node.js {NODE_MIN_MAJOR} or newer is required to run the gateway and was not found. Install it from nodejs.org or with Homebrew."
         ))?;
-        let out = std::process::Command::new(&node)
+        let out = crate::spawn::command(&node)
             .arg("--version")
             .output()
             .map_err(|e| format!("Could not run {}: {e}", node.display()))?;
@@ -314,7 +314,7 @@ pub fn spawn(rt: &GatewayRuntime, specs: &[UpstreamSpec], settings: &super::Runt
     let client_key = tokens::generate();
     let manager_key = tokens::generate();
 
-    let mut cmd = Command::new(&rt.node);
+    let mut cmd = crate::spawn::async_command(&rt.node);
     cmd.arg("--require").arg(rt.preload()).arg(rt.entry());
     cmd.current_dir(work_dir).env_clear();
     if cfg!(windows) {

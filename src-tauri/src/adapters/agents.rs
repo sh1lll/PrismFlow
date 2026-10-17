@@ -17,7 +17,6 @@
 
 use super::AppDetection;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 pub const MARKER: &str = "# Managed by PrismFlow";
 
@@ -122,7 +121,7 @@ pub fn detect(spec: &AgentSpec) -> AppDetection {
         return d;
     };
     d.path = Some(bin.display().to_string());
-    let out = Command::new(&bin).arg("--version").env("PATH", super::codex::child_path(&bin)).output();
+    let out = crate::spawn::command(&bin).arg("--version").env("PATH", super::codex::child_path(&bin)).output();
     if let Some(v) = out.ok().filter(|o| o.status.success()).map(|o| String::from_utf8_lossy(&o.stdout).lines().next().unwrap_or("").trim().to_string()) {
         d.installed = true;
         d.version_verified = v.contains(spec.verified_version);

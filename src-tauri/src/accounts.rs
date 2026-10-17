@@ -103,7 +103,7 @@ fn sources() -> Vec<(String, BTreeMap<String, String>)> {
     }
     // A GUI app doesn't see your shell's variables; ask a login shell.
     let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".into());
-    if let Ok(o) = std::process::Command::new(&shell).args(["-ilc", "env"]).stdin(std::process::Stdio::null()).output() {
+    if let Ok(o) = crate::spawn::command(&shell).args(["-ilc", "env"]).stdin(std::process::Stdio::null()).output() {
         out.push(("Your shell".into(), parse_env(&String::from_utf8_lossy(&o.stdout))));
     }
     if let Some(home) = dirs::home_dir() {

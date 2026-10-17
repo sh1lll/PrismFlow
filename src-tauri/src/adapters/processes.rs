@@ -20,10 +20,23 @@ pub fn parse_ps(out: &str) -> Vec<Proc> {
 }
 
 /// All processes visible to this user. Empty when listing is unsupported.
+/// One listing is reused for a few seconds: on Windows it takes about a
+/// second, and the Connections page asks once per connection.
 pub fn list() -> Vec<Proc> {
+    static LAST: std::sync::Mutex<Option<(std::time::Instant, Vec<Proc>)>> = std::sync::Mutex::new(None);
+    let mut last = LAST.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some((_, procs)) = last.as_ref().filter(|(at, _)| at.elapsed() < std::time::Duration::from_secs(3)) {
+        return procs.clone();
+    }
+    let procs = list_now();
+    *last = Some((std::time::Instant::now(), procs.clone()));
+    procs
+}
+
+fn list_now() -> Vec<Proc> {
     #[cfg(unix)]
     {
-        std::process::Command::new("ps")
+        crate::spawn::command("ps")
             .args(["-axo", "pid=,command="])
             .output()
             .ok()
@@ -33,7 +46,7 @@ pub fn list() -> Vec<Proc> {
     #[cfg(windows)]
     {
         // `wmic` is deprecated; PowerShell's CIM query gives full command lines.
-        std::process::Command::new("powershell")
+        crate::spawn::command("powershell")
             .args(["-NoProfile", "-Command",
                 "Get-CimInstance Win32_Process | ForEach-Object { \"$($_.ProcessId) $($_.CommandLine)\" }"])
             .output()

@@ -31,13 +31,8 @@ impl Drop for TreeGuard {
     fn drop(&mut self) {
         let Some(pid) = self.0 else { return };
         #[cfg(unix)]
-        let _ = std::process::Command::new("kill").args(["-KILL", "--", &format!("-{pid}")]).status();
+        let _ = crate::spawn::command("kill").args(["-KILL", "--", &format!("-{pid}")]).status();
         #[cfg(windows)]
-        {
-            use std::os::windows::process::CommandExt;
-            const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-            let _ = std::process::Command::new("taskkill").args(["/T", "/F", "/PID", &pid.to_string()])
-                .creation_flags(CREATE_NO_WINDOW).status();
-        }
+        let _ = crate::spawn::command("taskkill").args(["/T", "/F", "/PID", &pid.to_string()]).status();
     }
 }

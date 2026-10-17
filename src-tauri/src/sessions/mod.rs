@@ -193,7 +193,7 @@ impl Sessions {
             });
             (args, x.session.folder.clone())
         };
-        let mut cmd = tokio::process::Command::new(codex_bin);
+        let mut cmd = crate::spawn::async_command(codex_bin);
         cmd.args(&args)
             .current_dir(&folder)
             .env("PATH", crate::adapters::codex::child_path(codex_bin))

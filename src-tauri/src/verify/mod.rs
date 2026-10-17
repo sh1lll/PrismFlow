@@ -143,7 +143,7 @@ async fn run_codex(
     timeout: Duration,
 ) -> Result<(bool, String), String> {
     std::fs::create_dir_all(workdir).map_err(|e| format!("could not create {}: {e}", workdir.display()))?;
-    let mut cmd = tokio::process::Command::new(bin);
+    let mut cmd = crate::spawn::async_command(bin);
     cmd.arg("exec");
     if !profile.is_empty() {
         cmd.arg("-p").arg(profile);
@@ -210,7 +210,7 @@ fn claude_dir_for(record: &ConnectionRecord) -> Option<&Path> {
 /// Inherited `ANTHROPIC_*` / `CLAUDE_CODE_*` variables are removed so the
 /// run sees exactly what the settings file configures.
 async fn run_claude(bin: &Path, config_dir: Option<&Path>, settings: &Path, workdir: &Path, prompt: &str, timeout: Duration) -> Result<(bool, String), String> {
-    let mut cmd = tokio::process::Command::new(bin);
+    let mut cmd = crate::spawn::async_command(bin);
     if let Some(d) = config_dir {
         cmd.env("CLAUDE_CONFIG_DIR", d);
     }
@@ -716,7 +716,7 @@ fn check_agent_config(a: &crate::adapters::agents::AgentSpec, script: &Path) -> 
 async fn run_script(script: &Path, args: &[String], workdir: &Path, timeout: Duration) -> Result<(bool, String), String> {
     std::fs::create_dir_all(workdir).map_err(|e| e.to_string())?;
     let (prog, lead) = crate::adapters::agents::script_runner(script);
-    let mut cmd = tokio::process::Command::new(prog);
+    let mut cmd = crate::spawn::async_command(prog);
     cmd.args(lead).args(args).current_dir(workdir)
         .stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped()).kill_on_drop(true);
     crate::proctree::own_group(&mut cmd);
@@ -1056,7 +1056,7 @@ esac"#;
         let pid = std::fs::read_to_string(&pid_file).unwrap().trim().to_string();
         let mut alive = true;
         for _ in 0..40 {
-            alive = std::process::Command::new("kill").args(["-0", &pid]).status().unwrap().success();
+            alive = crate::spawn::command("kill").args(["-0", &pid]).status().unwrap().success();
             if !alive { break; }
             tokio::time::sleep(Duration::from_millis(50)).await;
         }

@@ -95,7 +95,7 @@ pub fn find_node() -> Option<PathBuf> {
 }
 
 fn node_major(node: &Path) -> Option<u32> {
-    let out = std::process::Command::new(node).arg("--version").output().ok()?;
+    let out = crate::spawn::command(node).arg("--version").output().ok()?;
     String::from_utf8_lossy(&out.stdout).trim().trim_start_matches('v').split('.').next()?.parse().ok()
 }
 

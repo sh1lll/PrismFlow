@@ -13,7 +13,7 @@ use std::path::Path;
 /// AI's documented way; tokens last one hour).
 pub fn gcloud_token() -> Option<String> {
     let gcloud = crate::adapters::find_exe("gcloud")?;
-    let out = std::process::Command::new(gcloud).args(["auth", "print-access-token", "--quiet"]).stdin(std::process::Stdio::null()).output().ok()?;
+    let out = crate::spawn::command(gcloud).args(["auth", "print-access-token", "--quiet"]).stdin(std::process::Stdio::null()).output().ok()?;
     if !out.status.success() {
         return None;
     }
@@ -23,7 +23,7 @@ pub fn gcloud_token() -> Option<String> {
 
 pub fn gh_token() -> Option<String> {
     let gh = crate::adapters::find_exe("gh")?;
-    let out = std::process::Command::new(gh).args(["auth", "token"]).stdin(std::process::Stdio::null()).output().ok()?;
+    let out = crate::spawn::command(gh).args(["auth", "token"]).stdin(std::process::Stdio::null()).output().ok()?;
     if !out.status.success() {
         return None;
     }

@@ -12,6 +12,7 @@ pub mod gateway;
 pub mod mcp;
 pub mod notify;
 pub mod proctree;
+pub mod spawn;
 pub mod tray;
 pub mod usage;
 pub mod ollama;

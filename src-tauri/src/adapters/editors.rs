@@ -49,7 +49,7 @@ pub fn open_zed_separate(state_dir: &Path, token: &str) -> Result<(), String> {
     } else {
         super::find_exe("zed").or_else(|| super::find_exe("zeditor")).ok_or("Zed isn't installed.")?
     };
-    let mut cmd = std::process::Command::new(zed);
+    let mut cmd = crate::spawn::command(zed);
     for k in ZED_KEY_VARS {
         cmd.env(k, token);
     }

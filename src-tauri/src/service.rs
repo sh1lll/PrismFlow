@@ -1686,7 +1686,7 @@ impl Service {
 
 #[cfg(target_os = "macos")]
 fn open_app(bundle_id: &str) -> R<()> {
-    let ok = std::process::Command::new("open").args(["-b", bundle_id]).status().is_ok_and(|s| s.success());
+    let ok = crate::spawn::command("open").args(["-b", bundle_id]).status().is_ok_and(|s| s.success());
     if ok { Ok(()) } else { Err("The app could not be opened.".into()) }
 }
 
@@ -1695,13 +1695,13 @@ fn open_app(bundle_id: &str) -> R<()> {
 #[cfg(target_os = "macos")]
 fn open_separate_codex(home: &std::path::Path) -> R<()> {
     let app = codex::detect_desktop().path.ok_or("The Codex app isn't installed.")?;
-    let running = std::process::Command::new("pgrep").args(["-f", &format!("{app}/Contents/MacOS/")]).output()
+    let running = crate::spawn::command("pgrep").args(["-f", &format!("{app}/Contents/MacOS/")]).output()
         .is_ok_and(|o| o.status.success());
     if running {
         return Err("The Codex app is already open. Quit it (Codex → Quit), then press Open again.".into());
     }
     std::fs::create_dir_all(home).map_err(|_| "PrismFlow couldn't set up the Codex app's own folder.")?;
-    let ok = std::process::Command::new("open")
+    let ok = crate::spawn::command("open")
         .args(["-n", "-b", codex::DESKTOP_BUNDLE_ID, "--env", &format!("CODEX_HOME={}", home.display())])
         .status().is_ok_and(|s| s.success());
     if ok { Ok(()) } else { Err("The app could not be opened.".into()) }
@@ -1720,7 +1720,7 @@ fn open_app(_bundle_id: &str) -> R<()> {
 #[cfg(target_os = "macos")]
 fn open_terminal(line: &str) -> R<()> {
     let script = line.replace('\\', "\\\\").replace('"', "\\\"");
-    let status = std::process::Command::new("osascript")
+    let status = crate::spawn::command("osascript")
         .args(["-e", &format!("tell application \"Terminal\" to do script \"{script}\"")])
         .args(["-e", "tell application \"Terminal\" to activate"])
         .status()
@@ -1742,7 +1742,7 @@ fn open_terminal(line: &str) -> R<()> {
     ];
     for (term, args) in candidates {
         if crate::adapters::find_exe(term).is_some() {
-            std::process::Command::new(term).args(&args).arg(&keep).spawn().map_err(|e| format!("Could not open {term}: {e}"))?;
+            crate::spawn::command(term).args(&args).arg(&keep).spawn().map_err(|e| format!("Could not open {term}: {e}"))?;
             return Ok(());
         }
     }
@@ -1756,7 +1756,7 @@ fn open_terminal(line: &str) -> R<()> {
 /// doesn't understand the `\"` escaping Rust would add around `line`.
 fn open_terminal(line: &str, env: &[(&str, String)]) -> R<()> {
     use std::os::windows::process::CommandExt;
-    std::process::Command::new("cmd").raw_arg(format!("/c start \"PrismFlow\" cmd /k {line}"))
+    crate::spawn::command("cmd").raw_arg(format!("/c start \"PrismFlow\" cmd /k {line}"))
         .envs(env.iter().map(|(k, v)| (*k, v.as_str()))).spawn()
         .map_err(|e| format!("Could not open a console: {e}"))?;
     Ok(())

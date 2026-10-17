@@ -145,15 +145,15 @@ pub async fn openrouter_sign_in(
 /// Opens an address in the user's default browser.
 pub fn open_in_browser(url: &str) -> Result<(), String> {
     #[cfg(target_os = "macos")]
-    let mut cmd = std::process::Command::new("open");
+    let mut cmd = crate::spawn::command("open");
     #[cfg(target_os = "windows")]
     let mut cmd = {
-        let mut c = std::process::Command::new("rundll32");
+        let mut c = crate::spawn::command("rundll32");
         c.arg("url.dll,FileProtocolHandler");
         c
     };
     #[cfg(all(unix, not(target_os = "macos")))]
-    let mut cmd = std::process::Command::new("xdg-open");
+    let mut cmd = crate::spawn::command("xdg-open");
     cmd.arg(url).status().map_err(|e| format!("Couldn't open your browser: {e}"))?;
     Ok(())
 }

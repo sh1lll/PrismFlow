@@ -53,11 +53,11 @@ pub fn code_command() -> Option<PathBuf> {
 pub fn open_separate(data_dir: &Path) -> Result<(), String> {
     let code = code_command().ok_or("VS Code's `code` command wasn't found. In VS Code, run \"Shell Command: Install 'code' command in PATH\".")?;
     let mut cmd = if cfg!(windows) {
-        let mut c = std::process::Command::new("cmd");
+        let mut c = crate::spawn::command("cmd");
         c.arg("/c").arg(&code);
         c
     } else {
-        std::process::Command::new(&code)
+        crate::spawn::command(&code)
     };
     cmd.arg("--user-data-dir").arg(data_dir).arg("--new-window")
         .stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null());

@@ -14,7 +14,6 @@
 use super::AppDetection;
 use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 pub const APP_ID: &str = "claude_desktop";
 pub const BUNDLE_ID: &str = "com.anthropic.claudefordesktop";
@@ -56,7 +55,7 @@ pub fn open_separate(state_dir: &Path) -> Result<(), String> {
     let app = find_app().ok_or("Claude Desktop isn't installed.")?;
     let data = separate_data_dir(state_dir);
     std::fs::create_dir_all(&data).map_err(|_| "PrismFlow couldn't set up the second Claude Desktop's folder.")?;
-    let ok = Command::new("open").arg("-n").arg("-a").arg(&app)
+    let ok = crate::spawn::command("open").arg("-n").arg("-a").arg(&app)
         .arg("--args").arg(format!("--user-data-dir={}", data.display()))
         .status().is_ok_and(|s| s.success());
     if ok { Ok(()) } else { Err("Claude Desktop could not be opened.".into()) }
@@ -73,7 +72,7 @@ pub fn find_app() -> Option<PathBuf> {
         .map(PathBuf::from)
         .chain(dirs::home_dir().map(|h| h.join("Applications/Claude.app")))
         .find(|p| {
-            Command::new("/usr/bin/defaults")
+            crate::spawn::command("/usr/bin/defaults")
                 .args(["read", &p.join("Contents/Info").display().to_string(), "CFBundleIdentifier"])
                 .output()
                 .is_ok_and(|o| String::from_utf8_lossy(&o.stdout).trim() == BUNDLE_ID)
@@ -83,7 +82,7 @@ pub fn find_app() -> Option<PathBuf> {
 pub fn detect() -> AppDetection {
     let app = find_app();
     let version = app.as_ref().and_then(|p| {
-        Command::new("/usr/bin/defaults")
+        crate::spawn::command("/usr/bin/defaults")
             .args(["read", &p.join("Contents/Info").display().to_string(), "CFBundleShortVersionString"])
             .output()
             .ok()
