@@ -25,6 +25,7 @@ pub fn for_event(code: &str, message: &str) -> Option<(String, String)> {
         // Offline is the usual cause, and PrismFlow retries every minute.
         "gateway.copilot" | "gateway.copilot_refresh" if m.contains("didn't answer in time") || m.contains("trying again") => ("GitHub Copilot is unreachable".into(), "PrismFlow keeps trying. If you're online and it still fails, run `copilot login`.".into()),
         "gateway.copilot" | "gateway.copilot_refresh" => ("GitHub Copilot needs attention".into(), "Copilot isn't available. Run `copilot login`, then reopen PrismFlow.".into()),
+        "chatgpt.renew" if m.contains("Sign in again") => ("ChatGPT sign-in ended".into(), "Open PrismFlow → Providers and sign in to ChatGPT again.".into()),
         "gateway.refresh" => ("Google Cloud sign-in expired".into(), "Run `gcloud auth login` to keep using Vertex AI.".into()),
         "gateway.startup" | "connect.gateway" => ("PrismFlow's background service stopped".into(), "Connected apps can't reach their models. Open PrismFlow to restart it.".into()),
         "usage.budget" => ("Spending limit reached".into(), m.to_string()),

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { ask } from "./bits";
-import { api, FoundKey, Protocol, Provider, UrlCheck, errText } from "../api";
+import { api, ChatgptStatus, FoundKey, Protocol, Provider, UrlCheck, errText } from "../api";
 
 /** Plain names for the API styles a custom server can speak. */
 const STYLE: Record<Protocol, string> = {
@@ -386,6 +386,78 @@ function AccountCard({ p, onChange }: { p: Provider; onChange: () => void }) {
   );
 }
 
+const day = (secs: number) => new Date(secs * 1000).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+
+/** ChatGPT: use Codex's sign-in, or let PrismFlow sign in and keep it. */
+function ChatgptCard({ p, onChange }: { p: Provider; onChange: () => void }) {
+  const [st, setSt] = useState<ChatgptStatus | null>(null);
+  const [models, setModels] = useState<number | null>(null);
+  const [busy, setBusy] = useState("");
+  const [msg, setMsg] = useState<Msg>(null);
+  const load = () => api.chatgptStatus().then(setSt).catch(() => setSt(null));
+  useEffect(() => { load(); }, [p.has_credential]);
+  useEffect(() => {
+    if (!p.has_credential) return;
+    api.discoverModels(p.id).then((m) => setModels(m.length)).catch(() => setModels(null));
+  }, [p.has_credential]);
+  async function run(label: string, f: () => Promise<unknown>, ok: string) {
+    setBusy(label); setMsg(null);
+    try { await f(); setMsg({ tone: "ok", text: ok }); onChange(); load(); }
+    catch (e) { setMsg({ tone: "err", text: errText(e) }); }
+    finally { setBusy(""); }
+  }
+  const expired = !!st && st.expires_at > 0 && st.expires_at * 1000 < Date.now();
+  const connected = p.has_credential && st?.source;
+  const useCodex = () => run("codex", () => api.setSigninConsent(p.id, true), "Connected.");
+  const ownSignIn = () => run("own", () => api.chatgptSignIn(), "Signed in.");
+  const codexLogin = () => run("login", () => api.codexLogin(), "Signed in again.");
+  const disconnect = async () => {
+    if (!(await ask("Stop using your ChatGPT plan in PrismFlow?", "Disconnect"))) return;
+    run("off", async () => {
+      if (st?.source === "prismflow") await api.chatgptSignOut();
+      await api.setSigninConsent(p.id, false).catch(() => {});
+    }, "Disconnected.");
+  };
+  return (
+    <div className="card account">
+      <div className="app-name">{p.display_name}</div>
+      {connected ? (
+        <>
+          <div className={`small ${expired ? "err" : "ok"}`}>
+            {expired ? "Your sign-in expired." : models === null ? "Checking models…" : `${models} model${models === 1 ? "" : "s"} available`}
+          </div>
+          <div className="small muted">
+            {st?.source === "prismflow"
+              ? "Signed in with PrismFlow · renews automatically"
+              : `Using your Codex sign-in${st && st.expires_at && !expired ? ` · valid until ${day(st.expires_at)}` : ""}`}
+          </div>
+        </>
+      ) : (
+        <div className="small muted">Uses your ChatGPT plan.</div>
+      )}
+      <div className="row wrap mt">
+        {connected ? (
+          <>
+            <button className="ghost danger-text" disabled={!!busy} onClick={disconnect}>Disconnect</button>
+            {st?.source === "codex" && st.codex_installed && (
+              <button className={expired ? "primary" : "ghost"} disabled={!!busy} onClick={codexLogin}>{busy === "login" ? "Waiting for the browser…" : "Sign in again"}</button>
+            )}
+            {st?.source === "codex" && (
+              <button className="ghost" disabled={!!busy} onClick={ownSignIn}>{busy === "own" ? "Waiting for the browser…" : "Let PrismFlow keep the sign-in"}</button>
+            )}
+          </>
+        ) : (
+          <>
+            {st?.codex_signed_in && <button className="primary" disabled={!!busy} onClick={useCodex}>{busy === "codex" ? "Connecting…" : "Use my Codex sign-in"}</button>}
+            <button className={st?.codex_signed_in ? "ghost" : "primary"} disabled={!!busy} onClick={ownSignIn}>{busy === "own" ? "Waiting for the browser…" : "Sign in with ChatGPT"}</button>
+          </>
+        )}
+      </div>
+      {msg && <div className={`small mt-s ${msg.tone}`}>{msg.text}</div>}
+    </div>
+  );
+}
+
 function CustomProviders({ list, onChange }: { list: Provider[]; onChange: () => void }) {
   const [adding, setAdding] = useState(false);
   return (
@@ -436,9 +508,9 @@ export default function Providers() {
           <>
             <h2>Sign-in accounts</h2>
             {on.length > 0 && <div className="label">Connected</div>}
-            {on.length > 0 && <div className="accounts">{on.map((p) => <AccountCard key={p.id} p={p} onChange={load} />)}</div>}
+            {on.length > 0 && <div className="accounts">{on.map((p) => p.id === "chatgpt" ? <ChatgptCard key={p.id} p={p} onChange={load} /> : <AccountCard key={p.id} p={p} onChange={load} />)}</div>}
             {off.length > 0 && <div className="label mt">Not connected</div>}
-            {off.length > 0 && <div className="accounts">{off.map((p) => <AccountCard key={p.id} p={p} onChange={load} />)}</div>}
+            {off.length > 0 && <div className="accounts">{off.map((p) => p.id === "chatgpt" ? <ChatgptCard key={p.id} p={p} onChange={load} /> : <AccountCard key={p.id} p={p} onChange={load} />)}</div>}
             <h2>Custom providers</h2>
             <CustomProviders list={providers.filter((p) => p.custom)} onChange={load} />
           </>

@@ -21,7 +21,7 @@ pub const OPENROUTER_EXCHANGE: &str = "https://openrouter.ai/api/v1/auth/keys";
 /// OpenRouter's codes expire after 10 minutes; give up a little before.
 const WAIT: Duration = Duration::from_secs(9 * 60);
 
-fn base64url(bytes: &[u8]) -> String {
+pub(crate) fn base64url(bytes: &[u8]) -> String {
     const A: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
     let mut out = String::new();
     for chunk in bytes.chunks(3) {
@@ -33,7 +33,7 @@ fn base64url(bytes: &[u8]) -> String {
     out
 }
 
-fn random(n: usize) -> String {
+pub(crate) fn random(n: usize) -> String {
     let mut buf = vec![0u8; n];
     getrandom::fill(&mut buf).expect("system randomness");
     base64url(&buf)
@@ -74,7 +74,7 @@ fn percent_decode(s: &str) -> String {
     String::from_utf8_lossy(&out).into_owned()
 }
 
-fn encode(s: &str) -> String {
+pub(crate) fn encode(s: &str) -> String {
     s.bytes()
         .map(|b| match b {
             b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => (b as char).to_string(),
@@ -85,6 +85,34 @@ fn encode(s: &str) -> String {
 
 const PAGE_OK: &str = "<!doctype html><meta charset=utf-8><title>PrismFlow</title><body style=\"font:16px system-ui;padding:40px\"><h2>Signed in.</h2><p>You can close this tab and go back to PrismFlow.</p>";
 const PAGE_FAIL: &str = "<!doctype html><meta charset=utf-8><title>PrismFlow</title><body style=\"font:16px system-ui;padding:40px\"><h2>Sign-in didn't finish.</h2><p>Go back to PrismFlow and try again.</p>";
+
+/// Waits for the browser to come back to `path` on `listener` with a `code`
+/// whose `state` matches, answers the browser with a short page, and
+/// returns the code.
+pub(crate) async fn await_code(listener: &TcpListener, path: &str, state: &str, wait: Duration) -> Result<String, String> {
+    tokio::time::timeout(wait, async {
+        loop {
+            let (mut sock, _) = listener.accept().await.map_err(|e| e.to_string())?;
+            let mut buf = vec![0u8; 8192];
+            let n = sock.read(&mut buf).await.unwrap_or(0);
+            let req = String::from_utf8_lossy(&buf[..n]).to_string();
+            let target = req.split_whitespace().nth(1).unwrap_or("").to_string();
+            if !target.starts_with(path) {
+                let _ = sock.write_all(b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").await;
+                continue;
+            }
+            let ok = query_param(&target, "state").as_deref() == Some(state);
+            let code = query_param(&target, "code").filter(|_| ok);
+            let page = if code.is_some() { PAGE_OK } else { PAGE_FAIL };
+            let _ = sock
+                .write_all(format!("HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{page}", page.len()).as_bytes())
+                .await;
+            return code.ok_or_else(|| "Sign-in was cancelled or didn't match. Try again.".to_string());
+        }
+    })
+    .await
+    .map_err(|_| "Sign-in timed out. Try again.".to_string())?
+}
 
 /// Runs the whole flow and returns the new OpenRouter key.
 /// `open` is called once with the sign-in page address.
@@ -105,28 +133,7 @@ pub async fn openrouter_sign_in(
     );
     open(&url)?;
 
-    let code = tokio::time::timeout(WAIT, async {
-        loop {
-            let (mut sock, _) = listener.accept().await.map_err(|e| e.to_string())?;
-            let mut buf = vec![0u8; 8192];
-            let n = sock.read(&mut buf).await.unwrap_or(0);
-            let req = String::from_utf8_lossy(&buf[..n]).to_string();
-            let target = req.split_whitespace().nth(1).unwrap_or("").to_string();
-            if !target.starts_with("/callback") {
-                let _ = sock.write_all(b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").await;
-                continue;
-            }
-            let ok = query_param(&target, "state").as_deref() == Some(state.as_str());
-            let code = query_param(&target, "code").filter(|_| ok);
-            let page = if code.is_some() { PAGE_OK } else { PAGE_FAIL };
-            let _ = sock
-                .write_all(format!("HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{page}", page.len()).as_bytes())
-                .await;
-            return code.ok_or_else(|| "Sign-in was cancelled or didn't match. Try again.".to_string());
-        }
-    })
-    .await
-    .map_err(|_| "Sign-in timed out. Try again.".to_string())??;
+    let code = await_code(&listener, "/callback", &state, WAIT).await?;
 
     let r = client
         .post(exchange_url)

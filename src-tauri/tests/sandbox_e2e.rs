@@ -567,6 +567,18 @@ fn service(root: &Path, home: &Path, state: &str, store: Box<dyn CredentialStore
     }
 }
 
+fn base64_url(bytes: &[u8]) -> String {
+    const A: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+    let mut out = String::new();
+    for chunk in bytes.chunks(3) {
+        let n = chunk.iter().enumerate().fold(0u32, |n, (i, b)| n | (*b as u32) << (16 - 8 * i));
+        for i in 0..=chunk.len() {
+            out.push(A[(n >> (18 - 6 * i) & 63) as usize] as char);
+        }
+    }
+    out
+}
+
 fn free_port() -> u16 {
     std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap().local_addr().unwrap().port()
 }
@@ -1042,6 +1054,58 @@ async fn features(root: &Path, home: &Path) -> Vec<String> {
         let _ = svc.set_signin_consent("chatgpt", false).await;
         let _ = std::fs::remove_file(codex.join("auth.json"));
         let _ = std::fs::remove_file(codex.join("models_cache.json"));
+        case.within(60);
+    }
+
+    // PrismFlow's own ChatGPT sign-in: browser sign-in, renewal, sign-out.
+    {
+        let mut case = Case::start("ChatGPT sign-in kept by PrismFlow", &mut failures);
+        let auth = MockServer::start().await;
+        let jwt = |claims: serde_json::Value| {
+            let b = base64_url(claims.to_string().as_bytes());
+            format!("e30.{b}.sig")
+        };
+        let access = jwt(serde_json::json!({ "exp": 4_000_000_000u64, "https://api.openai.com/auth": { "chatgpt_account_id": "acc-sandbox" } }));
+        Mock::given(method("POST")).and(path("/oauth/token")).and(wiremock::matchers::body_string_contains("grant_type=authorization_code"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({ "access_token": access, "refresh_token": "rt-1" })))
+            .mount(&auth).await;
+        Mock::given(method("POST")).and(path("/oauth/token")).and(wiremock::matchers::body_string_contains("refresh_token"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({ "access_token": jwt(serde_json::json!({ "exp": 4_100_000_000u64 })), "refresh_token": "rt-2" })))
+            .mount(&auth).await;
+        let mut ov: Vec<(&str, String)> = overrides.to_vec();
+        ov.push(("chatgpt_auth", format!("{}/oauth/token", auth.uri())));
+        ov.push(("chatgpt_authorize", format!("{}/oauth/authorize", auth.uri())));
+        let own = service(root, home, "state-chatgpt", Box::new(store()), free_port(), &ov);
+        let browser = |url: &str| -> Result<(), String> {
+            let state = url.split("state=").nth(1).and_then(|s| s.split('&').next()).unwrap_or("").to_string();
+            tokio::spawn(async move {
+                tokio::time::sleep(Duration::from_millis(200)).await;
+                let _ = reqwest::get(format!("http://127.0.0.1:1455/auth/callback?code=c-1&state={state}")).await;
+            });
+            Ok(())
+        };
+        match own.chatgpt_sign_in(browser).await {
+            Ok(()) => {
+                let st = own.chatgpt_status();
+                case.says("signed in", &format!("source {:?}, in use {}", st.source, st.in_use));
+                if st.source != Some("prismflow") || !st.in_use { case.fail("not using PrismFlow's own sign-in".into()); }
+                match own.connect(claude_code::APP_ID, "chatgpt", "gpt-sandbox").await {
+                    Ok(r) => { case.says("connect Claude Code", "connected"); let _ = own.disconnect(&r.id).await; }
+                    Err(e) => case.fail(format!("connect: {e}")),
+                }
+                match own.renew_chatgpt(true).await {
+                    Ok(true) => case.says("renew", &format!("now valid until {}", own.chatgpt_status().expires_at)),
+                    other => case.fail(format!("renew: {other:?}")),
+                }
+                if own.chatgpt_status().expires_at != 4_100_000_000 { case.fail("renewal not saved".into()); }
+                match own.chatgpt_sign_out().await {
+                    Ok(()) if own.chatgpt_status().source.is_none() => case.says("sign out", "removed"),
+                    other => case.fail(format!("sign out: {other:?} / {:?}", own.chatgpt_status().source)),
+                }
+            }
+            Err(e) => case.fail(format!("sign in: {e}")),
+        }
+        own.broker.stop().await;
         case.within(60);
     }
 

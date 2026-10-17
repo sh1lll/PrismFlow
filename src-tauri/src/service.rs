@@ -43,6 +43,17 @@ fn listening(url: &str) -> bool {
         .any(|a| std::net::TcpStream::connect_timeout(&a, Duration::from_millis(200)).is_ok())
 }
 
+#[derive(Debug, Serialize)]
+pub struct ChatgptStatus {
+    /// "prismflow" (PrismFlow's own sign-in), "codex" (Codex's), or none.
+    pub source: Option<&'static str>,
+    /// Unix seconds the current access token expires; 0 when unknown.
+    pub expires_at: u64,
+    pub codex_signed_in: bool,
+    pub codex_installed: bool,
+    pub in_use: bool,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum UninstallOutcome {
@@ -118,6 +129,11 @@ fn codex_plan_models(codex_home: &std::path::Path) -> R<Vec<ModelInfo>> {
         return Err("Codex's model list is empty. Type a model name.".into());
     }
     Ok(models)
+}
+
+fn tempfile_dir_for_models(dir: &std::path::Path) -> R<std::path::PathBuf> {
+    std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+    Ok(dir.to_path_buf())
 }
 
 /// Every application PrismFlow can connect.
@@ -277,7 +293,9 @@ impl Service {
         match providers::get(provider_id).map(|p| p.credential_source).unwrap_or_default() {
             Keychain => self.store.get(&account_key(provider_id, "default")).ok(),
             GhCli if self.has_signin_consent(provider_id) => crate::credentials::signin::gh_token(),
-            CodexLogin if self.has_signin_consent(provider_id) => crate::credentials::signin::codex_access_token(&self.codex_home),
+            // PrismFlow's own ChatGPT sign-in first (it renews itself), else Codex's.
+            CodexLogin if self.has_signin_consent(provider_id) => self.own_chatgpt().map(|t| t.access_token)
+                .or_else(|| crate::credentials::signin::codex_access_token(&self.codex_home)),
             Gcloud if self.has_signin_consent(provider_id) => crate::credentials::signin::gcloud_token(),
             // The real token is fetched per model when the gateway starts.
             CopilotCli if self.has_signin_consent(provider_id) && crate::credentials::copilot::signed_in() => Some("copilot".into()),
@@ -295,7 +313,7 @@ impl Service {
         match p.credential_source {
             Keychain => false,
             GhCli => crate::credentials::signin::gh_token().is_some(),
-            CodexLogin => crate::credentials::signin::codex_access_token(&self.codex_home).is_some(),
+            CodexLogin => self.own_chatgpt().is_some() || crate::credentials::signin::codex_access_token(&self.codex_home).is_some(),
             Gcloud => crate::credentials::signin::gcloud_token().is_some(),
             CopilotCli => crate::credentials::copilot::signed_in(),
         }
@@ -335,6 +353,114 @@ impl Service {
     /// providers that need none (local servers). None = missing and required.
     pub(crate) fn usable_key(&self, p: &ProviderDefinition) -> Option<String> {
         self.key(p.id).or_else(|| (!p.requires_key).then(|| "no-key-required".to_string()))
+    }
+
+    /// PrismFlow's own ChatGPT sign-in, if there is one.
+    fn own_chatgpt(&self) -> Option<crate::credentials::chatgpt::Tokens> {
+        crate::credentials::chatgpt::load(self.store.as_ref()).ok().flatten()
+    }
+
+    fn chatgpt_account_id(&self) -> Option<String> {
+        if let Some(t) = self.own_chatgpt() {
+            return t.account_id.or_else(|| crate::credentials::chatgpt::account_id(&t.access_token));
+        }
+        let raw = std::fs::read_to_string(self.codex_home.join("auth.json")).ok()?;
+        let v: serde_json::Value = serde_json::from_str(&raw).ok()?;
+        v["tokens"]["account_id"].as_str().map(String::from)
+            .or_else(|| v["tokens"]["access_token"].as_str().and_then(crate::credentials::chatgpt::account_id))
+    }
+
+    /// Which ChatGPT sign-in is in use and until when.
+    pub fn chatgpt_status(&self) -> ChatgptStatus {
+        let own = self.own_chatgpt();
+        let codex = crate::credentials::signin::codex_access_token(&self.codex_home);
+        let (source, expires_at) = match (&own, &codex) {
+            (Some(t), _) => (Some("prismflow"), t.expires_at),
+            (None, Some(t)) => (Some("codex"), crate::credentials::chatgpt::expires_at(t)),
+            (None, None) => (None, 0),
+        };
+        ChatgptStatus {
+            source,
+            expires_at,
+            codex_signed_in: codex.is_some(),
+            codex_installed: codex::find_binary().is_some(),
+            in_use: self.has_signin_consent("chatgpt"),
+        }
+    }
+
+    /// Sign in to ChatGPT in the browser, with PrismFlow keeping the sign-in.
+    pub async fn chatgpt_sign_in(&self, open: impl FnOnce(&str) -> Result<(), String>) -> R<()> {
+        use crate::credentials::chatgpt as c;
+        // Tests point these at a stand-in sign-in server.
+        let authorize = self.upstream_overrides.get("chatgpt_authorize").cloned().unwrap_or_else(|| c::AUTHORIZE_URL.to_string());
+        let token_url = self.upstream_overrides.get("chatgpt_auth").cloned().unwrap_or_else(|| c::TOKEN_URL.to_string());
+        let t = c::sign_in(&self.client, &authorize, &token_url, c::CALLBACK_PORT, open).await?;
+        c::save(self.store.as_ref(), &t).map_err(|e| crate::credentials::store_problem(&e))?;
+        self.diag.record(Level::Info, "chatgpt.signed_in", "Signed in to ChatGPT; PrismFlow keeps and renews the sign-in.");
+        self.set_signin_consent("chatgpt", true).await?;
+        if self.provider_in_gateway("chatgpt") {
+            self.sync_gateway().await?;
+        }
+        Ok(())
+    }
+
+    /// Forget PrismFlow's own ChatGPT sign-in (Codex's is left alone).
+    pub async fn chatgpt_sign_out(&self) -> R<()> {
+        crate::credentials::chatgpt::forget(self.store.as_ref()).map_err(|e| crate::credentials::store_problem(&e))?;
+        self.diag.record(Level::Info, "chatgpt.signed_out", "Removed PrismFlow's ChatGPT sign-in.");
+        if crate::credentials::signin::codex_access_token(&self.codex_home).is_none() {
+            let mut ids = self.state.load_signin_consent();
+            ids.retain(|i| i != "chatgpt");
+            self.state.save_signin_consent(&ids).map_err(|e| e.to_string())?;
+        }
+        if self.provider_in_gateway("chatgpt") {
+            self.sync_gateway().await?;
+        }
+        Ok(())
+    }
+
+    /// Renews PrismFlow's own ChatGPT sign-in when it's close to expiring
+    /// (or always, with `force`). Returns whether it renewed.
+    pub async fn renew_chatgpt(&self, force: bool) -> R<bool> {
+        use crate::credentials::chatgpt as c;
+        let Some(t) = self.own_chatgpt() else { return Ok(false) };
+        if !force && !c::needs_renewal(&t, now_secs()) {
+            return Ok(false);
+        }
+        let token_url = self.upstream_overrides.get("chatgpt_auth").cloned().unwrap_or_else(|| c::TOKEN_URL.to_string());
+        let new = c::renew(&self.client, &token_url, &t).await?;
+        c::save(self.store.as_ref(), &new).map_err(|e| crate::credentials::store_problem(&e))?;
+        self.diag.record(Level::Info, "chatgpt.renewed", "Renewed the ChatGPT sign-in.");
+        Ok(true)
+    }
+
+    /// The plan's models straight from ChatGPT (the list Codex itself fetches).
+    async fn chatgpt_live_models(&self, p: &ProviderDefinition) -> R<Vec<ModelInfo>> {
+        let key = self.key(p.id).ok_or("Sign in to ChatGPT first.")?;
+        let mut req = self.client.get(format!("{}/models?client_version=0.162.0", self.upstream_url(p).trim_end_matches('/'))).bearer_auth(key);
+        if let Some(a) = self.chatgpt_account_id() {
+            req = req.header("chatgpt-account-id", a);
+        }
+        let r = req.send().await.map_err(|e| discovery::unreachable_text(&e))?;
+        if !r.status().is_success() {
+            return Err(format!("ChatGPT didn't list its models (HTTP {}).", r.status().as_u16()));
+        }
+        let dir = tempfile_dir_for_models(&self.state.dir().join("chatgpt-models"))?;
+        std::fs::write(dir.join("models_cache.json"), r.text().await.unwrap_or_default()).map_err(|e| e.to_string())?;
+        codex_plan_models(&dir)
+    }
+
+    /// Runs Codex's own `codex login` (it opens the browser), then returns.
+    pub async fn codex_login(&self) -> R<()> {
+        let bin = codex::find_binary().ok_or("Codex isn't installed. Use “Sign in with ChatGPT” instead.")?;
+        let mut cmd = crate::spawn::async_command(bin);
+        cmd.arg("login").stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).kill_on_drop(true);
+        let mut child = cmd.spawn().map_err(|_| "Couldn't start Codex's sign-in.".to_string())?;
+        match tokio::time::timeout(Duration::from_secs(10 * 60), child.wait()).await {
+            Ok(Ok(s)) if s.success() => Ok(()),
+            Ok(_) => Err("Codex's sign-in didn't finish. Try again.".into()),
+            Err(_) => Err("Codex's sign-in timed out. Try again.".into()),
+        }
     }
 
     pub fn upstream_url(&self, p: &ProviderDefinition) -> String {
@@ -472,7 +598,11 @@ impl Service {
             return self.copilot_models().await;
         }
         if p.credential_source == providers::CredentialSource::CodexLogin {
-            return codex_plan_models(&self.codex_home);
+            // Codex's saved list first; without Codex, ask ChatGPT directly.
+            return match codex_plan_models(&self.codex_home) {
+                Ok(m) => Ok(m),
+                Err(e) => self.chatgpt_live_models(p).await.map_err(|_| e),
+            };
         }
         let path = p.model_list_path.ok_or("This provider doesn't list its models. Type the model name.")?;
         if p.base_url.is_empty() {
@@ -1220,6 +1350,10 @@ impl Service {
     }
 
     pub async fn sync_gateway(&self) -> R<BrokerStatus> {
+        // Renew PrismFlow's own ChatGPT sign-in before handing it out.
+        if let Err(e) = self.renew_chatgpt(false).await {
+            self.diag.record(Level::Warn, "chatgpt.renew", &e);
+        }
         let records: Vec<ConnectionRecord> = self
             .state
             .load()
@@ -1337,7 +1471,12 @@ impl Service {
                 models,
                 key,
                 codex_oauth: p.credential_source == providers::CredentialSource::CodexLogin,
-                headers: Vec::new(),
+                // ChatGPT's backend wants the account the token belongs to.
+                headers: if p.credential_source == providers::CredentialSource::CodexLogin {
+                    self.chatgpt_account_id().map(|a| vec![("chatgpt-account-id".to_string(), a)]).unwrap_or_default()
+                } else {
+                    Vec::new()
+                },
                 extra_keys: self.extra_keys(p.id),
             });
         }
@@ -1639,6 +1778,7 @@ impl Service {
             .map(|p| (account_key(p.id, "default"), format!("{} key", p.display_name)))
             .collect();
         accounts.push((crate::webtools::BRAVE_ACCOUNT.to_string(), "Brave Search key".into()));
+        accounts.push((crate::credentials::chatgpt::ACCOUNT.to_string(), "PrismFlow's ChatGPT sign-in".into()));
         for app in app_ids() {
             for p in providers::registry() {
                 let id = connection_id(app, p.id);

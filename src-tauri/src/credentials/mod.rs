@@ -4,6 +4,7 @@ pub mod devfile;
 pub mod memory;
 pub mod copilot;
 pub mod oauth;
+pub mod chatgpt;
 pub mod signin;
 
 use thiserror::Error;

@@ -4,7 +4,7 @@ import { GuidedSetup, ModelPicker, Stages } from "./bits";
 import TestRunning from "./TestRunning";
 import { SIGNIN } from "./Providers";
 
-const POPULAR = ["openrouter", "anthropic", "openai", "gemini", "groq", "deepseek", "nvidia_nim", "mistral", "xai"];
+const POPULAR = ["chatgpt", "openrouter", "anthropic", "openai", "gemini", "groq", "deepseek", "nvidia_nim", "mistral", "xai"];
 
 type Step = "app" | "provider" | "model" | "done";
 
@@ -193,9 +193,17 @@ function UseSignIn({ p, onSaved, onReload, onBack }: { p: Provider; onSaved: () 
         </>
       ) : (
         <>
-          <div className="small">Sign in first: run <code className="selectable">{info?.login}</code> in Terminal, then come back.</div>
+          {p.id === "chatgpt"
+            ? <div className="small">Sign in to ChatGPT in your browser; PrismFlow keeps the sign-in and renews it.</div>
+            : <div className="small">Sign in first: run <code className="selectable">{info?.login}</code> in Terminal, then come back.</div>}
           <div className="row mt">
             <button className="ghost" onClick={onBack}>Back</button>
+            {p.id === "chatgpt" && (
+              <button className="primary" disabled={busy} onClick={async () => {
+                setBusy(true); setError("");
+                try { await api.chatgptSignIn(); await onSaved(); } catch (e) { setError(errText(e)); } finally { setBusy(false); }
+              }}>{busy ? "Waiting for the browser…" : "Sign in with ChatGPT"}</button>
+            )}
             <button className="ghost" disabled={busy} onClick={async () => { setBusy(true); await onReload().catch(() => {}); setBusy(false); }}>Check again</button>
           </div>
         </>

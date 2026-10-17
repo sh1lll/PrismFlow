@@ -294,6 +294,30 @@ async fn openrouter_sign_in(svc: State<'_, Arc<Service>>) -> Cmd<()> {
 }
 
 #[tauri::command]
+fn chatgpt_status(svc: State<'_, Arc<Service>>) -> service::ChatgptStatus {
+    svc.chatgpt_status()
+}
+
+#[tauri::command]
+async fn chatgpt_sign_in(svc: State<'_, Arc<Service>>) -> Cmd<()> {
+    svc.chatgpt_sign_in(credentials::oauth::open_in_browser).await
+}
+
+#[tauri::command]
+async fn chatgpt_sign_out(svc: State<'_, Arc<Service>>) -> Cmd<()> {
+    svc.chatgpt_sign_out().await
+}
+
+#[tauri::command]
+async fn codex_login(svc: State<'_, Arc<Service>>) -> Cmd<()> {
+    svc.codex_login().await?;
+    if svc.provider_in_gateway("chatgpt") {
+        svc.sync_gateway().await?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
 async fn delete_credential(svc: State<'_, Arc<Service>>, provider_id: String) -> Cmd<()> {
     let svc = svc.inner().clone();
     blocking(move || svc.delete_credential(&provider_id)).await?
@@ -866,6 +890,22 @@ pub fn run() {
                         }
                     }
                 });
+                // PrismFlow's own ChatGPT sign-in: renew it before it expires.
+                let chat = svc.clone();
+                tauri::async_runtime::spawn(async move {
+                    loop {
+                        tokio::time::sleep(Duration::from_secs(30 * 60)).await;
+                        match chat.renew_chatgpt(false).await {
+                            Ok(true) if chat.provider_in_gateway("chatgpt") => {
+                                if let Err(e) = chat.sync_gateway().await {
+                                    chat.diag.record(diagnostics::Level::Warn, "gateway.chatgpt_refresh", &e);
+                                }
+                            }
+                            Ok(_) => {}
+                            Err(e) => chat.diag.record(diagnostics::Level::Warn, "chatgpt.renew", &e),
+                        }
+                    }
+                });
                 // GitHub Copilot tokens are short-lived: refresh before they expire.
                 let copilot = svc.clone();
                 tauri::async_runtime::spawn(async move {
@@ -916,6 +956,10 @@ pub fn run() {
         .manage(sessions::Sessions::open(&dir))
         .manage(BotState { bots: bots::Bots::default(), dir: dir.clone() })
         .invoke_handler(tauri::generate_handler![
+            chatgpt_status,
+            chatgpt_sign_in,
+            chatgpt_sign_out,
+            codex_login,
             cancel_verify,
             switch_connection,
             self_check,

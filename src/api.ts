@@ -178,6 +178,15 @@ export interface Routing {
   output_filter?: boolean;
 }
 export interface WebToolsSettings { enabled: boolean; backend: "none" | "searxng" | "brave"; searxng_url: string; allow_private: boolean }
+export interface ChatgptStatus {
+  /** "prismflow" = PrismFlow's own sign-in, "codex" = Codex's, null = none. */
+  source: "prismflow" | "codex" | null;
+  expires_at: number;
+  codex_signed_in: boolean;
+  codex_installed: boolean;
+  in_use: boolean;
+}
+
 export interface RuntimeSettings {
   rate_limit_per_minute: number;
   max_concurrency_per_provider: number;
@@ -310,6 +319,10 @@ export const api = {
   setBotToken: (platform: "telegram" | "discord", token: string) => invoke<void>("bots_set_token", { platform, token }),
   stopBots: () => invoke<void>("bots_stop"),
   openrouterSignIn: () => invoke<void>("openrouter_sign_in"),
+  chatgptStatus: () => invoke<ChatgptStatus>("chatgpt_status"),
+  chatgptSignIn: () => invoke<void>("chatgpt_sign_in"),
+  chatgptSignOut: () => invoke<void>("chatgpt_sign_out"),
+  codexLogin: () => invoke<void>("codex_login"),
   companionEnable: (address: string, port: number, keepOn: boolean) => invoke<CompanionView>("companion_enable", { address, port, keepOn }),
   companionDisable: () => invoke<CompanionView>("companion_disable"),
   companionPair: () => invoke<PairingView>("companion_pair"),
