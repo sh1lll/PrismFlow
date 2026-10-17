@@ -1,181 +1,168 @@
 import { useEffect, useMemo, useState } from "react";
+import { api, AppDetection, AppId, Provider, TEST_SKIPPED, VerificationReport, appLabel, errText, isSeparate, shortStatus, statusTone } from "../api";
+import { ModelPicker, Stages } from "./bits";
 import TestRunning from "./TestRunning";
-import { api, modePair, MODE_PAIRS, priceText, APP_NAME, AppDetection, AppId, ConnectPreview, ModelInfo, Provider, STATUS_LABEL, TEST_SKIPPED, VerificationReport, errText } from "../api";
 
 const POPULAR = ["openrouter", "anthropic", "openai", "gemini", "groq", "deepseek", "nvidia_nim", "mistral", "xai"];
-const notForChat = /embed|rerank|whisper|tts|moderation|image|vision-only/i;
 
-/** First-run setup: app → provider → key or sign-in → model → connect and test. */
-export default function Setup({ onDone }: { onDone: () => void }) {
-  const [step, setStep] = useState(1);
-  const [apps, setApps] = useState<AppDetection[]>([]);
+type Step = "app" | "provider" | "model" | "done";
+
+/** Add an app: pick it, pick a provider (and add its key), pick a model. */
+export default function Setup({ initialApp, onDone }: { initialApp?: AppId; onDone: () => void }) {
+  const [step, setStep] = useState<Step>(initialApp ? "provider" : "app");
+  const [apps, setApps] = useState<AppDetection[] | null>(null);
   const [providers, setProviders] = useState<Provider[]>([]);
-  const [app, setApp] = useState<AppId | "">("");
+  const [app, setApp] = useState<AppId | "">(initialApp ?? "");
   const [pid, setPid] = useState("");
-  const [secret, setSecret] = useState("");
-  const [models, setModels] = useState<ModelInfo[] | null>(null);
   const [model, setModel] = useState("");
-  const [filter, setFilter] = useState("");
-  const [preview, setPreview] = useState<ConnectPreview | null>(null);
-  const [report, setReport] = useState<VerificationReport | null>(null);
   const [connId, setConnId] = useState("");
-  const [skipped, setSkipped] = useState(false);
-  const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
   const loadProviders = () => api.providers().then(setProviders).catch((e) => setError(errText(e)));
-  useEffect(() => { api.applications().then(setApps).catch(() => {}); loadProviders(); }, []);
-
-  const p = providers.find((x) => x.id === pid);
-  const usable = providers.filter((x) => app && x.routes[app as AppId]);
-  const groups = useMemo(() => [
-    { title: "Free, on this computer", items: usable.filter((x) => x.local && !x.custom) },
-    { title: "Use an account you already have", items: usable.filter((x) => x.credential_source !== "keychain" && !x.custom) },
-    { title: "Popular", items: POPULAR.map((id) => usable.find((x) => x.id === id)).filter(Boolean) as Provider[] },
-  ], [providers, app]);
-  const ready = p && (p.has_credential || p.key_optional);
-
-  async function run(label: string, f: () => Promise<void>) {
-    setBusy(label); setError("");
-    try { await f(); } catch (e) { setError(errText(e)); } finally { setBusy(""); }
-  }
-  const go = (n: number) => { setError(""); setStep(n); };
-  async function connect() {
-    const c = await api.connect(app as AppId, pid, model.trim());
-    setConnId(c.id);
-    return c;
-  }
-  const pair = app ? modePair(app) : undefined;
-  const installed = (id: string) => apps.some((a) => a.app_id === id && a.installed);
-  /** The separate twin is shown through its shared button, if that one is installed. */
-  const hiddenTwin = (id: string) => MODE_PAIRS.some((p) => p.separate === id && installed(p.shared));
-  const [codingOnly, setCodingOnly] = useState(true);
-  const shown = (models ?? []).filter((m) => !notForChat.test(m.id) && (!codingOnly || m.coding) && (!filter || m.id.toLowerCase().includes(filter.toLowerCase()))).slice(0, 100);
+  useEffect(() => { api.applications().then(setApps).catch(() => setApps([])); loadProviders(); }, []);
+  const provider = providers.find((p) => p.id === pid);
+  const go = (s: Step) => { setError(""); setStep(s); };
 
   return (
-    <div>
-      <h1>Set up an app</h1>
-      <div className="steps small muted">Step {step} of 5</div>
-
-      {step === 1 && (
-        <div className="card">
-          <div className="section-title">Which app do you want to use?</div>
-          {apps.length === 0 && <div className="small muted mt-s">Looking for apps on this computer…</div>}
-          <div className="choices">
-            {apps.filter((a) => a.installed && !hiddenTwin(a.app_id)).map((a) => {
-              const p = modePair(a.app_id);
-              const picked = p ? app === p.shared || app === p.separate : app === a.app_id;
-              return <button key={a.app_id} className={picked ? "primary" : "ghost"} onClick={() => setApp(a.app_id as AppId)}>{p?.name ?? APP_NAME[a.app_id] ?? a.display_name}</button>;
-            })}
-          </div>
-          {pair && (
-            <div className="mt">
-              <div className="small muted">How should it run?</div>
-              <label className="small mt-block"><input type="radio" className="check" checked={app === pair.shared} onChange={() => setApp(pair.shared)} /> <b>Shared</b> · {pair.sharedText ?? "uses your usual chats and settings"}</label>
-              <label className="small mt-block"><input type="radio" className="check" checked={app === pair.separate} onChange={() => setApp(pair.separate)} /> <b>Separate</b> · {pair.separateText ?? "its own chats and settings, just for PrismFlow"}</label>
-            </div>
-          )}
-          {apps.length > 0 && apps.every((a) => !a.installed) && <div className="muted small">None of the supported apps were found. Install one (for example Claude Code or Codex) and come back.</div>}
-          <div className="row mt"><button className="primary" disabled={!app} onClick={() => go(2)}>Next</button><button className="ghost" onClick={onDone}>Skip</button></div>
-        </div>
+    <div className="setup">
+      <div className="row spread head">
+        <h1>{step === "app" ? "Add an app" : appLabel(app)}</h1>
+        <button className="ghost" onClick={onDone}>{step === "done" ? "Done" : "Cancel"}</button>
+      </div>
+      <Steps step={step} />
+      {step === "app" && <PickApp apps={apps} onPick={(a) => { setApp(a); go("provider"); }} />}
+      {step === "provider" && app && (
+        <PickProvider app={app} providers={providers} onKeySaved={loadProviders}
+          onPick={(p) => { setPid(p); setModel(""); go("model"); }} onBack={() => go("app")} />
       )}
-
-      {step === 2 && (
+      {step === "model" && provider && (
         <div className="card">
-          <div className="section-title">Which AI should {APP_NAME[app] ?? "it"} use?</div>
-          {groups.map((g) => g.items.length > 0 && (
-            <div key={g.title} className="mt">
-              <div className="small muted">{g.title}</div>
-              <div className="choices">
-                {g.items.map((x) => <button key={x.id} className={pid === x.id ? "primary" : "ghost"} onClick={() => setPid(x.id)}>{x.display_name}{x.has_credential ? " ✓" : ""}</button>)}
-              </div>
-            </div>
-          ))}
-          <div className="mt">
-            <div className="small muted">All providers</div>
-            <select value={pid} onChange={(e) => setPid(e.target.value)}>
-              <option value="">Pick one</option>
-              {usable.map((x) => <option key={x.id} value={x.id}>{x.display_name}</option>)}
-            </select>
-          </div>
-          <div className="row mt"><button className="ghost" onClick={() => go(1)}>Back</button><button className="primary" disabled={!pid} onClick={() => go(ready ? 4 : 3)}>Next</button></div>
-        </div>
-      )}
-
-      {step === 3 && p && (
-        <div className="card">
-          <div className="section-title">{p.credential_source === "keychain" ? `Add your ${p.display_name} key` : `Use your ${p.display_name} account`}</div>
-          {p.credential_source === "keychain" ? (
-            <>
-              {p.keys_url && <div className="small muted selectable">Get a key at {p.keys_url}</div>}
-              {p.id === "openrouter" && <button className="primary mt" disabled={busy !== ""} onClick={() => run("signin", async () => { await api.openrouterSignIn(); await loadProviders(); go(4); })}>Sign in with OpenRouter</button>}
-              <div className="row mt">
-                <input type="password" autoComplete="off" placeholder="Paste your key" value={secret} onChange={(e) => setSecret(e.target.value)} />
-                <button className="primary" disabled={!secret.trim() || busy !== ""} onClick={() => run("key", async () => { await api.setCredential(p.id, secret); setSecret(""); await loadProviders(); go(4); })}>Save key</button>
-              </div>
-              <div className="small muted mt">Saved in your Mac's Keychain. Apps never see it.</div>
-            </>
-          ) : p.signin_available ? (
-            <button className="primary" disabled={busy !== ""} onClick={() => run("consent", async () => { await api.setSigninConsent(p.id, true); await loadProviders(); go(4); })}>Use my {p.display_name} account</button>
-          ) : (
-            <div className="small">Sign in with that company's own tool first, then come back. See the Providers page for the command.</div>
-          )}
-          <div className="row mt"><button className="ghost" onClick={() => go(2)}>Back</button></div>
-        </div>
-      )}
-
-      {step === 4 && p && (
-        <div className="card">
-          <div className="section-title">Pick a model</div>
-          <div className="row">
-            <input placeholder={p.example_model ? `e.g. ${p.example_model}` : "Type a model name, or search the list"} value={model} onChange={(e) => { setModel(e.target.value); setFilter(e.target.value); }} />
-            <button className="ghost" disabled={busy !== ""} onClick={() => run("models", async () => setModels(await api.discoverModels(p.id)))}>{busy === "models" ? "Loading…" : "Show models"}</button>
-          </div>
-          {models && <label className="small mt-block"><input type="checkbox" className="check" checked={codingOnly} onChange={(e) => setCodingOnly(e.target.checked)} /> Only models good for coding</label>}
-          {models && (
-            <div className="picker">
-              {shown.map((m) => (
-                <button key={m.id} className={`rowbtn ${model === m.id ? "picked" : ""}`} onClick={() => setModel(m.id)}>
-                  {m.id}{m.context_length ? <span className="muted small"> · {Math.round(m.context_length / 1000)}k</span> : null}{m.reports_tools ? <span className="muted small"> · tools</span> : null}{priceText(m) ? <span className="muted small"> · {priceText(m)}</span> : null}
-                </button>
-              ))}
-            </div>
-          )}
-          {p.example_model && !model && <button className="ghost mt" onClick={() => setModel(p.example_model)}>Use {p.example_model}</button>}
+          <div className="label">Model from {provider.display_name}</div>
+          <ModelPicker provider={provider} value={model} onChange={setModel} />
           <div className="row mt">
-            <button className="ghost" onClick={() => go(2)}>Back</button>
-            <button className="primary" disabled={!model.trim() || busy !== ""} onClick={() => run("preview", async () => { setPreview(await api.preview(app as AppId, p.id, model.trim())); go(5); })}>Next</button>
+            <button className="ghost" onClick={() => go("provider")}>Back</button>
+            <button className="primary" disabled={!model.trim()} onClick={async () => {
+              setError("");
+              try { const c = await api.connect(app as AppId, pid, model.trim()); setConnId(c.id); go("done"); }
+              catch (e) { setError(errText(e)); }
+            }}>Connect</button>
           </div>
         </div>
       )}
-
-      {step === 5 && p && preview && (
-        <div className="card">
-          <div className="section-title">Connect {APP_NAME[app]} to {model} ({p.display_name})</div>
-          {preview.warnings.map((w, i) => <div key={i} className="small mt-s">• {w}</div>)}
-          {!report && !skipped && (
-            <div className="row mt">
-              <button className="ghost" disabled={busy !== ""} onClick={() => go(4)}>Back</button>
-              <button className="primary" disabled={busy !== ""} onClick={() => run("connect", async () => {
-                const c = await connect();
-                setBusy("test");
-                try { setReport(await api.verify(c.id)); } catch (e) { if (errText(e) === TEST_SKIPPED) setSkipped(true); else throw e; }
-              })}>{busy === "connect" ? "Connecting…" : busy === "test" ? "Testing…" : "Connect and test"}</button>
-              {busy === "" && <button className="ghost" onClick={() => run("connect", async () => { await connect(); setSkipped(true); })}>Connect without testing</button>}
-            </div>
-          )}
-          {busy === "test" && connId && <TestRunning id={connId} />}
-          {(report || skipped) && (
-            <div className="mt">
-              {report ? <div className={report.status === "ConnectedAndVerified" ? "ok" : "warn"}><b>{STATUS_LABEL[report.status]}</b></div>
-                : <div className="ok"><b>Connected.</b> <span className="small muted">Not tested. You can test it later on the Connections page.</span></div>}
-              {report?.stages.filter((s) => s.outcome === "Fail").map((s) => <div key={s.stage} className="small err pre-wrap mt-s">{s.detail.split("\n\n")[0]}</div>)}
-              {preview.launch_command && <div className="small mt">Start it with: <code className="selectable">{preview.launch_command}</code></div>}
-              <div className="row mt"><button className="primary" onClick={onDone}>Done</button></div>
-            </div>
-          )}
-        </div>
-      )}
+      {step === "done" && <Connected id={connId} app={app as AppId} />}
       {error && <div className="err small mt pre-wrap">{error}</div>}
+    </div>
+  );
+}
+
+function Steps({ step }: { step: Step }) {
+  const all: [Step, string][] = [["app", "App"], ["provider", "Provider"], ["model", "Model"], ["done", "Done"]];
+  const at = all.findIndex(([s]) => s === step);
+  return (
+    <div className="steps">
+      {all.map(([s, label], i) => <span key={s} className={i < at ? "step past" : i === at ? "step now" : "step"}>{label}</span>)}
+    </div>
+  );
+}
+
+function PickApp({ apps, onPick }: { apps: AppDetection[] | null; onPick: (a: AppId) => void }) {
+  if (!apps) return <div className="muted">Looking for apps on this computer…</div>;
+  const shown = apps.filter((a) => a.installed && !isSeparate(a.app_id));
+  if (shown.length === 0) return <div className="card muted">No supported apps found. Install one (like Claude Code or Codex) and come back.</div>;
+  return (
+    <div className="tiles">
+      {shown.map((a) => <button key={a.app_id} className="tile" onClick={() => onPick(a.app_id as AppId)}>{appLabel(a.app_id)}</button>)}
+    </div>
+  );
+}
+
+function PickProvider({ app, providers, onPick, onKeySaved, onBack }: {
+  app: AppId; providers: Provider[]; onPick: (id: string) => void; onKeySaved: () => Promise<void>; onBack: () => void;
+}) {
+  const [search, setSearch] = useState("");
+  const [needsKey, setNeedsKey] = useState<Provider | null>(null);
+  const usable = providers.filter((p) => p.routes[app] != null);
+  const ready = (p: Provider) => p.has_credential || p.key_optional;
+  const groups = useMemo(() => {
+    const f = search.toLowerCase();
+    if (f) return [{ title: "", items: usable.filter((p) => p.display_name.toLowerCase().includes(f)) }];
+    return [
+      { title: "Ready to use", items: usable.filter(ready) },
+      { title: "Popular", items: POPULAR.map((id) => usable.find((p) => p.id === id)).filter((p): p is Provider => !!p && !ready(p)) },
+    ];
+  }, [providers, app, search]);
+  if (needsKey) return <AddKey p={needsKey} onSaved={async () => { await onKeySaved(); onPick(needsKey.id); }} onBack={() => setNeedsKey(null)} />;
+  return (
+    <div>
+      <input placeholder="Search all providers" value={search} onChange={(e) => setSearch(e.target.value)} />
+      {groups.map((g) => g.items.length > 0 && (
+        <div key={g.title}>
+          {g.title && <h2>{g.title}</h2>}
+          <div className="tiles">
+            {g.items.map((p) => (
+              <button key={p.id} className="tile" onClick={() => (ready(p) ? onPick(p.id) : setNeedsKey(p))}>
+                {p.display_name}
+                <span className="small muted">{p.local ? "On this computer · free" : ready(p) ? "Ready" : "Needs a key"}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+      ))}
+      <button className="ghost mt" onClick={onBack}>Back</button>
+    </div>
+  );
+}
+
+/** A provider's key, right where it's needed. */
+function AddKey({ p, onSaved, onBack }: { p: Provider; onSaved: () => Promise<void>; onBack: () => void }) {
+  const [key, setKey] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  if (p.credential_source !== "keychain") {
+    return (
+      <div className="card">
+        <div className="label">{p.display_name}</div>
+        <div className="muted">Sign in to {p.display_name} on the Providers page first.</div>
+        <button className="ghost mt" onClick={onBack}>Back</button>
+      </div>
+    );
+  }
+  return (
+    <div className="card">
+      <div className="label">{p.display_name} key</div>
+      <input autoFocus type="password" placeholder="Paste your key" value={key} onChange={(e) => setKey(e.target.value)} />
+      {p.keys_url && <a className="small mt-block" href={p.keys_url} target="_blank" rel="noreferrer">Get a key</a>}
+      <div className="row mt">
+        <button className="ghost" onClick={onBack}>Back</button>
+        <button className="primary" disabled={!key.trim() || busy} onClick={async () => {
+          setBusy(true); setError("");
+          try { await api.setCredential(p.id, key.trim()); await onSaved(); }
+          catch (e) { setError(errText(e)); }
+          finally { setBusy(false); }
+        }}>{busy ? "Saving…" : "Save key"}</button>
+      </div>
+      {error && <div className="err small mt-s">{error}</div>}
+    </div>
+  );
+}
+
+/** Connected; the test runs on its own and can be skipped. */
+function Connected({ id, app }: { id: string; app: AppId }) {
+  const [report, setReport] = useState<VerificationReport | null>(null);
+  const [testing, setTesting] = useState(true);
+  useEffect(() => {
+    api.verify(id).then(setReport).catch((e) => { if (errText(e) !== TEST_SKIPPED) setReport(null); }).finally(() => setTesting(false));
+  }, [id]);
+  return (
+    <div className="card">
+      <div className="label ok">{appLabel(app)} is connected</div>
+      {testing && <TestRunning id={id} />}
+      {report && (
+        <>
+          <div className={`small ${statusTone(report.status)}`}>{shortStatus(report.status)}</div>
+          {report.status !== "ConnectedAndVerified" && <Stages stages={report.stages} />}
+        </>
+      )}
+      <div className="small muted mt">Restart {appLabel(app)} if it's open.</div>
     </div>
   );
 }

@@ -1,32 +1,27 @@
 import { useEffect, useState } from "react";
-import Overview from "./pages/Overview";
+import Home from "./pages/Home";
 import Providers from "./pages/Providers";
-import Applications from "./pages/Applications";
-import Connections from "./pages/Connections";
-import Diagnostics from "./pages/Diagnostics";
-import Settings from "./pages/Settings";
-import Remote from "./pages/Remote";
-import Sessions from "./pages/Sessions";
-import Bots from "./pages/Bots";
 import Usage from "./pages/Usage";
-import TryChat from "./pages/TryChat";
+import More from "./pages/More";
+import Settings from "./pages/Settings";
 import Setup from "./pages/Setup";
-import Tools from "./pages/Tools";
-import LocalModels from "./pages/LocalModels";
-import { api } from "./api";
+import { api, AppId } from "./api";
 
-export type Page = "Overview" | "Providers" | "Local models" | "Apps" | "Set up" | "Connections" | "Try a model" | "Tools" | "Usage" | "Code sessions" | "Chat bots" | "Activity" | "Remote access" | "Settings";
-const PAGES: Page[] = ["Overview", "Providers", "Local models", "Apps", "Connections", "Try a model", "Tools", "Usage", "Code sessions", "Chat bots", "Activity", "Remote access", "Settings"];
+type Page = "Home" | "Providers" | "Usage" | "More" | "Settings";
+const PAGES: Page[] = ["Home", "Providers", "Usage", "More", "Settings"];
 
 export default function App() {
-  const [page, setPage] = useState<Page>("Overview");
-  // First run: nothing connected yet → start in the setup wizard (once).
+  const [page, setPage] = useState<Page>("Home");
+  // Adding an app opens over Home; `undefined` app = pick one first.
+  const [setup, setSetup] = useState<{ app?: AppId } | null>(null);
+  const [homeKey, setHomeKey] = useState(0);
+  // First run: nothing connected yet → start adding an app (once).
   useEffect(() => {
     let seen = false;
     try { seen = localStorage.getItem("prismflow.setupSeen") === "1"; } catch { /* storage unavailable */ }
     if (seen) return;
     api.connections().then((c) => {
-      if (c.length === 0) setPage("Set up");
+      if (c.length === 0) setSetup({});
       try { localStorage.setItem("prismflow.setupSeen", "1"); } catch { /* ignore */ }
     }).catch(() => {});
   }, []);
@@ -40,41 +35,29 @@ export default function App() {
     const t = setInterval(() => api.keychainWaiting().then(setKeychain).catch(() => setKeychain(false)), 1000);
     return () => clearInterval(t);
   }, []);
+  const go = (p: Page) => { setSetup(null); setPage(p); };
   return (
     <div className="shell">
       <nav className="nav">
         <div className="brand"><img src="/prismflow-logo.png" alt="" />PrismFlow</div>
         {PAGES.map((p) => (
-          <button key={p} className={p === page ? "nav-item active" : "nav-item"} onClick={() => setPage(p)}>
-            {p}
-          </button>
+          <button key={p} className={p === page && !setup ? "nav-item active" : "nav-item"} onClick={() => go(p)}>{p}</button>
         ))}
       </nav>
       <main className="content">
-        {keychain && (
-          <div className="remote-banner">
-            Waiting for your permission. macOS is asking whether PrismFlow can use its saved keys. Find the Keychain window, enter your Mac password, and click Always Allow.
-          </div>
+        {keychain && <div className="banner">macOS is asking to let PrismFlow use its saved keys. Enter your Mac password and click Always Allow.</div>}
+        {remoteUrl && <div className="banner">Remote access is on. <a onClick={() => go("More")}>Manage</a></div>}
+        {setup ? (
+          <Setup initialApp={setup.app} onDone={() => { setSetup(null); setPage("Home"); setHomeKey((k) => k + 1); }} />
+        ) : (
+          <>
+            {page === "Home" && <Home key={homeKey} onSetup={(app) => setSetup({ app })} />}
+            {page === "Providers" && <Providers />}
+            {page === "Usage" && <Usage />}
+            {page === "More" && <More onRemoteChange={refreshRemote} />}
+            {page === "Settings" && <Settings />}
+          </>
         )}
-        {remoteUrl && (
-          <div className="remote-banner">
-            Remote access is ON at {remoteUrl}. <a onClick={() => setPage("Remote access")}>Manage</a>
-          </div>
-        )}
-        {page === "Overview" && <Overview go={setPage} />}
-        {page === "Providers" && <Providers />}
-        {page === "Apps" && <Applications />}
-        {page === "Connections" && <Connections />}
-        {page === "Code sessions" && <Sessions />}
-        {page === "Usage" && <Usage />}
-        {page === "Try a model" && <TryChat />}
-        {page === "Tools" && <Tools />}
-        {page === "Local models" && <LocalModels />}
-        {page === "Set up" && <Setup onDone={() => setPage("Overview")} />}
-        {page === "Chat bots" && <Bots />}
-        {page === "Activity" && <Diagnostics />}
-        {page === "Remote access" && <Remote onChange={refreshRemote} />}
-        {page === "Settings" && <Settings />}
       </main>
     </div>
   );

@@ -100,12 +100,12 @@ export type ConnectionStatus =
 
 export type StageOutcome = "Pass" | "Warn" | "Fail" | "Skipped";
 
-/** How an app starts with a connection: the command to type ("" when there is none) and the button PrismFlow offers. */
 export interface SelfCheckItem { name: string; ok: boolean; detail: string }
 
 /** What a skipped test reports (TEST_SKIPPED in src-tauri/src/lib.rs). */
 export const TEST_SKIPPED = "Test skipped.";
 
+/** How an app starts with a connection: the command to type ("" when there is none) and the button PrismFlow offers. */
 export interface LaunchInfo { line: string; opens: "Terminal" | "App" | "Nothing" }
 
 export interface StageResult { stage: number; name: string; outcome: StageOutcome; detail: string }
@@ -249,6 +249,7 @@ export const api = {
   connect: (appId: AppId, providerId: string, model: string) => invoke<Connection>("connect", { appId, providerId, model }),
   verify: (id: string) => invoke<VerificationReport>("verify_connection", { id }),
   selfCheck: () => invoke<SelfCheckItem[]>("self_check"),
+  switchConnection: (id: string, providerId: string, model: string) => invoke<Connection>("switch_connection", { id, providerId, model }),
   launchInfo: (id: string) => invoke<LaunchInfo>("launch_info", { id }),
   /** Stops a running test; its `verify` call then fails with TEST_SKIPPED. */
   cancelVerify: (id: string) => invoke<void>("cancel_verify", { id }),
@@ -366,6 +367,23 @@ export const STATUS_LABEL: Record<ConnectionStatus, string> = {
   RequiresAttention: "Needs attention",
   Unverified: "Not tested yet",
 };
+
+/** One or two words for a connection's state. */
+export function shortStatus(s: ConnectionStatus): string {
+  if (s === "ConnectedAndVerified") return "Working";
+  if (s === "Unverified") return "Not tested";
+  if (s === "PartiallyCompatible") return "Chat only";
+  return "Needs attention";
+}
+
+/** The app's name without its mode ("Codex app", not "Codex app (separate)"). */
+export function appLabel(id: string): string {
+  return modePair(id)?.name ?? APP_NAME[id as AppId] ?? id;
+}
+
+export function isSeparate(id: string): boolean {
+  return MODE_PAIRS.some((p) => p.separate === id);
+}
 
 export function statusTone(s: ConnectionStatus): "ok" | "warn" | "err" | "muted" {
   if (s === "ConnectedAndVerified") return "ok";

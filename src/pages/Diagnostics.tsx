@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { api, DiagEvent, errText, when } from "../api";
+import GatewayCard from "./GatewayCard";
 
 export default function Diagnostics() {
   const [events, setEvents] = useState<DiagEvent[] | null>(null);
@@ -25,8 +26,8 @@ export default function Diagnostics() {
           <button className="ghost" onClick={exportAll}>Export</button>
         </div>
       </div>
-      <p className="muted">What PrismFlow has been doing. Keys are always hidden.</p>
       {msg && <div className={`card ${msg.tone}`}>{msg.text}</div>}
+      <GatewayCard />
       {!events ? (
         <div className="card muted">Loading…</div>
       ) : events.length === 0 ? (
@@ -35,9 +36,8 @@ export default function Diagnostics() {
         <div className="card">
           {events.map((e, i) => (
             <div key={i} className="line">
-              <span className={`badge ${e.level === "error" ? "err" : e.level === "warn" ? "warn" : "muted"}`}>{e.level}</span>{" "}
-              <span className="muted small">{when(e.ts)} · {e.code}</span>
-              <div className="pre-wrap">{e.message}</div>
+              <span className={`small ${e.level === "error" ? "err" : e.level === "warn" ? "warn" : "muted"}`}>{when(e.ts)}</span>
+              <div className="pre-wrap small">{e.message}</div>
             </div>
           ))}
         </div>

@@ -2,10 +2,10 @@ import { useEffect, useState } from "react";
 import { api, RuntimeSettings, SelfCheckItem, UninstallReport, errText } from "../api";
 
 type NumericKey = "rate_limit_per_minute" | "max_concurrency_per_provider" | "upstream_retries";
-const FIELDS: { key: NumericKey; label: string; help: string; max: number }[] = [
-  { key: "rate_limit_per_minute", label: "Most requests per minute (per app)", help: "0 means no limit.", max: 10000 },
-  { key: "max_concurrency_per_provider", label: "Most requests at once (per provider)", help: "0 means no limit. Extra requests wait their turn.", max: 256 },
-  { key: "upstream_retries", label: "Retries when a connection drops", help: "How many times to try again before giving up.", max: 5 },
+const FIELDS: { key: NumericKey; label: string; max: number }[] = [
+  { key: "rate_limit_per_minute", label: "Requests per minute, per app (0 = no limit)", max: 10000 },
+  { key: "max_concurrency_per_provider", label: "Requests at once, per provider (0 = no limit)", max: 256 },
+  { key: "upstream_retries", label: "Retries when a connection drops", max: 5 },
 ];
 
 /** Checks that PrismFlow itself works on this computer. */
@@ -49,34 +49,27 @@ export default function Settings() {
       <h1>Settings</h1>
       <SelfCheck />
       <StartUp />
-      <BackupCard />
-      <div className="card">
-        <div className="section-title">Limits</div>
-        {!s ? <div className="muted">Loading…</div> : FIELDS.map((f) => (
-          <div key={f.key} className="mt">
-            <label className="small">{f.label}</label>
-            <input type="number" min={0} max={f.max} value={s[f.key]}
-              onChange={(e) => setS({ ...s, [f.key]: Math.max(0, Math.min(f.max, Number(e.target.value) || 0)) })} />
-            <div className="small muted">{f.help}</div>
-          </div>
-        ))}
-        <div className="row mt"><button className="primary" disabled={!s} onClick={save}>Save</button></div>
-        {msg && <div className={`small mt ${msg.tone}`}>{msg.text}</div>}
-      </div>
-      {s && (
-        <div className="card">
-          <div className="section-title">Speed up Claude Code</div>
-          <div className="small muted">Claude Code sends small extra requests, like naming your chat. PrismFlow answers these itself, so your model only works on what you asked.</div>
-          <label className="small mt-block"><input type="checkbox" className="check" checked={s.shortcuts} onChange={(e) => setS({ ...s, shortcuts: e.target.checked })} /> On</label>
-          <div className="row mt"><button className="primary" onClick={save}>Save</button></div>
-        </div>
-      )}
-      {s && <WebTools s={s} setS={setS} save={save} />}
       <Updates />
+      <BackupCard />
+      <details className="card">
+        <summary className="section-title">More settings</summary>
+        {!s ? <div className="muted">Loading…</div> : (
+          <>
+            <label className="small mt-block"><input type="checkbox" className="check" checked={s.shortcuts} onChange={(e) => setS({ ...s, shortcuts: e.target.checked })} /> Answer Claude Code's small side requests myself (faster)</label>
+            {FIELDS.map((f) => (
+              <div key={f.key} className="mt">
+                <label className="small">{f.label}</label>
+                <input type="number" min={0} max={f.max} value={s[f.key]}
+                  onChange={(e) => setS({ ...s, [f.key]: Math.max(0, Math.min(f.max, Number(e.target.value) || 0)) })} />
+              </div>
+            ))}
+            <WebTools s={s} setS={setS} />
+            <div className="row mt"><button className="primary" onClick={save}>Save</button></div>
+            {msg && <div className={`small mt ${msg.tone}`}>{msg.text}</div>}
+          </>
+        )}
+      </details>
       <RemoveAll />
-      <div className="card muted small">
-        The gateway listens only on 127.0.0.1. Its port is fixed so agent configs stay valid; override it with the PRISMFLOW_BROKER_PORT environment variable.
-      </div>
     </div>
   );
 }
@@ -92,12 +85,12 @@ function RemoveAll() {
   return (
     <div className="card danger-zone">
       <div className="section-title">Remove PrismFlow</div>
-      <div className="small muted">Undoes everything PrismFlow set up and deletes its saved keys and data. Your own app settings stay.</div>
+      <div className="small muted">Undoes PrismFlow's changes and deletes its keys. Your apps keep their own settings.</div>
       <div className="row mt">
-        <button className="ghost" onClick={() => api.exportDiagnostics().then(setExported).catch((e) => setError(errText(e)))}>Export diagnostics first</button>
-        <button className="ghost" onClick={() => api.uninstall(true).then((p) => { setPlan(p); setResult(null); }).catch((e) => setError(errText(e)))}>Show what will be removed</button>
+        <button className="ghost" onClick={() => api.uninstall(true).then((p) => { setPlan(p); setResult(null); }).catch((e) => setError(errText(e)))}>Remove…</button>
+        <button className="ghost" onClick={() => api.exportDiagnostics().then(setExported).catch((e) => setError(errText(e)))}>Save a problem report</button>
       </div>
-      {exported && <div className="small ok mt selectable">Saved to {exported}. Copy it somewhere else; the data folder is deleted next.</div>}
+      {exported && <div className="small ok mt selectable">Saved to {exported}</div>}
       {items.length > 0 && (
         <ul className="small mt">
           {items.map((i, n) => (
@@ -128,9 +121,10 @@ function BackupCard() {
   return (
     <div className="card">
       <div className="section-title">Backup</div>
-      <div className="small muted">Save your setup to a file, or bring it back on another computer. Keys aren't included; add or import them after restoring.</div>
+      <div className="small muted">Keys aren't included.</div>
       <div className="row mt"><button className="ghost" onClick={() => api.backupExport().then((p) => setMsg({ tone: "ok", text: `Saved to ${p}` })).catch((e) => setMsg({ tone: "err", text: errText(e) }))}>Save a backup</button></div>
-      <div className="row mt">
+      <details><summary className="small">Restore a backup</summary>
+      <div className="row mt-s">
         <input placeholder="Path to a PrismFlow backup file" value={path} onChange={(e) => setPath(e.target.value)} />
         <button className="ghost" disabled={!path.trim() || busy} onClick={() => {
           setBusy(true);
@@ -138,6 +132,7 @@ function BackupCard() {
             .catch((e) => setMsg({ tone: "err", text: errText(e) })).finally(() => setBusy(false));
         }}>{busy ? "Restoring…" : "Restore"}</button>
       </div>
+      </details>
       {msg && <div className={`small mt pre-wrap selectable ${msg.tone}`}>{msg.text}</div>}
     </div>
   );
@@ -148,12 +143,10 @@ function StartUp() {
   useEffect(() => { api.autostartGet().then(setOn).catch(() => setOn(false)); }, []);
   return (
     <div className="card">
-      <div className="section-title">Start-up</div>
-      <div className="small muted">PrismFlow lives in the menu bar. Closing its window keeps your apps working; quit from the menu bar icon.</div>
-      <label className="small mt-block">
+      <label className="small">
         <input type="checkbox" className="check" disabled={on === null} checked={!!on}
           onChange={(e) => { const v = e.target.checked; api.autostartSet(v).then(() => setOn(v)).catch(() => {}); }} />
-        Open PrismFlow when I log in (in the background)
+        Start PrismFlow when I log in
       </label>
     </div>
   );
@@ -167,23 +160,22 @@ function Updates() {
     try {
       const u = await api.checkUpdate();
       setAvailable(u.available);
-      setMsg(u.available ? { tone: "ok", text: `PrismFlow ${u.available} is available (you have ${u.current}).${u.notes ? " " + u.notes : ""}` } : { tone: "ok", text: `PrismFlow ${u.current} is up to date.` });
+      setMsg(u.available ? { tone: "ok", text: `Version ${u.available} is ready (you have ${u.current}).` } : { tone: "ok", text: `Up to date (${u.current}).` });
     } catch (e) { setMsg({ tone: "muted", text: errText(e) }); }
   }
   return (
     <div className="card">
-      <div className="section-title">Updates</div>
-      <div className="small muted">Updates install only after you confirm, and only if they really come from PrismFlow.</div>
-      <div className="row mt">
-        <button className="ghost" onClick={check}>Check for updates</button>
-        {available && <button className="primary" onClick={() => api.installUpdate().catch((e) => setMsg({ tone: "err", text: errText(e) }))}>Install {available} and restart</button>}
+      <div className="row spread">
+        <div className="section-title">Updates</div>
+        <button className="ghost" onClick={check}>Check</button>
       </div>
+      {available && <button className="primary mt-s" onClick={() => api.installUpdate().catch((e) => setMsg({ tone: "err", text: errText(e) }))}>Install {available} and restart</button>}
       {msg && <div className={`small mt ${msg.tone}`}>{msg.text}</div>}
     </div>
   );
 }
 
-function WebTools({ s, setS, save }: { s: RuntimeSettings; setS: (s: RuntimeSettings) => void; save: () => void }) {
+function WebTools({ s, setS }: { s: RuntimeSettings; setS: (s: RuntimeSettings) => void }) {
   const w = s.web_tools;
   const set = (patch: Partial<RuntimeSettings["web_tools"]>) => setS({ ...s, web_tools: { ...w, ...patch } });
   const [hasKey, setHasKey] = useState(false);
@@ -191,27 +183,26 @@ function WebTools({ s, setS, save }: { s: RuntimeSettings; setS: (s: RuntimeSett
   const [msg, setMsg] = useState("");
   useEffect(() => { api.hasWebSearchKey().then(setHasKey).catch(() => setHasKey(false)); }, []);
   return (
-    <div className="card">
-      <div className="section-title">Web search for Claude Code</div>
-      <div className="small muted">Lets Claude Code search the web when it uses a non-Anthropic model. Off by default.</div>
-      <label className="small mt-block"><input type="checkbox" className="check" checked={w.enabled} onChange={(e) => set({ enabled: e.target.checked })} /> Let apps search the web</label>
-      <label className="small muted mt-block">Search backend</label>
-      <select value={w.backend} onChange={(e) => set({ backend: e.target.value as RuntimeSettings["web_tools"]["backend"] })}>
-        <option value="none">None (only open pages)</option>
-        <option value="searxng">SearXNG (your own search server)</option>
-        <option value="brave">Brave Search API</option>
-      </select>
-      {w.backend === "searxng" && <input className="mt" placeholder="Your SearXNG address" value={w.searxng_url} onChange={(e) => set({ searxng_url: e.target.value })} />}
-      {w.backend === "brave" && (
-        <div className="row mt">
-          <input type="password" placeholder={hasKey ? "Key saved — paste to change" : "Brave Search key"} value={key} onChange={(e) => setKey(e.target.value)} />
-          <button className="ghost" onClick={() => api.setWebSearchKey(key).then(() => { setKey(""); setHasKey(true); setMsg("Key saved."); }).catch((e) => setMsg(errText(e)))}>Save key</button>
-        </div>
+    <div className="mt">
+      <label className="small mt-block"><input type="checkbox" className="check" checked={w.enabled} onChange={(e) => set({ enabled: e.target.checked })} /> Let Claude Code search the web on other models</label>
+      {w.enabled && (
+        <>
+          <select className="mt-s" value={w.backend} onChange={(e) => set({ backend: e.target.value as RuntimeSettings["web_tools"]["backend"] })}>
+            <option value="none">Open pages only</option>
+            <option value="searxng">SearXNG (your own)</option>
+            <option value="brave">Brave Search</option>
+          </select>
+          {w.backend === "searxng" && <input className="mt-s" placeholder="SearXNG address" value={w.searxng_url} onChange={(e) => set({ searxng_url: e.target.value })} />}
+          {w.backend === "brave" && (
+            <div className="row mt-s">
+              <input type="password" placeholder={hasKey ? "Key saved" : "Brave Search key"} value={key} onChange={(e) => setKey(e.target.value)} />
+              <button className="ghost" disabled={!key.trim()} onClick={() => api.setWebSearchKey(key).then(() => { setKey(""); setHasKey(true); setMsg("Key saved."); }).catch((e) => setMsg(errText(e)))}>Save key</button>
+            </div>
+          )}
+          <label className="small mt-block"><input type="checkbox" className="check" checked={w.allow_private} onChange={(e) => set({ allow_private: e.target.checked })} /> Allow pages on my own network</label>
+          {msg && <div className="small mt-s">{msg}</div>}
+        </>
       )}
-      <label className="small mt-block"><input type="checkbox" className="check" checked={w.allow_private} onChange={(e) => set({ allow_private: e.target.checked })} /> Also allow addresses on my home or work network</label>
-      {w.allow_private && <div className="warn small">The AI could then read things like your router page. Leave this off unless you need it.</div>}
-      <div className="row mt"><button className="primary" onClick={save}>Save web tools</button></div>
-      {msg && <div className="small mt">{msg}</div>}
     </div>
   );
 }

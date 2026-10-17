@@ -219,9 +219,10 @@ function ImportKeys({ onDone }: { onDone: () => void }) {
   }
   return (
     <div className="card">
-      <div className="section-title">Import keys you already have</div>
-      <div className="small muted">PrismFlow looks for keys in your terminal settings (like OPENAI_API_KEY) and in a .env file in your home folder. You choose which to import.</div>
-      {!found && <button className="ghost mt" disabled={busy} onClick={scan}>{busy ? "Looking…" : "Look for keys"}</button>}
+      <div className="row spread">
+        <span>Find keys you already have</span>
+        {!found && <button className="ghost" disabled={busy} onClick={scan}>{busy ? "Looking…" : "Look"}</button>}
+      </div>
       {found && found.length === 0 && <div className="small mt">No keys found.</div>}
       {found && found.length > 0 && (
         <>
@@ -287,9 +288,7 @@ function AddCustom({ onDone }: { onDone: () => void }) {
   }
 
   return (
-    <div className="card">
-      <div className="section-title">Add your own</div>
-      <div className="small muted">For a server that isn't listed, like one at work or on this computer.</div>
+    <div className="mt">
       <label className="small muted mt-block">Kind</label>
       <select value={preset} onChange={(e) => choosePreset(e.target.value)}>
         <option value="">Any server</option>
@@ -349,14 +348,13 @@ export default function Providers() {
       { title: "Use an account you already have", items: list.filter((p) => p.credential_source !== "keychain" && !p.custom), alwaysShow: false },
       { title: "AI providers", items: list.filter((p) => !p.local && !p.custom && p.credential_source === "keychain"), alwaysShow: false },
       { title: "Running on this computer", items: list.filter((p) => p.local && !p.custom), alwaysShow: false },
-      { title: "Added by you", items: list.filter((p) => p.custom), alwaysShow: !f },
+      { title: "Added by you", items: list.filter((p) => p.custom), alwaysShow: false },
     ];
   }, [providers, q]);
 
   return (
     <div>
-      <h1>Providers</h1>
-      <p className="muted">Add a key for the AI services you use. Keys are saved securely and never shown again.</p>
+      <div className="head"><h1>Providers</h1></div>
       {error && <div className="card err">{error}</div>}
       <input className="mb" placeholder="Search" value={q} onChange={(e) => setQ(e.target.value)} />
       {!providers ? (
@@ -365,13 +363,16 @@ export default function Providers() {
         groups.map((g) => (g.items.length > 0 || g.alwaysShow) && (
           <div key={g.title}>
             <h2>{g.title}</h2>
-            {g.items.length === 0 && <div className="small muted mb">None yet.</div>}
             {g.items.map((p) => <ProviderRow key={p.id} p={p} onChange={load} />)}
           </div>
         ))
       )}
+      <h2>More</h2>
       <ImportKeys onDone={load} />
-      <AddCustom onDone={load} />
+      <details className="card">
+        <summary>Add a provider that isn't listed</summary>
+        <AddCustom onDone={load} />
+      </details>
     </div>
   );
 }

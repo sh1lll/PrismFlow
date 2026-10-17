@@ -168,13 +168,13 @@ echo '{"jsonrpc":"2.0","id":3,"result":{"stopReason":"end_turn"}}'
 
     #[tokio::test]
     async fn drives_an_agent_like_an_ide() {
-        use std::os::unix::fs::PermissionsExt;
+        // Run through sh: executing a just-written file can fail with "text
+        // file busy" on Linux when another test forks at the same moment.
         let dir = tempfile::tempdir().unwrap();
         let agent = dir.path().join("agent.sh");
         std::fs::write(&agent, FAKE).unwrap();
-        std::fs::set_permissions(&agent, std::fs::Permissions::from_mode(0o755)).unwrap();
         std::fs::write(dir.path().join("n.txt"), "PFNONCE123").unwrap();
-        let run = prompt(&agent.display().to_string(), &[], &HashMap::new(), dir.path(), "read n.txt", Duration::from_secs(10)).await.unwrap();
+        let run = prompt("/bin/sh", &[agent.display().to_string()], &HashMap::new(), dir.path(), "read n.txt", Duration::from_secs(10)).await.unwrap();
         assert_eq!(run.text, "PFNONCE123");
         assert!(run.updates.contains(&"tool_call".to_string()));
     }

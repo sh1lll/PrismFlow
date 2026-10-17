@@ -699,6 +699,15 @@ fn session_delete(sessions: State<'_, sessions::Sessions>, id: String) -> Cmd<()
     sessions.delete(&id)
 }
 
+/// Moves an app to another provider and/or model in one step.
+#[tauri::command]
+async fn switch_connection(svc: State<'_, Arc<Service>>, id: String, provider_id: String, model: String) -> Cmd<state::ConnectionRecord> {
+    let app_id = svc.connections()?.into_iter().find(|c| c.id == id).map(|c| c.app_id).ok_or("Unknown connection.")?;
+    tray::switch(svc.inner(), &id, &provider_id, &model).await?;
+    svc.connections()?.into_iter().find(|c| c.app_id == app_id && c.provider_id == provider_id)
+        .ok_or_else(|| "The app didn't switch.".to_string())
+}
+
 #[tauri::command]
 async fn self_check(svc: State<'_, Arc<Service>>) -> Cmd<Vec<selfcheck::Check>> {
     let svc = svc.inner().clone();
@@ -872,6 +881,7 @@ pub fn run() {
         .manage(BotState { bots: bots::Bots::default(), dir: dir.clone() })
         .invoke_handler(tauri::generate_handler![
             cancel_verify,
+            switch_connection,
             self_check,
             launch_info,
             verify_progress,

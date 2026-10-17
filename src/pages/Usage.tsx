@@ -50,7 +50,6 @@ export default function Usage() {
   return (
     <div>
       <h1>Usage</h1>
-      <p className="muted">What your apps sent through PrismFlow. Costs are estimates from public prices; local models are free.</p>
       <div className="row mb">
         {[1, 7, 30].map((n) => <button key={n} className={n === range ? "primary" : "ghost"} onClick={() => setRange(n)}>{n === 1 ? "Today" : `${n} days`}</button>)}
       </div>
@@ -58,7 +57,7 @@ export default function Usage() {
         <div className="row spread">
           <div><div className="small muted">Requests</div><b>{total.requests}</b>{total.errors > 0 && <span className="small err"> · {total.errors} failed</span>}</div>
           <div><div className="small muted">Tokens in / out</div><b>{tokens(total.input_tokens)} / {tokens(total.output_tokens)}</b></div>
-          <div><div className="small muted">Estimated cost</div><b>{money(total.cost)}</b>{total.unpriced > 0 && <span className="small muted"> + {total.unpriced} unpriced</span>}</div>
+          <div><div className="small muted" title="Estimated from public prices">Cost (est.)</div><b>{money(total.cost)}</b>{total.unpriced > 0 && <span className="small muted"> + {total.unpriced} unpriced</span>}</div>
         </div>
         {daily.length > 1 && (
           <div className="bars mt">
@@ -67,24 +66,24 @@ export default function Usage() {
         )}
       </div>
 
-      <h2>By provider this month</h2>
+      <h2>This month</h2>
       <div className="card">
         {Object.keys(v.month).length === 0 && <div className="small muted">Nothing yet.</div>}
         {Object.entries(v.month).map(([p, m]) => (
           <div key={p} className="row spread mt-s">
             <span><b>{providerName(providers, p)}</b> <span className="muted small">{money(m.spent)}{m.limit ? ` of ${money(m.limit)}` : ""}</span></span>
             <span className="row">
-              <span className="small muted">Monthly limit $</span>
+              <span className="small muted" title="PrismFlow pauses this provider when it hits the limit">Monthly limit $</span>
               <input className="narrow" type="number" min={0} step={1} defaultValue={m.limit ?? ""} placeholder="none" onBlur={(e) => setLimit(p, e.target.value)} />
             </span>
           </div>
         ))}
-        <div className="small muted mt">When a provider reaches its limit, PrismFlow stops sending it requests until next month or until you raise the limit.</div>
         {msg && <div className="small mt">{msg}</div>}
       </div>
 
       <h2>By app</h2>
       <div className="card">
+        {!Object.keys(byKey).some((k) => k.startsWith("conn:")) && <div className="small muted">Nothing yet.</div>}
         {Object.entries(byKey).filter(([k]) => k.startsWith("conn:")).map(([k, t]) => {
           const conn = k.slice(5);
           return <div key={k} className="row spread small mt-s"><span>{appOf(conn)} <span className="muted">({providerName(providers, conn.split(":")[1] ?? "")})</span></span><span>{t.requests} requests · {tokens(t.input_tokens + t.output_tokens)} tokens · {money(t.cost)}</span></div>;
