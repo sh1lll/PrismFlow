@@ -46,3 +46,9 @@ jobs:
         run: |
           npm install -g @qwen-code/qwen-code@0.25.2 opencode-ai@1.19.0 @continuedev/cli@1.5.47
           PRISMFLOW_WIN_AGENTS="qwen opencode continue_cli" cargo test --locked --test windows_agents -- --ignored --nocapture
+      - name: Real Claude Code and Codex, connect to remove, plus gateway stress
+        working-directory: src-tauri
+        shell: bash
+        run: |
+          npm install -g @anthropic-ai/claude-code@2.1.207 @openai/codex@0.162.1
+          PRISMFLOW_E2E=1 PRISMFLOW_E2E_PROVIDER=stand-in cargo test --locked --test sandbox_e2e

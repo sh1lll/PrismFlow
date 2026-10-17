@@ -21,7 +21,7 @@ pub fn parse_ps(out: &str) -> Vec<Proc> {
 
 /// All processes visible to this user. Empty when listing is unsupported.
 /// One listing is reused for a few seconds: on Windows it takes about a
-/// second, and the Connections page asks once per connection.
+/// second, and Home asks once per app.
 pub fn list() -> Vec<Proc> {
     static LAST: std::sync::Mutex<Option<(std::time::Instant, Vec<Proc>)>> = std::sync::Mutex::new(None);
     let mut last = LAST.lock().unwrap_or_else(|e| e.into_inner());

@@ -75,7 +75,7 @@ export default function Bots() {
           <option value="">Pick one</option>
           {conns.map((c) => <option key={c.id} value={c.id}>{c.model} ({c.provider_id})</option>)}
         </select>
-        {conns.length === 0 && <div className="small warn">Connect Codex first on the Connections page.</div>}
+        {conns.length === 0 && <div className="small warn">Add Codex on Home first.</div>}
         <label className="small mt-block"><input type="checkbox" className="check" checked={s.allow_edits} onChange={(e) => setS({ ...s, allow_edits: e.target.checked })} /> Allow changing files (otherwise read-only)</label>
         <label className="small muted mt-block">Messages per person per minute</label>
         <input type="number" min={0} max={60} value={s.messages_per_minute} onChange={(e) => setS({ ...s, messages_per_minute: Number(e.target.value) || 0 })} />

@@ -89,7 +89,7 @@ export default function Sessions() {
         <button className="ghost" onClick={() => setCreating(!creating)}>{creating ? "Cancel" : "New session"}</button>
       </div>
       <p className="muted small">Chat with Codex about a folder on your computer. You can switch models between messages.</p>
-      {codexConns.length === 0 && <div className="card warn small">Connect Codex CLI first (Connections page).</div>}
+      {codexConns.length === 0 && <div className="card warn small">Add Codex on Home first.</div>}
       {error && <div className="card err small pre-wrap">{error}</div>}
 
       {creating && (

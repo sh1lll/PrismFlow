@@ -58,6 +58,11 @@ tempfile = "3"
 name = "real_agents"
 harness = false
 
+# Sandboxed real-app run and gateway stress; runs only with PRISMFLOW_E2E=1.
+[[test]]
+name = "sandbox_e2e"
+harness = false
+
 # Performance budgets; runs only with PRISMFLOW_PERF=1.
 [[test]]
 name = "perf"

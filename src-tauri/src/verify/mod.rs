@@ -102,6 +102,14 @@ pub fn remediation(output: &str, provider: &ProviderDefinition) -> Option<String
     None
 }
 
+const TOO_SLOW: &str = "No answer within";
+
+/// A test that ran out of time: the provider was reachable, the model slow.
+fn too_slow(app: &str, timeout: std::time::Duration) -> String {
+    let mins = timeout.as_secs().div_ceil(60);
+    format!("{TOO_SLOW} {mins} minute{}. {app} reached the model, but it was too slow. Local models often are; try a smaller one, or test again.", if mins == 1 { "" } else { "s" })
+}
+
 pub fn classify_agent_failure(output: &str) -> ConnectionStatus {
     let o = output.to_lowercase();
     if o.contains("error loading config") || o.contains("invalid settings") {
@@ -170,7 +178,7 @@ async fn run_codex(
         tree.finished();
     }
     match done {
-        Err(_) => Err(format!("codex did not finish within {}s", timeout.as_secs())),
+        Err(_) => Err(too_slow("Codex", timeout)),
         Ok(Err(e)) => Err(format!("codex failed to run: {e}")),
         Ok(Ok(out)) => {
             let text = format!(
@@ -209,15 +217,34 @@ fn claude_dir_for(record: &ConnectionRecord) -> Option<&Path> {
 /// verification never grants write or bypass permissions.
 /// Inherited `ANTHROPIC_*` / `CLAUDE_CODE_*` variables are removed so the
 /// run sees exactly what the settings file configures.
-async fn run_claude(bin: &Path, config_dir: Option<&Path>, settings: &Path, workdir: &Path, prompt: &str, timeout: Duration) -> Result<(bool, String), String> {
+async fn run_claude(bin: &Path, config_dir: Option<&Path>, settings: &Path, workdir: &Path, prompt: &str, tools: &str, timeout: Duration) -> Result<(bool, String), String> {
+    let started = std::time::Instant::now();
+    let first = run_claude_once(bin, config_dir, settings, workdir, prompt, Some(tools), timeout).await;
+    // Older Claude Code without --tools / --strict-mcp-config: run as before.
+    match first {
+        Ok((false, out)) if out.contains("unknown option") => {
+            run_claude_once(bin, config_dir, settings, workdir, prompt, None, timeout.saturating_sub(started.elapsed())).await
+        }
+        other => other,
+    }
+}
+
+/// `tools`: only these built-in tools ("" = none) and none of the user's
+/// MCP servers. A test needs one reply or one Read; offering every tool
+/// makes the request several times larger, and small models wander off
+/// using them before they answer.
+async fn run_claude_once(bin: &Path, config_dir: Option<&Path>, settings: &Path, workdir: &Path, prompt: &str, tools: Option<&str>, timeout: Duration) -> Result<(bool, String), String> {
     let mut cmd = crate::spawn::async_command(bin);
     if let Some(d) = config_dir {
         cmd.env("CLAUDE_CONFIG_DIR", d);
     }
     cmd.arg("-p")
         .arg("--settings").arg(settings)
-        .args(["--permission-mode", "plan", "--output-format", "stream-json", "--verbose", "--no-session-persistence"])
-        .arg(prompt)
+        .args(["--permission-mode", "plan", "--output-format", "stream-json", "--verbose", "--no-session-persistence"]);
+    if let Some(t) = tools {
+        cmd.args(["--tools", t, "--strict-mcp-config"]);
+    }
+    cmd.arg(prompt)
         .current_dir(workdir)
         .env("PATH", claude_code::child_path(bin))
         .stdin(Stdio::null())
@@ -242,7 +269,7 @@ async fn run_claude(bin: &Path, config_dir: Option<&Path>, settings: &Path, work
         tree.finished();
     }
     match done {
-        Err(_) => Err(format!("claude did not finish within {}s", timeout.as_secs())),
+        Err(_) => Err(too_slow("Claude Code", timeout)),
         Ok(Err(e)) => Err(format!("claude failed to run: {e}")),
         Ok(Ok(out)) => Ok((
             out.status.success(),
@@ -490,8 +517,9 @@ async fn run_stages(
             return classify_agent_failure(&shown);
         }
         Err(e) => {
+            let slow = e.starts_with(TOO_SLOW);
             run.push(5, "End-to-end", StageOutcome::Fail, e);
-            return ConnectionStatus::ProviderUnavailable;
+            return if slow { ConnectionStatus::RequiresAttention } else { ConnectionStatus::ProviderUnavailable };
         }
     }
 
@@ -533,7 +561,7 @@ async fn claude_agent_stages(env: &VerifyEnv<'_>, provider: &ProviderDefinition,
 
     // Stage 5 — a real Claude Code turn through the gateway.
     let prompt = format!("Reply with exactly {E2E_TOKEN} and nothing else.");
-    match run_claude(bin, claude_dir_for(record), &record.managed_file, &env.workdir, &prompt, env.agent_timeout).await {
+    match run_claude(bin, claude_dir_for(record), &record.managed_file, &env.workdir, &prompt, "", env.agent_timeout).await {
         Ok((_, out)) => match claude_result(&out) {
             Some((false, text)) if text.contains(E2E_TOKEN) => run.push(5, "End-to-end", StageOutcome::Pass,
                 "Claude Code answered.".to_string()),
@@ -545,8 +573,9 @@ async fn claude_agent_stages(env: &VerifyEnv<'_>, provider: &ProviderDefinition,
             }
         },
         Err(e) => {
+            let slow = e.starts_with(TOO_SLOW);
             run.push(5, "End-to-end", StageOutcome::Fail, e);
-            return ConnectionStatus::ProviderUnavailable;
+            return if slow { ConnectionStatus::RequiresAttention } else { ConnectionStatus::ProviderUnavailable };
         }
     }
 
@@ -560,7 +589,7 @@ async fn claude_agent_stages(env: &VerifyEnv<'_>, provider: &ProviderDefinition,
         "Use the Read tool to read {} and reply with its exact contents. PRISMFLOW_TOOL_PROBE",
         probe.display()
     );
-    match run_claude(bin, claude_dir_for(record), &record.managed_file, &env.workdir, &prompt, env.agent_timeout).await {
+    match run_claude(bin, claude_dir_for(record), &record.managed_file, &env.workdir, &prompt, "Read", env.agent_timeout).await {
         Ok((_, out)) => match claude_saw_tool_round_trip(&out) {
             Some(true) => {
                 run.push(6, "Tool calling", StageOutcome::Pass, "The model can use tools.");
@@ -727,7 +756,7 @@ async fn run_script(script: &Path, args: &[String], workdir: &Path, timeout: Dur
         tree.finished();
     }
     match done {
-        Err(_) => Err(format!("the agent did not finish within {}s", timeout.as_secs())),
+        Err(_) => Err(too_slow("The app", timeout)),
         Ok(Err(e)) => Err(format!("the agent failed to run: {e}")),
         Ok(Ok(out)) => Ok((out.status.success(), format!("{}\n{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr)))),
     }
@@ -757,8 +786,9 @@ async fn terminal_agent_stages(
             return classify_agent_failure(&shown);
         }
         Err(e) => {
+            let slow = e.starts_with(TOO_SLOW);
             run.push(5, "End-to-end", StageOutcome::Fail, e);
-            return ConnectionStatus::ProviderUnavailable;
+            return if slow { ConnectionStatus::RequiresAttention } else { ConnectionStatus::ProviderUnavailable };
         }
     }
     if !a.tools {

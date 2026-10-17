@@ -8,7 +8,9 @@ The published source map embeds all 100 first-party TypeScript sources, so the c
 
 **PrismFlow's use:** run unmodified as a supervised child process (`node --require
 prismflow-preload.cjs …/bin/next-ai-gateway.js`). No ai-gateway code is copied
-into PrismFlow's sources.
+into PrismFlow's sources. The preload (PrismFlow's own code) ends the child with
+PrismFlow and wraps `fetch` so a provider stream that stops before its closing
+marker is reported as an error instead of a finished answer.
 
 License summary (60 packages): MIT ×46, BSD-3-Clause ×5, ISC ×3, BlueOak-1.0.0 ×5, Apache-2.0 ×1. All are compatible with PrismFlow's MIT license.
 `openai` (Apache-2.0) is a declared dependency that `dist/index.js` never requires.

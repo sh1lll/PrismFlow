@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { Component, ReactNode, useEffect, useState } from "react";
 import Home from "./pages/Home";
 import Providers from "./pages/Providers";
 import Usage from "./pages/Usage";
@@ -35,7 +35,9 @@ export default function App() {
     const t = setInterval(() => api.keychainWaiting().then(setKeychain).catch(() => setKeychain(false)), 1000);
     return () => clearInterval(t);
   }, []);
-  const go = (p: Page) => { setSetup(null); setPage(p); };
+  // Bumped on every navigation so a page that failed gets a fresh start.
+  const [visit, setVisit] = useState(0);
+  const go = (p: Page) => { setSetup(null); setPage(p); setVisit((v) => v + 1); };
   return (
     <div className="shell">
       <nav className="nav">
@@ -47,6 +49,7 @@ export default function App() {
       <main className="content">
         {keychain && <div className="banner">macOS is asking to let PrismFlow use its saved keys. Enter your Mac password and click Always Allow.</div>}
         {remoteUrl && <div className="banner">Remote access is on. <a onClick={() => go("More")}>Manage</a></div>}
+        <PageGuard key={visit} onHome={() => go("Home")}>
         {setup ? (
           <Setup initialApp={setup.app} onDone={() => { setSetup(null); setPage("Home"); setHomeKey((k) => k + 1); }} />
         ) : (
@@ -58,7 +61,24 @@ export default function App() {
             {page === "Settings" && <Settings />}
           </>
         )}
+        </PageGuard>
       </main>
     </div>
   );
+}
+
+/** One page failing shows a short message instead of a blank window. */
+class PageGuard extends Component<{ onHome: () => void; children: ReactNode }, { error: string | null }> {
+  state = { error: null as string | null };
+  static getDerivedStateFromError(e: unknown) { return { error: e instanceof Error ? e.message : String(e) }; }
+  render() {
+    if (this.state.error === null) return this.props.children;
+    return (
+      <div className="card">
+        <div className="label">This page hit a problem</div>
+        <div className="small muted selectable">{this.state.error}</div>
+        <button className="primary mt" onClick={this.props.onHome}>Back to Home</button>
+      </div>
+    );
+  }
 }
