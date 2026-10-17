@@ -1,9 +1,10 @@
-# Signed, updatable releases on a version tag. Requires the repository
-# secrets listed in docs/RELEASE.md; scripts/release.sh refuses without them.
+# Signed, updatable release builds. Requires the repository secrets listed in
+# docs/RELEASE.md; scripts/release.sh refuses without them. Started by hand
+# (Actions → release → Run workflow) until signing is set up; then switch the
+# trigger back to version tags:  push: tags: ["v*"]
 name: release
 on:
-  push:
-    tags: ["v*"]
+  workflow_dispatch:
 
 permissions:
   contents: write
