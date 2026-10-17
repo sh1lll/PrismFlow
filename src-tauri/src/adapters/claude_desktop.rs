@@ -40,6 +40,8 @@ pub fn separate_root(state_dir: &Path) -> PathBuf {
 
 pub fn detect_separate() -> AppDetection {
     let mut d = detect();
+    // Opening a second copy is built for macOS only.
+    d.installed &= cfg!(target_os = "macos");
     d.app_id = SEPARATE_APP_ID.into();
     d.display_name = "Claude Desktop (separate)".into();
     d.notes = vec![
@@ -52,7 +54,7 @@ pub fn detect_separate() -> AppDetection {
 /// Opens the separate copy.
 #[cfg(target_os = "macos")]
 pub fn open_separate(state_dir: &Path) -> Result<(), String> {
-    let app = find_app().ok_or("Claude Desktop isn't installed.")?;
+    let (app, _) = find_app().ok_or("Claude Desktop isn't installed.")?;
     let data = separate_data_dir(state_dir);
     std::fs::create_dir_all(&data).map_err(|_| "PrismFlow couldn't set up the second Claude Desktop's folder.")?;
     let ok = crate::spawn::command("open").arg("-n").arg("-a").arg(&app)
@@ -66,39 +68,67 @@ pub fn open_separate(_state_dir: &Path) -> Result<(), String> {
     Err("The separate Claude Desktop is macOS-only in this build.".into())
 }
 
-pub fn find_app() -> Option<PathBuf> {
-    ["/Applications/Claude.app"]
-        .iter()
-        .map(PathBuf::from)
-        .chain(dirs::home_dir().map(|h| h.join("Applications/Claude.app")))
-        .find(|p| {
-            crate::spawn::command("/usr/bin/defaults")
-                .args(["read", &p.join("Contents/Info").display().to_string(), "CFBundleIdentifier"])
-                .output()
-                .is_ok_and(|o| String::from_utf8_lossy(&o.stdout).trim() == BUNDLE_ID)
-        })
+/// The installed app and its version.
+pub fn find_app() -> Option<(PathBuf, Option<String>)> {
+    #[cfg(target_os = "macos")]
+    {
+        let app = ["/Applications/Claude.app"].iter().map(PathBuf::from)
+            .chain(dirs::home_dir().map(|h| h.join("Applications/Claude.app")))
+            .find(|p| plist_value(p, "CFBundleIdentifier").as_deref() == Some(BUNDLE_ID))?;
+        let version = plist_value(&app, "CFBundleShortVersionString");
+        Some((app, version))
+    }
+    #[cfg(windows)]
+    {
+        windows_install()
+    }
+    #[cfg(not(any(target_os = "macos", windows)))]
+    {
+        None
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn plist_value(app: &Path, key: &str) -> Option<String> {
+    let out = crate::spawn::command("/usr/bin/defaults")
+        .args(["read", &app.join("Contents/Info").display().to_string(), key]).output().ok()?;
+    let v = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    (out.status.success() && !v.is_empty()).then_some(v)
+}
+
+/// Windows has two installs: the current package (MSIX, under WindowsApps)
+/// and the older installer (`%LOCALAPPDATA%\AnthropicClaude`, with Update.exe
+/// and `app-<version>` folders). Package names from Claude Desktop 2.42304.
+#[cfg(windows)]
+fn windows_install() -> Option<(PathBuf, Option<String>)> {
+    if let Some(p) = super::windows_packages().into_iter().find(|p| p.name == "Claude" || p.name == "AnthropicPBC.Claude") {
+        return Some((p.location, Some(p.version)));
+    }
+    let legacy = dirs::data_local_dir()?.join("AnthropicClaude");
+    if !legacy.join("Update.exe").is_file() {
+        return None;
+    }
+    let version = std::fs::read_dir(&legacy).ok()?.flatten()
+        .filter_map(|e| e.file_name().to_string_lossy().strip_prefix("app-").map(str::to_string))
+        .max_by_key(|v| parse_version(v));
+    Some((legacy, version))
+}
+
+fn parse_version(v: &str) -> (u64, u64, u64) {
+    let mut it = v.split('.').map(|p| p.parse::<u64>().unwrap_or(0));
+    (it.next().unwrap_or(0), it.next().unwrap_or(0), it.next().unwrap_or(0))
 }
 
 pub fn detect() -> AppDetection {
     let app = find_app();
-    let version = app.as_ref().and_then(|p| {
-        crate::spawn::command("/usr/bin/defaults")
-            .args(["read", &p.join("Contents/Info").display().to_string(), "CFBundleShortVersionString"])
-            .output()
-            .ok()
-            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
-    });
     AppDetection {
         app_id: APP_ID.into(),
         display_name: "Claude Desktop".into(),
         installed: app.is_some(),
-        path: app.map(|p| p.display().to_string()),
-        version,
+        path: app.as_ref().map(|(p, _)| p.display().to_string()),
+        version: app.and_then(|(_, v)| v),
         version_verified: false,
-        notes: vec![
-            "PrismFlow shows you what to enter in Claude Desktop.".into(),
-            "While set up this way, Claude Desktop doesn't use your Claude account.".into(),
-        ],
+        notes: vec!["While it uses PrismFlow, Claude Desktop doesn't use your Claude account.".into()],
     }
 }
 
@@ -149,11 +179,28 @@ pub fn config_root() -> PathBuf {
     let base = if cfg!(target_os = "macos") {
         dirs::home_dir().unwrap_or_default().join("Library/Application Support")
     } else if cfg!(windows) {
-        dirs::data_local_dir().unwrap_or_default()
+        let local = dirs::data_local_dir().unwrap_or_default();
+        // The packaged app can keep a private copy of its folder, which it
+        // reads instead of the shared one; write where it reads.
+        if let Some(private) = packaged_copy(&local) {
+            return private;
+        }
+        local
     } else {
         dirs::config_dir().unwrap_or_default()
     };
     base.join("Claude-3p")
+}
+
+/// `%LOCALAPPDATA%\Packages\<Claude package>\LocalCache\Local\Claude-3p`, if present.
+fn packaged_copy(local: &Path) -> Option<PathBuf> {
+    std::fs::read_dir(local.join("Packages")).ok()?.flatten()
+        .filter(|e| {
+            let n = e.file_name().to_string_lossy().to_string();
+            n.starts_with("Claude_") || n.starts_with("AnthropicPBC.Claude_")
+        })
+        .map(|e| e.path().join("LocalCache").join("Local").join("Claude-3p"))
+        .find(|p| p.is_dir())
 }
 
 fn read(path: &Path) -> Result<Option<Value>, String> {
@@ -173,6 +220,17 @@ fn write(path: &Path, v: &Value) -> Result<(), String> {
 }
 
 /// An organization policy (MDM) decides Claude Desktop's setup; don't fight it.
+/// Windows: a policy under HKLM or HKCU\SOFTWARE\Policies\Claude makes Claude
+/// Desktop ignore its local settings entirely (it is read first).
+#[cfg(windows)]
+fn managed_by_policy() -> bool {
+    ["HKLM\\SOFTWARE\\Policies\\Claude", "HKCU\\SOFTWARE\\Policies\\Claude"].iter().any(|key| {
+        crate::spawn::command("reg").args(["query", key]).output()
+            .is_ok_and(|o| o.status.success() && String::from_utf8_lossy(&o.stdout).contains("REG_"))
+    })
+}
+
+#[cfg(not(windows))]
 fn managed_by_policy() -> bool {
     let user = std::env::var("USER").unwrap_or_default();
     [
@@ -193,7 +251,11 @@ struct Library {
 impl Library {
     fn load(root: &Path) -> Result<Self, String> {
         if std::env::var_os("PRISMFLOW_CLAUDE_3P_DIR").is_none() && managed_by_policy() {
-            return Err("Your organization manages Claude Desktop's settings, so PrismFlow can't change them. Use the guided setup instead.".into());
+            return Err(if cfg!(windows) {
+                "Claude Desktop is locked to settings from your organization or another tool (a Windows policy under Software\\Policies\\Claude), so PrismFlow can't change them. Use the guided setup instead.".to_string()
+            } else {
+                "Your organization manages Claude Desktop's settings, so PrismFlow can't change them. Use the guided setup instead.".to_string()
+            });
         }
         let meta = read(&root.join("configLibrary/_meta.json"))?;
         if let Some(m) = &meta {
@@ -241,6 +303,21 @@ pub fn describe_separate(root: &Path) -> Vec<String> {
     ]
 }
 
+/// On Windows, Claude Desktop's workspace (Cowork) and file analysis run in a
+/// virtual machine that needs Windows' Virtual Machine Platform turned on.
+/// Keep Chat and Code, and leave those two off so nothing has to be enabled.
+/// `desktopHome: "no-vm"` exists from 2.2553.0; older versions read unknown
+/// values as "off" (no Chat), so they get the individual switches instead.
+fn no_vm(profile: &mut Value, version: Option<&str>) {
+    if version.is_some_and(|v| parse_version(v) >= (2, 2553, 0)) {
+        profile["desktopHome"] = json!("no-vm");
+    } else {
+        profile["coworkTabEnabled"] = json!(false);
+        profile["chatTabEnabled"] = json!(true);
+        profile["chatAdvancedFileAnalysisEnabled"] = json!(false);
+    }
+}
+
 /// Adds and selects PrismFlow's gateway configuration.
 pub fn connect_auto(gateway_url: &str, token: &str, connection_id: &str) -> Result<(), String> {
     connect_auto_in(&config_root(), gateway_url, token, connection_id)
@@ -264,6 +341,10 @@ pub fn connect_auto_in(root: &Path, gateway_url: &str, token: &str, connection_i
         "coworkEgressAllowedHosts": ["*"],
         "inferenceCustomHeaders": { OWNER_HEADER: connection_id },
     });
+    let mut profile = profile;
+    if cfg!(windows) {
+        no_vm(&mut profile, find_app().and_then(|(_, v)| v).as_deref());
+    }
     write(&lib.profile_path(), &profile)?;
     let mut entries: Vec<Value> = lib.meta.as_ref().and_then(|m| m["entries"].as_array().cloned()).unwrap_or_default();
     if !entries.iter().any(|e| e["id"] == DEFAULT_ID) {
@@ -351,6 +432,22 @@ pub fn disconnect_auto_in(root: &Path, connection_id: &str) -> Result<(), String
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn windows_keeps_chat_and_code_without_the_vm() {
+        let mut p = json!({});
+        no_vm(&mut p, Some("2.42304.0"));
+        assert_eq!(p, json!({ "desktopHome": "no-vm" }));
+        let mut old = json!({});
+        no_vm(&mut old, Some("2.1.0"));
+        assert_eq!(old["coworkTabEnabled"], false);
+        assert_eq!(old["chatTabEnabled"], true);
+        assert!(old.get("desktopHome").is_none(), "older versions would read it as Code only");
+        let mut unknown = json!({});
+        no_vm(&mut unknown, None);
+        assert!(unknown.get("desktopHome").is_none());
+        assert_eq!(parse_version("2.2553.0"), (2, 2553, 0));
+    }
 
     #[test]
     fn auto_setup_round_trip_keeps_the_library_valid() {

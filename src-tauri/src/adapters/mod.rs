@@ -41,6 +41,40 @@ pub fn extra_bin_dirs() -> Vec<PathBuf> {
 }
 
 /// `dir/name`, trying the Windows executable extensions npm and installers use.
+/// An installed Windows app package (Microsoft Store / MSIX).
+#[derive(Debug, Clone)]
+pub struct Package {
+    pub name: String,
+    pub publisher: String,
+    pub version: String,
+    pub location: PathBuf,
+}
+
+/// Installed app packages on Windows (empty elsewhere). Listing takes about
+/// a second, so one result is reused for a few seconds.
+pub fn windows_packages() -> Vec<Package> {
+    #[cfg(windows)]
+    {
+        static LAST: std::sync::Mutex<Option<(std::time::Instant, Vec<Package>)>> = std::sync::Mutex::new(None);
+        let mut last = LAST.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some((_, p)) = last.as_ref().filter(|(at, _)| at.elapsed() < std::time::Duration::from_secs(10)) {
+            return p.clone();
+        }
+        let script = "Get-AppxPackage | ForEach-Object { \"$($_.Name)|$($_.Publisher)|$($_.Version)|$($_.InstallLocation)\" }";
+        let out = crate::spawn::command("powershell").args(["-NoProfile", "-Command", script]).output();
+        let packages: Vec<Package> = out.map(|o| String::from_utf8_lossy(&o.stdout).lines().filter_map(|l| {
+            let mut f = l.trim().splitn(4, '|');
+            Some(Package { name: f.next()?.into(), publisher: f.next()?.into(), version: f.next()?.into(), location: PathBuf::from(f.next()?) })
+        }).collect()).unwrap_or_default();
+        *last = Some((std::time::Instant::now(), packages.clone()));
+        packages
+    }
+    #[cfg(not(windows))]
+    {
+        Vec::new()
+    }
+}
+
 pub fn exe_in(dir: &std::path::Path, name: &str) -> Option<PathBuf> {
     let names: Vec<String> = if cfg!(windows) {
         vec![format!("{name}.exe"), format!("{name}.cmd"), format!("{name}.bat"), name.to_string()]

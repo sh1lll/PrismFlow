@@ -358,6 +358,8 @@ pub fn detect_cli_separate() -> AppDetection {
 /// Separate detection: same app, different notes.
 pub fn detect_separate() -> AppDetection {
     let mut d = detect_desktop();
+    // Opening it with its own folder is built for macOS only.
+    d.installed &= cfg!(target_os = "macos");
     d.app_id = DESKTOP_SEPARATE_APP_ID.into();
     d.display_name = "Codex app (separate)".into();
     d.notes = vec![
@@ -446,7 +448,27 @@ pub fn plan_disconnect_base(
 }
 
 /// Codex Desktop detection: the app bundle, not a CLI.
+/// The Codex app on Windows: part of the ChatGPT app from the Microsoft
+/// Store (publisher OpenAI). It reads the same `%USERPROFILE%\.codex`.
+fn windows_desktop() -> Option<(PathBuf, String)> {
+    super::windows_packages().into_iter()
+        .find(|p| p.publisher.contains("OpenAI") && (p.name.contains("ChatGPT") || p.name.contains("Codex")))
+        .map(|p| (p.location, p.version))
+}
+
 pub fn detect_desktop() -> AppDetection {
+    if cfg!(windows) {
+        let app = windows_desktop();
+        return AppDetection {
+            app_id: DESKTOP_APP_ID.into(),
+            display_name: "Codex Desktop".into(),
+            installed: app.is_some(),
+            path: app.as_ref().map(|(p, _)| p.display().to_string()),
+            version: app.map(|(_, v)| v),
+            version_verified: false,
+            notes: vec!["Restart the Codex app after connecting or disconnecting.".into()],
+        };
+    }
     let app = ["/Applications/ChatGPT.app", "/Applications/Codex.app"]
         .iter()
         .map(PathBuf::from)
