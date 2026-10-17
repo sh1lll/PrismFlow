@@ -44,7 +44,13 @@ pub fn header(text: &str) -> &str {
 
 /// `render`, keeping the original file's leading comment block.
 pub fn render_like(before: &str, obj: &Map<String, Value>) -> String {
-    format!("{}{}", header(before), render(obj))
+    let out = format!("{}{}", header(before), render(obj));
+    // Keep the file's own ending (some apps write no final newline).
+    if !before.is_empty() && !before.ends_with('\n') {
+        out.trim_end_matches('\n').to_string()
+    } else {
+        out
+    }
 }
 
 /// `obj[path[0]][path[1]]… = value`, creating objects on the way.

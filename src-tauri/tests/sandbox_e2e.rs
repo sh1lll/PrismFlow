@@ -200,6 +200,7 @@ fn main() {
         // Hard conditions run with the default app set only.
         if std::env::var_os("PRISMFLOW_E2E_HOLD").is_none() && std::env::var_os("PRISMFLOW_E2E_APPS").is_none() {
             f.extend(conditions(&root, &home).await);
+            f.extend(features(&root, &home).await);
         }
         f
     });
@@ -866,6 +867,198 @@ async fn conditions(root: &Path, home: &Path) -> Vec<String> {
 
     if snapshot(home) != before {
         failures.push("hard conditions: the user's files differ from before".into());
+    }
+    failures
+}
+
+
+// ---------------------------------------------------------------------------
+// Features nobody had run end to end: backup/restore, uninstall, profiles,
+// code sessions, tools (MCP) sharing, remote access.
+
+async fn features(root: &Path, home: &Path) -> Vec<String> {
+    let mut failures = Vec::new();
+    eprintln!("\n================ features ================");
+    let upstream = MockServer::start().await;
+    Mock::given(method("GET")).and(path("/v1/models"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({"data": [{"id": MOCK_MODEL}]})))
+        .mount(&upstream).await;
+    Mock::given(method("POST")).and(path("/v1/chat/completions")).respond_with(ToolModel).mount(&upstream).await;
+    let good = format!("{}/v1", upstream.uri());
+    let before = snapshot(home);
+    let overrides = [("groq", good.clone()), ("nvidia_nim", good.clone())];
+    let port = free_port();
+    let svc = Arc::new(service(root, home, "state-features", Box::new(store()), port, &overrides));
+    let _ = svc.set_credential("groq", UPSTREAM_KEY);
+    let _ = svc.set_credential("nvidia_nim", UPSTREAM_KEY);
+    let a = svc.connect(claude_code::APP_ID, "groq", MOCK_MODEL).await;
+    let b = svc.connect(codex::APP_ID, "nvidia_nim", MOCK_MODEL).await;
+    let (Ok(a), Ok(b)) = (a, b) else {
+        failures.push("features: couldn't connect the two apps".into());
+        return failures;
+    };
+
+    // Profiles: save, change, switch back.
+    {
+        let mut case = Case::start("profiles", &mut failures);
+        match svc.save_profile("Work") {
+            Ok(p) => case.says("save", &format!("saved; {} profile(s)", p.list.len())),
+            Err(e) => case.fail(format!("save: {e}")),
+        }
+        let _ = prismflow_lib::tray::switch(&svc, &a.id, "nvidia_nim", MOCK_MODEL).await;
+        match svc.switch_profile("Work").await {
+            Ok(_) => {
+                let ids: Vec<String> = svc.connections().unwrap_or_default().into_iter().map(|c| c.id).collect();
+                case.says("switch back", &format!("{ids:?}"));
+                if !ids.contains(&a.id) || !ids.contains(&b.id) || ids.len() != 2 {
+                    case.fail(format!("profile didn't bring back the saved setup: {ids:?}"));
+                }
+            }
+            Err(e) => case.fail(format!("switch: {e}")),
+        }
+        if svc.delete_profile("Work").is_err() { case.fail("delete failed".into()); }
+        case.within(60);
+    }
+
+    // Tools: an MCP server shared into Claude Code and Codex, then removed.
+    {
+        let mut case = Case::start("tools (MCP) sharing", &mut failures);
+        let server = prismflow_lib::mcp::Server { name: "pf-test".into(), command: "npx".into(), args: vec!["-y".into(), "some-mcp".into()], env: Default::default(), url: String::new() };
+        for app in ["claude_code", "codex"] {
+            match prismflow_lib::mcp::apply(app, &[server.clone()], &[]) {
+                Ok(names) => {
+                    let file = prismflow_lib::mcp::target_file(app).unwrap();
+                    let text = std::fs::read_to_string(&file).unwrap_or_default();
+                    case.says(&format!("add to {app}"), &format!("{names:?} in {}", file.file_name().unwrap().to_string_lossy()));
+                    if !text.contains("pf-test") { case.fail(format!("{app}: server not written")); }
+                    match prismflow_lib::mcp::apply(app, &[], &names) {
+                        Ok(_) if std::fs::read_to_string(&file).unwrap_or_default().contains("pf-test") => case.fail(format!("{app}: server not removed")),
+                        Ok(_) => {}
+                        Err(e) => case.fail(format!("{app} remove: {e}")),
+                    }
+                }
+                Err(e) => case.fail(format!("{app}: {e}")),
+            }
+        }
+        case.within(30);
+    }
+
+    // Code sessions: a real Codex turn in a project folder.
+    {
+        let mut case = Case::start("code sessions", &mut failures);
+        let sessions = prismflow_lib::sessions::Sessions::open(&root.join("state-features"));
+        let folder = root.join("my project");
+        std::fs::create_dir_all(&folder).unwrap();
+        match sessions.create(&folder, prismflow_lib::sessions::Sandbox::ReadOnly, "Test") {
+            Ok(sess) => {
+                if let Err(e) = sessions.send(&svc, &sess.id, &b.id, "Reply with exactly PRISMFLOW_OK and nothing else.").await {
+                    case.fail(format!("send: {e}"));
+                }
+                let deadline = Instant::now() + Duration::from_secs(120);
+                let mut text = String::new();
+                while Instant::now() < deadline {
+                    tokio::time::sleep(Duration::from_millis(500)).await;
+                    if let Some(page) = sessions.events(&sess.id, 0) {
+                        text = page.events.iter().map(|e| e.to_string()).collect::<Vec<_>>().join("\n");
+                        if !page.session.running() { break; }
+                    }
+                }
+                case.says("answer", if text.contains("PRISMFLOW_OK") { "got PRISMFLOW_OK" } else { "no answer" });
+                if !text.contains("PRISMFLOW_OK") {
+                    case.fail(format!("no answer in the session: {}", text.chars().rev().take(300).collect::<String>().chars().rev().collect::<String>()));
+                }
+                let _ = sessions.delete(&sess.id);
+            }
+            Err(e) => case.fail(format!("create: {e}")),
+        }
+        case.within(130);
+    }
+
+    // Remote access: start, pair a device, read status, run a test remotely.
+    {
+        let mut case = Case::start("remote access", &mut failures);
+        let dir = root.join("state-features").join("companion");
+        let registry = Arc::new(prismflow_lib::companion::Registry::open(&dir).unwrap());
+        let backend: Arc<dyn prismflow_lib::companion::server::Backend> = Arc::new(prismflow_lib::companion::backend::ServiceBackend(svc.clone()));
+        match prismflow_lib::companion::server::start("127.0.0.1".parse().unwrap(), 0, &dir, registry.clone(), backend).await {
+            Ok(run) => {
+                let code = registry.start_pairing();
+                let client = reqwest::Client::builder().danger_accept_invalid_certs(true).no_proxy().build().unwrap();
+                let paired = client.post(format!("{}/pair", run.url)).json(&serde_json::json!({ "code": code, "device_name": "Test phone" })).send().await;
+                let token = match paired {
+                    Ok(r) => r.json::<serde_json::Value>().await.ok().and_then(|v| v["token"].as_str().map(String::from)),
+                    Err(e) => { case.fail(format!("pair: {e}")); None }
+                };
+                if let Some(t) = token {
+                    let st = client.get(format!("{}/api/status", run.url)).bearer_auth(&t).send().await;
+                    match st {
+                        Ok(r) if r.status().is_success() => case.says("status", &format!("{} bytes", r.text().await.unwrap_or_default().len())),
+                        Ok(r) => case.fail(format!("status: HTTP {}", r.status())),
+                        Err(e) => case.fail(format!("status: {e}")),
+                    }
+                    let wrong = client.get(format!("{}/api/status", run.url)).bearer_auth("nope").send().await.map(|r| r.status().as_u16()).ok();
+                    if wrong != Some(401) && wrong != Some(403) { case.fail(format!("a wrong device token got {wrong:?}")); }
+                    // Read-only devices may not run tests until allowed.
+                    let v = client.post(format!("{}/api/connections/{}/verify", run.url, a.id.replace(':', "%3A"))).bearer_auth(&t).send().await.map(|r| r.status().as_u16()).ok();
+                    case.says("test while read-only", &format!("{v:?}"));
+                } else {
+                    case.fail("pairing gave no token".into());
+                }
+                run.stop().await;
+            }
+            Err(e) => case.fail(format!("start: {e}")),
+        }
+        case.within(60);
+    }
+
+    // Backup, remove everything, restore.
+    {
+        let mut case = Case::start("backup and restore", &mut failures);
+        match svc.backup() {
+            Ok(bk) => {
+                let saved = serde_json::to_string(&bk).unwrap();
+                for c in svc.connections().unwrap_or_default() { let _ = svc.disconnect(&c.id).await; }
+                let fresh = service(root, home, "state-restored", Box::new(store()), free_port(), &overrides);
+                let bk: prismflow_lib::backup::Backup = serde_json::from_str(&saved).unwrap();
+                match fresh.restore(bk).await {
+                    Ok(rep) => {
+                        case.says("restore", &format!("restored {:?}; notes {:?}", rep.restored, rep.problems));
+                        let ids: Vec<String> = fresh.connections().unwrap_or_default().into_iter().map(|c| c.id).collect();
+                        if ids.len() != 2 { case.fail(format!("expected both apps back, got {ids:?}")); }
+                        for id in &ids {
+                            if verify_says(&fresh, id, &mut case).await != Some(ConnectionStatus::ConnectedAndVerified) {
+                                case.fail(format!("{id} doesn't work after restoring"));
+                            }
+                        }
+                        // Uninstall: everything PrismFlow did goes away.
+                        match fresh.uninstall(true).await {
+                            Ok(plan) => case.says("uninstall plan", &format!("{} item(s)", plan.items.len())),
+                            Err(e) => case.fail(format!("uninstall plan: {e}")),
+                        }
+                        match fresh.uninstall(false).await {
+                            Ok(r) if r.complete => case.says("uninstall", "complete"),
+                            Ok(r) => case.fail(format!("uninstall incomplete: {:?}", r.items.iter().filter(|i| format!("{:?}", i.outcome).to_lowercase() != "done").map(|i| format!("{} {}", i.what, i.detail)).collect::<Vec<_>>())),
+                            Err(e) => case.fail(format!("uninstall: {e}")),
+                        }
+                        if fresh.broker.is_running().await { case.fail("gateway still running after uninstall".into()); }
+                    }
+                    Err(e) => case.fail(format!("restore: {e}")),
+                }
+            }
+            Err(e) => case.fail(format!("backup: {e}")),
+        }
+        case.within(120);
+    }
+    for c in svc.connections().unwrap_or_default() { let _ = svc.disconnect(&c.id).await; }
+    svc.broker.stop().await;
+    let after = snapshot(home);
+    for (f, b) in &before {
+        if after.get(f) != Some(b) {
+            failures.push(format!("features: {f} changed:\n--- before\n{b}\n--- after\n{}", after.get(f).map(String::as_str).unwrap_or("(missing)")));
+        }
+    }
+    for f in after.keys().filter(|f| !before.contains_key(*f)) {
+        failures.push(format!("features: {f} was created:\n{}", after[f]));
     }
     failures
 }

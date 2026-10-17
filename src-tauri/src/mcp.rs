@@ -140,7 +140,15 @@ pub fn apply(app: &str, servers: &[Server], previously: &[String]) -> R<Vec<Stri
         }
         map.insert(s.name.clone(), json_entry(app, s));
     }
-    obj.insert(key.into(), Value::Object(map));
+    // Nothing left and nothing there before: leave no empty entry behind.
+    if map.is_empty() && !obj.contains_key(key) {
+        return Ok(Vec::new());
+    }
+    if map.is_empty() && obj.get(key).and_then(Value::as_object).is_some_and(|m| m.keys().all(|k| previously.contains(k))) {
+        obj.remove(key);
+    } else {
+        obj.insert(key.into(), Value::Object(map));
+    }
     if let Some(d) = file.parent() {
         std::fs::create_dir_all(d).map_err(|e| e.to_string())?;
     }
