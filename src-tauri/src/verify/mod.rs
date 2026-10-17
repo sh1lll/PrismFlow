@@ -532,13 +532,15 @@ async fn run_stages(
                 ConnectionStatus::ConnectedAndVerified
             }
             Some(false) => {
+                let shown = redact_known(&tail(&out, 12), &secrets);
                 run.push(6, "Tool calling", StageOutcome::Fail,
-                    "The model can chat but couldn't use tools, so coding tasks may not work. Try a different model.");
+                    format!("The model can chat but couldn't use tools, so coding tasks may not work. Try a different model.\n\n{shown}"));
                 ConnectionStatus::PartiallyCompatible
             }
             None => {
+                let shown = redact_known(&tail(&out, 12), &secrets);
                 run.push(6, "Tool calling", StageOutcome::Skipped,
-                    "Couldn't check whether the model can use tools.");
+                    format!("Couldn't check whether the model can use tools.\n\n{shown}"));
                 ConnectionStatus::PartiallyCompatible
             }
         },
@@ -596,13 +598,15 @@ async fn claude_agent_stages(env: &VerifyEnv<'_>, provider: &ProviderDefinition,
                 ConnectionStatus::ConnectedAndVerified
             }
             Some(false) => {
+                let shown = redact_known(&tail(&out, 12), &secrets);
                 run.push(6, "Tool calling", StageOutcome::Fail,
-                    "The model can chat but couldn't use tools, so coding tasks may not work. Try a different model.");
+                    format!("The model can chat but couldn't use tools, so coding tasks may not work. Try a different model.\n\n{shown}"));
                 ConnectionStatus::PartiallyCompatible
             }
             None => {
+                let shown = redact_known(&tail(&out, 12), &secrets);
                 run.push(6, "Tool calling", StageOutcome::Skipped,
-                    "Couldn't check whether the model can use tools.");
+                    format!("Couldn't check whether the model can use tools.\n\n{shown}"));
                 ConnectionStatus::PartiallyCompatible
             }
         },
