@@ -285,14 +285,14 @@ async fn run(root: &Path, home: &Path) -> Vec<String> {
     #[cfg(windows)]
     let helper = {
         let h = root.join("prismflow-helper.cmd");
-        std::fs::write(&h, format!("@\"{}\" helper %*\r\n", me.display())).unwrap();
+        std::fs::write(&h, format!("@set \"PRISMFLOW_E2E_STORE={}\"\r\n@\"{}\" helper %*\r\n", root.join("store.json").display(), me.display())).unwrap();
         h
     };
     #[cfg(unix)]
     let helper = {
         use std::os::unix::fs::PermissionsExt;
         let h = root.join("prismflow-helper");
-        std::fs::write(&h, format!("#!/bin/sh\nexec '{}' helper \"$@\"\n", me.display())).unwrap();
+        std::fs::write(&h, format!("#!/bin/sh\nPRISMFLOW_E2E_STORE='{}' exec '{}' helper \"$@\"\n", root.join("store.json").display(), me.display())).unwrap();
         std::fs::set_permissions(&h, std::fs::Permissions::from_mode(0o755)).unwrap();
         h
     };

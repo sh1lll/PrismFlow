@@ -40,7 +40,7 @@ pub async fn prompt(
     crate::proctree::own_group(&mut cmd);
     let mut child = cmd.spawn().map_err(|e| format!("couldn't start the agent: {e}"))?;
     // The agent is stopped when this returns, with whatever it started.
-    let _tree = crate::proctree::TreeGuard::new(child.id());
+    let tree = crate::proctree::TreeGuard::new(child.id());
     let mut stdin = child.stdin.take().ok_or("no stdin")?;
     let mut lines = BufReader::new(child.stdout.take().ok_or("no stdout")?).lines();
     let stderr = child.stderr.take();
@@ -80,7 +80,10 @@ pub async fn prompt(
     };
     let result = tokio::time::timeout(timeout, work).await;
     let _ = child.kill().await;
-    let tail = err_tail.await.unwrap_or_default();
+    // Stop everything it started first: a child still holding stderr open
+    // would otherwise keep the read below waiting forever.
+    drop(tree);
+    let tail = tokio::time::timeout(Duration::from_secs(3), err_tail).await.ok().and_then(Result::ok).unwrap_or_default();
     match result {
         Err(_) => Err(format!("the agent didn't finish within {}s", timeout.as_secs())),
         Ok(Err(e)) if tail.trim().is_empty() => Err(e),
@@ -177,6 +180,19 @@ echo '{"jsonrpc":"2.0","id":3,"result":{"stopReason":"end_turn"}}'
         let run = prompt("/bin/sh", &[agent.display().to_string()], &HashMap::new(), dir.path(), "read n.txt", Duration::from_secs(10)).await.unwrap();
         assert_eq!(run.text, "PFNONCE123");
         assert!(run.updates.contains(&"tool_call".to_string()));
+    }
+
+    #[tokio::test]
+    async fn times_out_even_when_a_child_keeps_its_output_open() {
+        // The agent starts a child that outlives it and holds stderr open,
+        // then never answers (an app retrying a refused request forever).
+        let dir = tempfile::tempdir().unwrap();
+        let agent = dir.path().join("agent.sh");
+        std::fs::write(&agent, "sleep 600 &\nsleep 600\n").unwrap();
+        let t = std::time::Instant::now();
+        let e = prompt("/bin/sh", &[agent.display().to_string()], &HashMap::new(), dir.path(), "x", Duration::from_secs(2)).await.err().unwrap();
+        assert!(e.contains("didn't finish"), "{e}");
+        assert!(t.elapsed() < Duration::from_secs(10), "took {:?}", t.elapsed());
     }
 
     #[tokio::test]

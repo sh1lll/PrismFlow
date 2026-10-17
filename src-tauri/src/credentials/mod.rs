@@ -1,4 +1,6 @@
 pub mod keychain;
+#[cfg(debug_assertions)]
+pub mod devfile;
 pub mod memory;
 pub mod copilot;
 pub mod oauth;
@@ -45,6 +47,11 @@ pub fn account_key(provider_id: &str, account_name: &str) -> String {
 }
 
 pub fn default_store() -> Box<dyn CredentialStore> {
+    // Debug builds can keep keys in a sandbox file (never in release builds).
+    #[cfg(debug_assertions)]
+    if let Some(p) = std::env::var_os("PRISMFLOW_DEV_KEY_FILE") {
+        return Box::new(devfile::DevFileStore::new(p.into()));
+    }
     Box::new(keychain::KeychainStore)
 }
 
