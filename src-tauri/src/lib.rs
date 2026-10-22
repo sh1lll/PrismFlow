@@ -294,6 +294,16 @@ async fn openrouter_sign_in(svc: State<'_, Arc<Service>>) -> Cmd<()> {
 }
 
 #[tauri::command]
+async fn set_app_models(svc: State<'_, Arc<Service>>, id: String, models: Vec<String>) -> Cmd<state::ConnectionRecord> {
+    svc.set_app_models(&id, models).await
+}
+
+#[tauri::command]
+fn provider_limits(svc: State<'_, Arc<Service>>) -> Vec<gateway::limits::LimitState> {
+    svc.broker.limits()
+}
+
+#[tauri::command]
 fn chatgpt_status(svc: State<'_, Arc<Service>>) -> service::ChatgptStatus {
     svc.chatgpt_status()
 }
@@ -956,6 +966,8 @@ pub fn run() {
         .manage(sessions::Sessions::open(&dir))
         .manage(BotState { bots: bots::Bots::default(), dir: dir.clone() })
         .invoke_handler(tauri::generate_handler![
+            provider_limits,
+            set_app_models,
             chatgpt_status,
             chatgpt_sign_in,
             chatgpt_sign_out,

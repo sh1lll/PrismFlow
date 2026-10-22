@@ -83,6 +83,10 @@ pub struct ConnectionRecord {
     /// changed them (None = absent), restored on disconnect.
     #[serde(default)]
     pub priors: std::collections::BTreeMap<String, Option<String>>,
+    /// Models offered in the app's own model menu (the first is the default).
+    /// Empty = just `model`.
+    #[serde(default)]
+    pub app_models: Vec<String>,
 }
 
 /// Resolve the state directory: `PRISMFLOW_STATE_DIR` (tests, portable
@@ -215,6 +219,7 @@ mod tests {
 
     fn record(id: &str) -> ConnectionRecord {
         ConnectionRecord {
+            app_models: Vec::new(),
             id: id.into(),
             provider_id: "openrouter".into(),
             app_id: "codex_cli".into(),

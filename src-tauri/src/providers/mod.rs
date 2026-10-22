@@ -344,7 +344,8 @@ mod tests {
         let all = registry();
         assert!(all.len() >= 25, "catalog shrank: {}", all.len());
         let mut seen = std::collections::HashSet::new();
-        for p in all {
+        // Built-in entries only: other tests add custom providers meanwhile.
+        for p in all.into_iter().filter(|p| !p.custom) {
             assert!(seen.insert(p.id), "duplicate provider id {}", p.id);
             let host = host_of(p.base_url).expect("parseable base url");
             if p.local {

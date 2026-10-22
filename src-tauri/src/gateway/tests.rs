@@ -86,7 +86,7 @@ async fn harness() -> Harness {
         base_url: format!("{}/v1", upstream.uri()),
         models: vec![MODEL.into()],
         key: UPSTREAM_KEY.into(), codex_oauth: false, headers: vec![], extra_keys: vec![] };
-    let binding = Binding { connection_id: "claude_code:nvidia_nim".into(), provider_id: "nvidia_nim".into(), ..Default::default() };
+    let binding = Binding { models: Default::default(), connection_id: "claude_code:nvidia_nim".into(), provider_id: "nvidia_nim".into(), ..Default::default() };
     let status = broker.start(vec![spec], vec![(token.clone(), binding)]).await.expect("broker starts");
     assert_eq!(status.phase, Phase::Ready);
     Harness { broker, token, _dir: dir, diag_path, _upstream: upstream }
@@ -475,7 +475,7 @@ async fn routed(routing: Routing) -> (Harness, MockServer) {
     let specs = vec![spec("prov_a", a.uri(), KEY_A, "model-a"), spec("prov_b", b.uri(), KEY_B, "model-b")];
     let binding = Binding {
         connection_id: "claude_code:prov_a".into(), provider_id: "prov_a".into(), model: "model-a".into(),
-        routing: Arc::new(routing),
+        routing: Arc::new(routing), models: Default::default(),
     };
     broker.start(specs, vec![(token.clone(), binding)]).await.expect("broker starts");
     (Harness { broker, token, _dir: dir, diag_path, _upstream: a }, b)
@@ -530,7 +530,7 @@ async fn per_connection_rate_limit_answers_429() {
     assert_eq!(ok.status(), 200);
     let limited = h.post("/v1/messages", messages_body(false, false)).header("x-api-key", &h.token).send().await.unwrap();
     assert_eq!(limited.status(), 429);
-    assert!(limited.text().await.unwrap().contains("per-minute"));
+    assert!(limited.text().await.unwrap().contains("PrismFlow's own limit"));
     h.broker.stop().await;
 }
 
@@ -856,5 +856,78 @@ async fn extra_keys_are_used_and_a_rejected_key_is_skipped() {
     eprintln!("ok={ok} used={used:?}");
     assert!(used.contains("Bearer key-good"), "the extra key is used");
     assert!(ok >= 3, "requests succeed despite one key being rate-limited (ok={ok})");
+    broker.stop().await;
+}
+
+#[tokio::test]
+async fn token_counts_are_answered_for_any_provider() {
+    let h = harness().await;
+    let body = serde_json::json!({ "model": "anything", "system": "be brief", "messages": [{ "role": "user", "content": "hello there, how are you today?" }] });
+    let r = h.post("/v1/messages/count_tokens", body).bearer_auth(&h.token).send().await.unwrap();
+    assert_eq!(r.status(), 200);
+    let v: serde_json::Value = r.json().await.unwrap();
+    let n = v["input_tokens"].as_u64().unwrap();
+    assert!((10..200).contains(&n), "{v}");
+}
+
+#[tokio::test]
+async fn limits_say_which_kind_and_how_long() {
+    let upstream = MockServer::start().await;
+    // First a used-up quota, then a short rate limit, then a normal answer.
+    Mock::given(method("POST")).respond_with(ResponseTemplate::new(429)
+        .set_body_json(serde_json::json!({"error": {"message": "You exceeded your current quota, please check your plan and billing details.", "code": "insufficient_quota"}})))
+        .up_to_n_times(1).mount(&upstream).await;
+    Mock::given(method("POST")).respond_with(ResponseTemplate::new(429).insert_header("retry-after", "37")
+        .set_body_json(serde_json::json!({"error": {"message": "Rate limit reached for requests"}})))
+        .up_to_n_times(1).mount(&upstream).await;
+    Mock::given(method("POST")).respond_with(ResponseTemplate::new(200).set_body_raw(text_stream(), "text/event-stream")).mount(&upstream).await;
+    let dir = tempfile::tempdir().unwrap();
+    let broker = Broker::new(0, dir.path().to_path_buf(), None);
+    let token = tokens::generate();
+    let spec = UpstreamSpec { provider_id: "nvidia_nim".into(), engine_type: "openai_chat_completions",
+        base_url: format!("{}/v1", upstream.uri()), models: vec![MODEL.into()], key: UPSTREAM_KEY.into(), codex_oauth: false, headers: vec![], extra_keys: vec![] };
+    let binding = Binding { connection_id: "claude_code:nvidia_nim".into(), provider_id: "nvidia_nim".into(), model: MODEL.into(), ..Default::default() };
+    broker.start(vec![spec], vec![(token.clone(), binding)]).await.unwrap();
+    let send = || client().post(format!("{}/v1/messages", broker.url())).bearer_auth(&token).json(&messages_body(true, false)).send();
+
+    let r = send().await.unwrap();
+    assert_eq!(r.status(), 429);
+    assert!(r.headers().get("retry-after").is_none(), "no retry-after for a used-up quota");
+    let v: serde_json::Value = r.json().await.unwrap();
+    assert!(v["error"]["message"].as_str().unwrap().starts_with("Out of quota at NVIDIA NIM"), "{v}");
+    assert_eq!(broker.limits()[0].kind, super::limits::LimitKind::Quota);
+
+    let r = send().await.unwrap();
+    assert_eq!(r.headers().get("retry-after").and_then(|h| h.to_str().ok()), Some("37"));
+    let v: serde_json::Value = r.json().await.unwrap();
+    assert!(v["error"]["message"].as_str().unwrap().contains("Try again in 37 s"), "{v}");
+    let l = broker.limits();
+    assert_eq!((l[0].kind, l[0].until.is_some()), (super::limits::LimitKind::RateLimit, true));
+
+    // Once it answers normally, the limit is gone.
+    assert_eq!(send().await.unwrap().status(), 200);
+    assert!(broker.limits().is_empty());
+    broker.stop().await;
+}
+
+#[tokio::test]
+async fn a_model_picked_in_the_app_goes_to_that_model() {
+    let upstream = chat_upstream().await;
+    let dir = tempfile::tempdir().unwrap();
+    let broker = Broker::new(0, dir.path().to_path_buf(), None);
+    let token = tokens::generate();
+    let spec = UpstreamSpec { provider_id: "nvidia_nim".into(), engine_type: "openai_chat_completions",
+        base_url: format!("{}/v1", upstream.uri()), models: vec![MODEL.into(), "z-ai/glm-5.3".into()], key: UPSTREAM_KEY.into(),
+        codex_oauth: false, headers: vec![], extra_keys: vec![] };
+    let binding = Binding { connection_id: "claude_desktop:nvidia_nim".into(), provider_id: "nvidia_nim".into(), model: MODEL.into(),
+        models: Arc::new(vec![(MODEL.into(), MODEL.into()), ("z-ai/glm-5.3".into(), "z-ai/glm-5.3".into())]), ..Default::default() };
+    broker.start(vec![spec], vec![(token.clone(), binding)]).await.unwrap();
+    let ask = |m: &str| { let mut b = messages_body(false, false); b["model"] = serde_json::json!(m); b };
+    for (asked, expect) in [("z-ai/glm-5.3", "z-ai/glm-5.3"), ("not-on-the-list", MODEL)] {
+        let r = client().post(format!("{}/v1/messages", broker.url())).bearer_auth(&token).json(&ask(asked)).send().await.unwrap();
+        assert_eq!(r.status(), 200, "{asked}");
+        let served = r.headers().get("x-prismflow-served-by").and_then(|v| v.to_str().ok()).unwrap_or("").to_string();
+        assert_eq!(served, format!("nvidia_nim/{expect}"), "{asked}");
+    }
     broker.stop().await;
 }

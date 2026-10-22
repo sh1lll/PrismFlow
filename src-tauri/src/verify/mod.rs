@@ -461,7 +461,27 @@ async fn run_stages(
             // The app reads its PrismFlow key at run time; without it every
             // request is refused (and some apps retry for minutes first).
             match env.store.get(&crate::gateway::tokens::account(&record.id)) {
-                Ok(_) => run.push(3, "Gateway", StageOutcome::Pass, "Running."),
+                Ok(token) => {
+                    run.push(3, "Gateway", StageOutcome::Pass, "Running.");
+                    // Claude-style apps also ask for token counts all the
+                    // time; a test that only sends one reply missed that.
+                    let a = record.app_id.as_str();
+                    if a.starts_with("claude_") || a.starts_with("vscode_claude") || a == "vscode_separate" || a == "jetbrains" {
+                        let body = serde_json::json!({ "model": record.model, "messages": [{ "role": "user", "content": "hi" }] });
+                        let counted = env.client.post(format!("{}/v1/messages/count_tokens", g.url.trim_end_matches('/')))
+                            .header("x-api-key", &token).header("anthropic-version", "2023-06-01").json(&body).send().await;
+                        let ok = match counted {
+                            Ok(r) if r.status().is_success() => r.json::<serde_json::Value>().await.ok().is_some_and(|v| v["input_tokens"].is_u64()),
+                            _ => false,
+                        };
+                        if ok {
+                            run.push(3, "App calls", StageOutcome::Pass, "Token counting works.");
+                        } else {
+                            run.push(3, "App calls", StageOutcome::Fail, "The app's token-count requests fail, so long chats will break in the app. Restart PrismFlow; if it stays, save a problem report in Settings.");
+                            return ConnectionStatus::RequiresAttention;
+                        }
+                    }
+                }
                 Err(crate::credentials::CredentialError::NotFound(_)) => {
                     run.push(3, "Gateway", StageOutcome::Fail, "This app's PrismFlow key is missing. Remove the app and add it again.");
                     return ConnectionStatus::AuthenticationFailed;
@@ -1063,7 +1083,7 @@ esac"#;
             created_at: 0,
             status: ConnectionStatus::Unverified,
             last_report: None,
-            routing: Default::default(), priors: Default::default(),
+            routing: Default::default(), priors: Default::default(), app_models: Vec::new(),
         };
         Fixture { _home: home, server, record, store }
     }
@@ -1218,6 +1238,10 @@ esac"#;
         Mock::given(method("GET")).and(path("/models"))
             .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({"data":[{"id":"meta/llama-3.3-70b-instruct"}]})))
             .mount(&server).await;
+        // The gateway's token counting, as the real broker answers it.
+        Mock::given(method("POST")).and(path("/v1/messages/count_tokens"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({ "input_tokens": 12 })))
+            .mount(&server).await;
         let store = InMemoryStore::new();
         store.set(&account_key("nvidia_nim", "default"), "nvapi-secretsecretsecret").unwrap();
         if with_app_key {
@@ -1231,12 +1255,12 @@ esac"#;
             id: "claude_code:nvidia_nim".into(), provider_id: "nvidia_nim".into(), app_id: claude_code::APP_ID.into(),
             model: "meta/llama-3.3-70b-instruct".into(), profile: claude_code::profile_name("nvidia_nim"),
             route: crate::state::Route::Gateway, managed_file: plan.file, created_at: 0,
-            status: ConnectionStatus::Unverified, last_report: None, routing: Default::default(), priors: Default::default(),
+            status: ConnectionStatus::Unverified, last_report: None, routing: Default::default(), priors: Default::default(), app_models: Vec::new(),
         };
         let work = tempfile::tempdir().unwrap();
         let env = VerifyEnv {
             client: discovery::client(), store: &store, codex_bin: None, claude_bin: Some(claude),
-            gateway: Some(gateway_status(phase)), base_url: server.uri(),
+            gateway: Some(BrokerStatus { url: server.uri(), ..gateway_status(phase) }), base_url: server.uri(),
             workdir: work.path().join("verify"), agent_timeout: Duration::from_secs(10),
             state_dir: std::env::temp_dir(),
         };

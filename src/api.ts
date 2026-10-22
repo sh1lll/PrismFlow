@@ -164,6 +164,8 @@ export interface Connection {
   status: ConnectionStatus;
   last_report: VerificationReport | null;
   routing: Routing;
+  /** Models shown in the app's own model menu (first = default). */
+  app_models?: string[];
 }
 
 export type Tier = "default" | "fable" | "opus" | "sonnet" | "haiku" | "subagent";
@@ -178,6 +180,14 @@ export interface Routing {
   output_filter?: boolean;
 }
 export interface WebToolsSettings { enabled: boolean; backend: "none" | "searxng" | "brave"; searxng_url: string; allow_private: boolean }
+export interface LimitState {
+  provider_id: string;
+  kind: "rate_limit" | "quota" | "prismflow_limit";
+  provider_message: string;
+  until: number | null;
+  at: number;
+}
+
 export interface ChatgptStatus {
   /** "prismflow" = PrismFlow's own sign-in, "codex" = Codex's, null = none. */
   source: "prismflow" | "codex" | null;
@@ -320,6 +330,8 @@ export const api = {
   stopBots: () => invoke<void>("bots_stop"),
   openrouterSignIn: () => invoke<void>("openrouter_sign_in"),
   chatgptStatus: () => invoke<ChatgptStatus>("chatgpt_status"),
+  providerLimits: () => invoke<LimitState[]>("provider_limits"),
+  setAppModels: (id: string, models: string[]) => invoke<Connection>("set_app_models", { id, models }),
   chatgptSignIn: () => invoke<void>("chatgpt_sign_in"),
   chatgptSignOut: () => invoke<void>("chatgpt_sign_out"),
   codexLogin: () => invoke<void>("codex_login"),

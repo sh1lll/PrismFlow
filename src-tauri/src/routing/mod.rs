@@ -137,6 +137,20 @@ impl Routing {
     }
 
     /// The ordered attempts for a request whose body names `requested`.
+    /// A model the app picked from its menu: that model first, then the
+    /// backups (tier mappings don't apply).
+    pub fn plan_exact(&self, primary: &ModelRef) -> Vec<ModelRef> {
+        let mut chain = vec![primary.clone()];
+        if self.fallback_consent {
+            for f in &self.fallbacks {
+                if !chain.contains(f) {
+                    chain.push(f.clone());
+                }
+            }
+        }
+        chain
+    }
+
     pub fn plan(&self, primary: &ModelRef, requested: Option<&str>) -> (Tier, Vec<ModelRef>) {
         let tier = requested.and_then(|m| Tier::from_alias(m).or_else(|| Tier::from_claude_name(m))).unwrap_or(Tier::Default);
         let first = self.tiers.get(&tier).cloned().unwrap_or_else(|| primary.clone());

@@ -319,11 +319,13 @@ fn no_vm(profile: &mut Value, version: Option<&str>) {
 }
 
 /// Adds and selects PrismFlow's gateway configuration.
-pub fn connect_auto(gateway_url: &str, token: &str, connection_id: &str) -> Result<(), String> {
-    connect_auto_in(&config_root(), gateway_url, token, connection_id)
+pub fn connect_auto(gateway_url: &str, token: &str, connection_id: &str, models: &[(String, String)]) -> Result<(), String> {
+    connect_auto_in(&config_root(), gateway_url, token, connection_id, models)
 }
 
-pub fn connect_auto_in(root: &Path, gateway_url: &str, token: &str, connection_id: &str) -> Result<(), String> {
+/// `models`: (id, name) for Claude Desktop's model menu; empty = let it
+/// discover them.
+pub fn connect_auto_in(root: &Path, gateway_url: &str, token: &str, connection_id: &str, models: &[(String, String)]) -> Result<(), String> {
     let lib = Library::load(root)?;
     if let Some(existing) = read(&lib.profile_path())? {
         if existing["inferenceCustomHeaders"][OWNER_HEADER].is_null() && !existing.as_object().is_some_and(|o| o.is_empty()) {
@@ -342,6 +344,12 @@ pub fn connect_auto_in(root: &Path, gateway_url: &str, token: &str, connection_i
         "inferenceCustomHeaders": { OWNER_HEADER: connection_id },
     });
     let mut profile = profile;
+    if !models.is_empty() {
+        // The provider's real models in Desktop's own menu, by name.
+        profile["modelDiscoveryEnabled"] = json!(false);
+        profile["inferenceModels"] = Value::Array(models.iter().take(200)
+            .map(|(id, name)| json!({ "name": id, "labelOverride": name })).collect());
+    }
     if cfg!(windows) {
         no_vm(&mut profile, find_app().and_then(|(_, v)| v).as_deref());
     }
@@ -459,7 +467,7 @@ mod tests {
         std::fs::write(dir.path().join(format!("configLibrary/{DEFAULT_ID}.json")), "{}").unwrap();
         std::fs::write(dir.path().join("claude_desktop_config.json"), r#"{"deploymentMode":"1p","keepMe":true}"#).unwrap();
 
-        connect_auto("http://127.0.0.1:47821/", "pft_tok", "claude_desktop:ollama").unwrap();
+        connect_auto("http://127.0.0.1:47821/", "pft_tok", "claude_desktop:ollama", &[]).unwrap();
         assert!(auto_active(dir.path(), "claude_desktop:ollama"));
         let p = auto_profile(dir.path()).unwrap();
         assert_eq!(p["inferenceGatewayBaseUrl"], "http://127.0.0.1:47821");
@@ -478,7 +486,7 @@ mod tests {
         // Fresh install: no library yet.
         let fresh = tempfile::tempdir().unwrap();
         std::env::set_var("PRISMFLOW_CLAUDE_3P_DIR", fresh.path());
-        connect_auto("http://127.0.0.1:1", "t", "c").unwrap();
+        connect_auto("http://127.0.0.1:1", "t", "c", &[]).unwrap();
         disconnect_auto("someone-else").unwrap();
         assert!(auto_active(fresh.path(), "c"), "another connection's disconnect leaves it alone");
         let meta: Value = serde_json::from_str(&std::fs::read_to_string(fresh.path().join("configLibrary/_meta.json")).unwrap()).unwrap();
@@ -490,11 +498,23 @@ mod tests {
         // The separate copy: its own root, the same library layout.
         let state = tempfile::tempdir().unwrap();
         let root = separate_root(state.path());
-        connect_auto_in(&root, "http://127.0.0.1:1", "t", "claude_desktop_separate:x").unwrap();
+        connect_auto_in(&root, "http://127.0.0.1:1", "t", "claude_desktop_separate:x", &[]).unwrap();
         assert!(auto_active(&root, "claude_desktop_separate:x"));
         assert_eq!(root.file_name().unwrap(), "data-3p");
         assert_eq!(separate_data_dir(state.path()).parent(), root.parent(), "Claude Desktop looks for <data dir>-3p");
         disconnect_auto_in(&root, "claude_desktop_separate:x").unwrap();
         assert!(!auto_active(&root, "claude_desktop_separate:x"));
     }
+
+    #[test]
+    fn the_providers_models_go_into_desktops_menu() {
+        let dir = tempfile::tempdir().unwrap();
+        let models = vec![("z-ai/glm-5.3".to_string(), "GLM 5.3".to_string()), ("moonshotai/kimi-k2.6".to_string(), "kimi-k2.6".to_string())];
+        connect_auto_in(dir.path(), "http://127.0.0.1:47821", "t", "claude_desktop:nvidia_nim", &models).unwrap();
+        let p: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(dir.path().join(format!("configLibrary/{PRISMFLOW_ID}.json"))).unwrap()).unwrap();
+        assert_eq!(p["modelDiscoveryEnabled"], false);
+        assert_eq!(p["inferenceModels"][0], serde_json::json!({ "name": "z-ai/glm-5.3", "labelOverride": "GLM 5.3" }));
+        assert_eq!(p["inferenceModels"].as_array().unwrap().len(), 2);
+    }
+
 }

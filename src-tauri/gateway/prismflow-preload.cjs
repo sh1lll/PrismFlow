@@ -56,9 +56,47 @@ function asksToStream(init, type) {
   return typeof body === 'string' && /"stream"\s*:\s*true/.test(body);
 }
 
+// Seconds until a rate limit lifts, from whichever header the provider uses:
+// Retry-After (seconds or a date), x-ratelimit-reset-* ("37s", "1m30s",
+// "250ms"), x-ratelimit-reset (epoch or seconds), anthropic-*-reset (a date).
+function retryAfterSeconds(headers) {
+  const dur = (v) => {
+    if (!v) return null;
+    v = String(v).trim();
+    if (/^\d+(\.\d+)?$/.test(v)) {
+      const n = Number(v);
+      return n > 1e9 ? Math.max(0, n - Date.now() / 1000) : n; // epoch or seconds
+    }
+    const parts = [...v.matchAll(/(\d+(?:\.\d+)?)(ms|h|m|s)/g)];
+    if (parts.length) return parts.reduce((t, [, n, u]) => t + Number(n) * ({ ms: 0.001, s: 1, m: 60, h: 3600 })[u], 0);
+    const d = Date.parse(v);
+    return Number.isNaN(d) ? null : Math.max(0, (d - Date.now()) / 1000);
+  };
+  const names = ['retry-after', 'x-ratelimit-reset-requests', 'x-ratelimit-reset-tokens', 'x-ratelimit-reset',
+    'anthropic-ratelimit-requests-reset', 'anthropic-ratelimit-tokens-reset', 'anthropic-ratelimit-input-tokens-reset'];
+  const found = names.map((n) => dur(headers.get(n))).filter((n) => n !== null && Number.isFinite(n));
+  return found.length ? Math.ceil(Math.max(...found)) : null;
+}
+
+// Limit answers (429, 402) lose their headers on the way through the engine;
+// put the wait into the body, which the engine passes on as details.
+async function withRetryAfter(res, ResponseClass) {
+  if (res.status !== 429 && res.status !== 402) return res;
+  const secs = retryAfterSeconds(res.headers);
+  if (secs === null) return res;
+  let text = '';
+  try { text = await res.text(); } catch { return res; }
+  let body;
+  try { body = JSON.parse(text); } catch { body = { message: text }; }
+  if (body && typeof body === 'object' && !Array.isArray(body)) body.prismflow_retry_after = secs;
+  const wrapped = new ResponseClass(JSON.stringify(body), { status: res.status, statusText: res.statusText, headers: res.headers });
+  Object.defineProperty(wrapped, 'url', { value: res.url });
+  return wrapped;
+}
+
 function wrapFetch(realFetch, ResponseClass) {
   return async function prismflowFetch(input, init) {
-    const res = await realFetch(input, init);
+    const res = await withRetryAfter(await realFetch(input, init), ResponseClass);
     const kind = kindOf(input);
     const type = res.headers.get('content-type') || '';
     if (!kind || !res.ok || !res.body || !asksToStream(init, type)) return res;

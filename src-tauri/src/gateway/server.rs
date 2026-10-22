@@ -113,6 +113,78 @@ fn claude_desktop_models(_binding: &Binding) -> Response {
     Json(json!({ "object": "list", "data": data, "has_more": false, "first_id": first, "last_id": last })).into_response()
 }
 
+/// A provider said "too many requests" or "out of quota": say which it is,
+/// in the app's own error format, with Retry-After when the wait is known,
+/// and remember it so PrismFlow can show it.
+#[allow(clippy::too_many_arguments)]
+async fn limit_response(
+    inner: &Arc<Inner>,
+    binding: &Binding,
+    served_by: &crate::routing::ModelRef,
+    path: &str,
+    status: StatusCode,
+    resp: reqwest::Response,
+    requested: Option<String>,
+    started: Instant,
+) -> Response {
+    use super::limits::{classify, plain, LimitKind, LimitState};
+    inner.count(|c| c.upstream_errors += 1);
+    let raw = resp.text().await.unwrap_or_default();
+    let body: serde_json::Value = serde_json::from_str(&raw).unwrap_or_default();
+    let (kind, wait, said) = classify(status.as_u16(), &body, &raw).unwrap_or((LimitKind::RateLimit, None, String::new()));
+    let name = crate::providers::get(&served_by.provider_id).map(|p| p.display_name.to_string()).unwrap_or_else(|| served_by.provider_id.clone());
+    let message = plain(kind, &name, wait, &said);
+    let now = crate::diagnostics::now_secs();
+    inner.limits.lock().unwrap_or_else(|e| e.into_inner()).insert(served_by.provider_id.clone(), LimitState {
+        provider_id: served_by.provider_id.clone(), kind, provider_message: said, until: wait.map(|w| now + w), at: now,
+    });
+    inner.record(Level::Warn, "broker.limit", &format!("{} {path}: {message}", binding.connection_id));
+    let (etype, code) = match kind {
+        LimitKind::Quota => ("rate_limit_error", "insufficient_quota"),
+        _ => ("rate_limit_error", "rate_limit_exceeded"),
+    };
+    let json = if path == "/v1/messages" {
+        json!({ "type": "error", "error": { "type": etype, "message": message } })
+    } else {
+        json!({ "error": { "type": etype, "code": code, "message": message } })
+    };
+    let mut out = (status, Json(json)).into_response();
+    if let (LimitKind::RateLimit, Some(w)) = (kind, wait) {
+        if let Ok(v) = HeaderValue::from_str(&w.to_string()) {
+            out.headers_mut().insert("retry-after", v);
+        }
+    }
+    let usage = inner.usage.clone();
+    let req = crate::usage::Request {
+        ts: now,
+        connection: binding.connection_id.clone(),
+        provider: served_by.provider_id.clone(),
+        model: if served_by.model.is_empty() { requested.unwrap_or_default() } else { served_by.model.clone() },
+        path: path.to_string(),
+        status: status.as_u16(),
+        ms: started.elapsed().as_millis() as u64,
+        error: Some(message),
+        ..Default::default()
+    };
+    std::thread::spawn(move || usage.record(req));
+    out
+}
+
+/// A token estimate for a Messages request: what the app sends (system,
+/// messages, tools), about 3.5 characters per token, rounded up.
+pub(crate) fn estimate_tokens(j: &serde_json::Value) -> u64 {
+    let mut chars = 0usize;
+    for key in ["system", "messages", "tools"] {
+        if let Some(v) = j.get(key) {
+            chars += match v {
+                serde_json::Value::String(s) => s.chars().count(),
+                other => other.to_string().chars().count(),
+            };
+        }
+    }
+    ((chars as f64) / 3.5).ceil() as u64 + 1
+}
+
 /// Writes the request to the usage log when the response is done (or dropped).
 struct RecordOnEnd {
     usage: Arc<crate::usage::Store>,
@@ -206,10 +278,25 @@ async fn proxy(State(inner): State<Arc<Inner>>, req: Request) -> Response {
     if !inner.admit(&binding.connection_id) {
         inner.count(|c| c.rejected += 1);
         inner.record(Level::Warn, "broker.rate_limited", &format!("{}: over the per-minute request limit.", binding.connection_id));
-        return reject(StatusCode::TOO_MANY_REQUESTS, "rate_limit_error", "this connection is over its per-minute request limit (Settings)");
+        let now = crate::diagnostics::now_secs();
+        inner.limits.lock().unwrap_or_else(|e| e.into_inner()).insert(format!("conn:{}", binding.connection_id), super::limits::LimitState {
+            provider_id: format!("conn:{}", binding.connection_id), kind: super::limits::LimitKind::PrismflowLimit,
+            provider_message: String::new(), until: Some(now + 20), at: now,
+        });
+        let mut r = reject(StatusCode::TOO_MANY_REQUESTS, "rate_limit_error", &super::limits::plain(super::limits::LimitKind::PrismflowLimit, "", None, ""));
+        r.headers_mut().insert("retry-after", HeaderValue::from_static("20"));
+        return r;
     }
     if path == "/muse-code/models" {
         return muse_models(&binding);
+    }
+    // Claude Desktop and Claude Code ask for token counts all the time. Most
+    // providers have no such endpoint (it came back "not found" for every
+    // non-Anthropic model), so PrismFlow answers with a close estimate.
+    if path == "/v1/messages/count_tokens" && method == axum::http::Method::POST {
+        let body = axum::body::to_bytes(req.into_body(), BODY_LIMIT).await.unwrap_or_default();
+        let j: serde_json::Value = serde_json::from_slice(&body).unwrap_or_default();
+        return Json(json!({ "input_tokens": estimate_tokens(&j) })).into_response();
     }
     let app_id = binding.connection_id.split(':').next().unwrap_or_default();
     if path == "/v1/models" && crate::adapters::claude_desktop::is_claude_desktop(app_id) {
@@ -248,11 +335,18 @@ async fn proxy(State(inner): State<Arc<Inner>>, req: Request) -> Response {
     let mut json: Option<serde_json::Value> =
         (method == axum::http::Method::POST).then(|| serde_json::from_slice(&body).ok()).flatten();
     let requested = json.as_ref().and_then(|j| j["model"].as_str()).map(str::to_string);
-    let primary = crate::routing::ModelRef::new(
-        &binding.provider_id,
-        if binding.model.is_empty() { requested.as_deref().unwrap_or("") } else { &binding.model },
-    );
-    let (tier, chain) = binding.routing.plan(&primary, requested.as_deref());
+    // A model the app picked from its own menu goes exactly there.
+    let picked = requested.as_deref().and_then(|r| binding.models.iter().find(|(shown, _)| shown == r)).map(|(_, up)| up.clone());
+    let (tier, chain) = match picked {
+        Some(up) => (crate::routing::Tier::Default, binding.routing.plan_exact(&crate::routing::ModelRef::new(&binding.provider_id, &up))),
+        None => {
+            let primary = crate::routing::ModelRef::new(
+                &binding.provider_id,
+                if binding.model.is_empty() { requested.as_deref().unwrap_or("") } else { &binding.model },
+            );
+            binding.routing.plan(&primary, requested.as_deref())
+        }
+    };
     let effort = binding.routing.effort_for(tier);
     let mut fixed = false;
     if let Some(j) = json.as_mut() {
@@ -373,6 +467,13 @@ async fn proxy(State(inner): State<Arc<Inner>>, req: Request) -> Response {
         return last_error.unwrap_or_else(|| reject(StatusCode::BAD_GATEWAY, "api_error", "no route could serve this request"));
     };
     let status = resp.status();
+    if status.is_success() {
+        // The provider answers normally again: its limit (if any) is over.
+        inner.limits.lock().unwrap_or_else(|e| e.into_inner()).remove(&served_by.provider_id);
+    }
+    if status.as_u16() == 429 || status.as_u16() == 402 {
+        return limit_response(&inner, &binding, &served_by, &path, status, resp, requested.clone(), started).await;
+    }
     if !status.is_success() {
         inner.count(|c| c.upstream_errors += 1);
         inner.record(Level::Warn, "broker.request", &format!(

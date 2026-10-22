@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "catalog_version": "2026.10.14",
+  "catalog_version": "2026.10.21",
   "_note": "Verified facts only. Every entry's base_url answered GET {base_url}{model_list_path} on verified_at: 200 with an OpenAI-style list, or 401/403 without a key. Protocols list only what PrismFlow has evidence for. Capabilities are never stored here.",
   "providers": [
     {
@@ -1418,6 +1418,133 @@
       "requires_key": false,
       "verified_at": "2026-10-14",
       "_evidence": "documented default; probed live by Stage 3 on the user's machine"
+    },
+    {
+      "id": "omniroute",
+      "display_name": "OmniRoute (local router)",
+      "base_url": "http://127.0.0.1:20128/v1",
+      "protocols": [
+        "OpenAiChat"
+      ],
+      "model_list_path": "/models",
+      "docs_url": "https://github.com/diegosouzapw/OmniRoute",
+      "local": true,
+      "requires_key": false,
+      "verified_at": "2026-10-21",
+      "_evidence": "documented default port 20128; OpenAI-compatible /v1; add its API key if you turned keys on"
+    },
+    {
+      "id": "litellm",
+      "display_name": "LiteLLM proxy",
+      "base_url": "http://127.0.0.1:4000/v1",
+      "protocols": [
+        "OpenAiChat"
+      ],
+      "model_list_path": "/models",
+      "docs_url": "https://docs.litellm.ai/docs/simple_proxy",
+      "local": true,
+      "requires_key": false,
+      "verified_at": "2026-10-21",
+      "_evidence": "documented default port 4000; OpenAI-compatible; add its master/virtual key if it requires one"
+    },
+    {
+      "id": "cliproxyapi",
+      "display_name": "CLIProxyAPI",
+      "base_url": "http://127.0.0.1:8317/v1",
+      "protocols": [
+        "OpenAiChat"
+      ],
+      "model_list_path": "/models",
+      "docs_url": "https://github.com/router-for-me/CLIProxyAPI",
+      "local": true,
+      "requires_key": false,
+      "verified_at": "2026-10-21",
+      "_evidence": "documented default port 8317; OpenAI-compatible /v1; add one of its api-keys if set"
+    },
+    {
+      "id": "vllm",
+      "display_name": "vLLM",
+      "base_url": "http://127.0.0.1:8000/v1",
+      "protocols": [
+        "OpenAiChat"
+      ],
+      "model_list_path": "/models",
+      "docs_url": "https://docs.vllm.ai/en/latest/serving/openai_compatible_server.html",
+      "local": true,
+      "requires_key": false,
+      "verified_at": "2026-10-21",
+      "_evidence": "documented default port 8000; OpenAI-compatible server"
+    },
+    {
+      "id": "jan",
+      "display_name": "Jan",
+      "base_url": "http://127.0.0.1:1337/v1",
+      "protocols": [
+        "OpenAiChat"
+      ],
+      "model_list_path": "/models",
+      "docs_url": "https://jan.ai/docs/api-server",
+      "local": true,
+      "requires_key": false,
+      "verified_at": "2026-10-21",
+      "_evidence": "documented default port 1337; Jan's local API server"
+    },
+    {
+      "id": "koboldcpp",
+      "display_name": "KoboldCpp",
+      "base_url": "http://127.0.0.1:5001/v1",
+      "protocols": [
+        "OpenAiChat"
+      ],
+      "model_list_path": "/models",
+      "docs_url": "https://github.com/LostRuins/koboldcpp/wiki",
+      "local": true,
+      "requires_key": false,
+      "verified_at": "2026-10-21",
+      "_evidence": "documented default port 5001; OpenAI-compatible /v1"
+    },
+    {
+      "id": "textgen_webui",
+      "display_name": "text-generation-webui",
+      "base_url": "http://127.0.0.1:5000/v1",
+      "protocols": [
+        "OpenAiChat"
+      ],
+      "model_list_path": "/models",
+      "docs_url": "https://github.com/oobabooga/text-generation-webui/wiki/12-%E2%80%90-OpenAI-API",
+      "local": true,
+      "requires_key": false,
+      "verified_at": "2026-10-21",
+      "_evidence": "documented default port 5000; its OpenAI-compatible API extension"
+    },
+    {
+      "id": "gpt4all",
+      "display_name": "GPT4All",
+      "base_url": "http://127.0.0.1:4891/v1",
+      "protocols": [
+        "OpenAiChat"
+      ],
+      "model_list_path": "/models",
+      "docs_url": "https://docs.gpt4all.io/gpt4all_api_server/home.html",
+      "local": true,
+      "requires_key": false,
+      "verified_at": "2026-10-21",
+      "_evidence": "documented default port 4891; GPT4All's local API server"
+    },
+    {
+      "id": "hyperbolic",
+      "display_name": "Hyperbolic",
+      "base_url": "https://api.hyperbolic.xyz/v1",
+      "protocols": [
+        "OpenAiChat"
+      ],
+      "model_list_path": "/models",
+      "auth_check_path": "/models",
+      "docs_url": "https://docs.hyperbolic.xyz",
+      "keys_url": "https://app.hyperbolic.xyz/settings",
+      "verified_at": "2026-10-21",
+      "_evidence": "probed 2026-10-21: live, asks for a key (401)",
+      "example_model": "deepseek-ai/DeepSeek-V3"
     }
   ]
 }

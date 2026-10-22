@@ -178,6 +178,10 @@ pub fn plain_error(status: u16, body: &str) -> String {
         500..=599 => "The provider had a problem.",
         _ => "The request failed.",
     };
+    // Limit answers already carry PrismFlow's plain explanation.
+    if matches!(status, 402 | 429) && (detail.starts_with("Rate limited") || detail.starts_with("Out of quota") || detail.starts_with("PrismFlow's own limit")) {
+        return detail;
+    }
     if detail.is_empty() { what.to_string() } else { format!("{what} ({detail})") }
 }
 

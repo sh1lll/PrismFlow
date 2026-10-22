@@ -136,6 +136,29 @@ fn tempfile_dir_for_models(dir: &std::path::Path) -> R<std::path::PathBuf> {
     Ok(dir.to_path_buf())
 }
 
+/// The models an app shows in its own model menu.
+pub struct AppMenu {
+    pub models: Vec<ModelInfo>,
+}
+
+impl AppMenu {
+    /// (model id, readable name) for apps that show names.
+    pub fn labels(&self) -> Vec<(String, String)> {
+        self.models.iter().map(|m| (m.id.clone(), m.name.clone().unwrap_or_else(|| pretty_model(&m.id)))).collect()
+    }
+}
+
+/// "z-ai/glm-5.3-flash" → "glm-5.3-flash"; "qwen3:4b" stays.
+fn pretty_model(id: &str) -> String {
+    id.rsplit('/').next().unwrap_or(id).to_string()
+}
+
+/// Embedding, speech and similar models can't chat.
+fn not_for_chat(id: &str) -> bool {
+    let l = id.to_lowercase();
+    ["embed", "rerank", "whisper", "tts", "moderation", "-pf"].iter().any(|w| l.contains(w)) && !l.contains("chat")
+}
+
 /// Every application PrismFlow can connect.
 fn app_ids() -> Vec<&'static str> {
     let mut v = vec![codex::APP_ID, codex::CLI_SEPARATE_APP_ID, codex::DESKTOP_APP_ID, codex::DESKTOP_SEPARATE_APP_ID, claude_code::APP_ID, claude_code::SEPARATE_APP_ID, claude_desktop::APP_ID, claude_desktop::SEPARATE_APP_ID, jetbrains::APP_ID, vscode::CLAUDE_APP_ID, vscode::CLAUDE_SHARED_APP_ID, vscode::CHAT_APP_ID, vscode::SEPARATE_APP_ID];
@@ -835,26 +858,49 @@ impl Service {
 
     /// Write the catalog for `model`. Context window comes from the
     /// provider's own model list when it reports one; otherwise it is omitted.
-    async fn write_codex_catalog(&self, app_id: &str, p: &ProviderDefinition, model: &str) -> R<PathBuf> {
+    /// The models for the app's own menu: the connection's saved list (the
+    /// user may have edited it), or else the chosen model plus the
+    /// provider's coding models, chosen one first, at most 100.
+    async fn app_menu(&self, app_id: &str, provider_id: &str, model: &str) -> AppMenu {
+        let listed = tokio::time::timeout(Duration::from_secs(15), self.discover_models(provider_id)).await
+            .ok().and_then(Result::ok).unwrap_or_default();
+        let saved = self.state.get(&connection_id(app_id, provider_id)).ok().flatten()
+            .map(|r| r.app_models).filter(|m| !m.is_empty());
+        let mut ids: Vec<String> = match saved {
+            Some(s) => s,
+            None => listed.iter().filter(|m| m.coding && !not_for_chat(&m.id)).map(|m| m.id.clone()).take(100).collect(),
+        };
+        ids.retain(|m| m != model);
+        ids.insert(0, model.to_string());
+        ids.truncate(100);
+        let models = ids.into_iter().map(|id| {
+            let info = listed.iter().find(|m| m.id == id);
+            ModelInfo {
+                name: info.and_then(|m| m.name.clone()),
+                context_length: info.and_then(|m| m.context_length),
+                reports_tools: None, price_in: None, price_out: None, coding: true,
+                id,
+            }
+        }).collect();
+        AppMenu { models }
+    }
+
+    async fn write_codex_catalog(&self, app_id: &str, p: &ProviderDefinition, menu: &AppMenu) -> R<PathBuf> {
         let bin = codex::find_binary().ok_or("Codex CLI is not installed.")?;
         let template = tokio::task::spawn_blocking(move || codex::catalog_template(&bin))
             .await
             .map_err(|e| e.to_string())??;
-        let listed = tokio::time::timeout(Duration::from_secs(15), self.discover_models(p.id)).await;
-        let info = match listed {
-            Ok(Ok(models)) => models.into_iter().find(|m| m.id == model),
-            _ => None,
-        };
-        let entry = codex::CatalogEntry {
-            slug: model.into(),
-            context_window: info.as_ref().and_then(|m| m.context_length),
+        // Every menu model, so Codex's /model can switch between them.
+        let entries: Vec<codex::CatalogEntry> = menu.models.iter().map(|m| codex::CatalogEntry {
+            slug: m.id.clone(),
+            context_window: m.context_length,
             images: false,
-        };
+        }).collect();
         let path = self.codex_catalog_path(app_id, p.id);
         if let Some(dir) = path.parent() {
             std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
         }
-        let body = serde_json::to_string_pretty(&codex::render_catalog(&template, &[entry])).map_err(|e| e.to_string())?;
+        let body = serde_json::to_string_pretty(&codex::render_catalog(&template, &entries)).map_err(|e| e.to_string())?;
         config_engine::atomic_write(&path, &body).map_err(|e| e.to_string())?;
         Ok(path)
     }
@@ -1170,6 +1216,7 @@ impl Service {
             }
         }
         let existed = self.state.get(&connection_id(app_id, provider_id)).ok().flatten().is_some();
+        let menu = self.app_menu(app_id, provider_id, validate_model_id(model)?).await;
         self.prepare_home(app_id)?;
         // Desktop: keep the original priors across model switches.
         let desktop_priors = if codex::is_desktop(app_id) {
@@ -1182,7 +1229,7 @@ impl Service {
         };
         let (p, route, mut plan) = self.plan(app_id, provider_id, model)?;
         if (codex::is_cli(app_id) || codex::is_desktop(app_id)) && self.usable_key(p).is_some() {
-            if let Err(e) = self.write_codex_catalog(app_id, p, validate_model_id(model)?).await {
+            if let Err(e) = self.write_codex_catalog(app_id, p, &menu).await {
                 // Codex still works without a catalog (it falls back to defaults).
                 self.diag.record(Level::Warn, "connect.catalog", &format!(
                     "No Codex model catalog for {}: {e}. Codex will use default model metadata.", p.display_name
@@ -1214,11 +1261,11 @@ impl Service {
         }
         if app_id == claude_desktop::SEPARATE_APP_ID {
             let token = tokens::ensure(self.store.as_ref(), &id).map_err(|e| crate::credentials::store_problem(&e))?;
-            claude_desktop::connect_auto_in(&claude_desktop::separate_root(self.state.dir()), &self.broker.url_for_config(), &token, &id)?;
+            claude_desktop::connect_auto_in(&claude_desktop::separate_root(self.state.dir()), &self.broker.url_for_config(), &token, &id, &menu.labels())?;
         }
         if app_id == claude_desktop::APP_ID {
             let token = tokens::ensure(self.store.as_ref(), &id).map_err(|e| crate::credentials::store_problem(&e))?;
-            if let Err(e) = claude_desktop::connect_auto(&self.broker.url_for_config(), &token, &id) {
+            if let Err(e) = claude_desktop::connect_auto(&self.broker.url_for_config(), &token, &id, &menu.labels()) {
                 // Fall back to the guided steps (shown on the connection).
                 self.diag.record(Level::Warn, "connect.claude_desktop", &format!("Automatic setup skipped: {e}"));
             }
@@ -1264,6 +1311,7 @@ impl Service {
             last_report: None,
             // Switching model keeps the connection's routing choices.
             routing: self.state.get(&id).ok().flatten().map(|r| r.routing).unwrap_or_default(),
+            app_models: menu.models.iter().map(|m| m.id.clone()).collect(),
             priors: desktop_priors,
         };
         self.state.upsert(record.clone()).map_err(|e| e.to_string())?;
@@ -1282,6 +1330,19 @@ impl Service {
             }
         }
         Ok(record)
+    }
+
+    /// Choose which models the app shows in its own menu (the connection's
+    /// model is always included, first). Rewrites the app's settings.
+    pub async fn set_app_models(&self, id: &str, models: Vec<String>) -> R<ConnectionRecord> {
+        let mut r = self.state.get(id).map_err(|e| e.to_string())?.ok_or("Unknown connection.")?;
+        let mut list: Vec<String> = models.into_iter().map(|m| m.trim().to_string()).filter(|m| !m.is_empty() && *m != r.model).collect();
+        list.dedup();
+        list.insert(0, r.model.clone());
+        list.truncate(100);
+        r.app_models = list;
+        self.state.upsert(r.clone()).map_err(|e| e.to_string())?;
+        self.connect(&r.app_id, &r.provider_id, &r.model).await
     }
 
     /// Change a gateway connection's tiers, reasoning policy and fallbacks.
@@ -1372,6 +1433,13 @@ impl Service {
         }
         for r in &records {
             let primary = crate::routing::ModelRef::new(&r.provider_id, &r.model);
+            // The app-menu models must be known to the engine too.
+            for m in &r.app_models {
+                let list = models.entry(r.provider_id.clone()).or_default();
+                if !list.contains(m) {
+                    list.push(m.clone());
+                }
+            }
             for target in r.routing.refs(&primary) {
                 let m = models.entry(target.provider_id.clone()).or_default();
                 if !m.contains(&target.model) {
@@ -1420,6 +1488,9 @@ impl Service {
                 provider_id: r.provider_id.clone(),
                 model: rename(&crate::routing::ModelRef::new(&r.provider_id, &r.model)).model,
                 routing: std::sync::Arc::new(routing),
+                models: std::sync::Arc::new(r.app_models.iter()
+                    .map(|m| (m.clone(), rename(&crate::routing::ModelRef::new(&r.provider_id, m)).model))
+                    .collect()),
             }));
         }
         if let Some((p, m, token)) = &playground {
@@ -1428,6 +1499,7 @@ impl Service {
                 provider_id: p.clone(),
                 model: rename(&crate::routing::ModelRef::new(p, m)).model,
                 routing: Default::default(),
+                models: Default::default(),
             }));
         }
         let mut specs = Vec::new();

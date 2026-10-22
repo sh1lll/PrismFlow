@@ -156,3 +156,4 @@ textarea { width: 100%; resize: vertical; font: inherit; }
 .fields label { display: block; margin-bottom: 4px; }
 .ask-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,.5); display: flex; align-items: center; justify-content: center; z-index: 50; }
 .ask { width: min(420px, calc(100vw - 32px)); margin: 0; }
+.model-list label.model { justify-content: flex-start; gap: 8px; cursor: pointer; }

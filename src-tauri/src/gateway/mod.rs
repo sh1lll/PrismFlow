@@ -5,6 +5,7 @@
 //! → provider (upstream key). See the Slice 2 plan for the threat model.
 
 pub mod server;
+pub mod limits;
 pub mod shortcuts;
 pub mod webloop;
 pub mod supervisor;
@@ -68,6 +69,9 @@ pub struct Binding {
     pub model: String,
     /// Tiers, reasoning policy and fallbacks for this connection.
     pub routing: Arc<crate::routing::Routing>,
+    /// Models the app may pick from its own menu: (name the app sends,
+    /// name sent to the provider).
+    pub models: Arc<Vec<(String, String)>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -142,6 +146,8 @@ pub(crate) struct Inner {
     pub(crate) settings: RwLock<RuntimeSettings>,
     /// Fixed one-minute windows per connection: (window start, count).
     limiter: Mutex<HashMap<String, (std::time::Instant, u32)>>,
+    /// Limits seen recently, by provider id ("conn:<id>" for PrismFlow's own).
+    pub(crate) limits: Mutex<HashMap<String, limits::LimitState>>,
     bindings: RwLock<HashMap<tokens::TokenDigest, Binding>>,
     engine: RwLock<EngineState>,
     counters: Mutex<Counters>,
@@ -239,6 +245,7 @@ impl Broker {
                 web_key: RwLock::new(None),
                 settings: RwLock::new(RuntimeSettings::default()),
                 limiter: Mutex::new(HashMap::new()),
+                limits: Mutex::new(HashMap::new()),
                 bindings: RwLock::new(HashMap::new()),
                 engine: RwLock::new(EngineState {
                     phase: Phase::Stopped,
@@ -274,6 +281,18 @@ impl Broker {
 
     pub fn url(&self) -> String {
         format!("http://127.0.0.1:{}", self.port())
+    }
+
+    /// Limits in effect now (rate limits, used-up quotas, PrismFlow's own).
+    pub fn limits(&self) -> Vec<limits::LimitState> {
+        let now = crate::diagnostics::now_secs();
+        let mut m = self.inner.limits.lock().unwrap_or_else(|e| e.into_inner());
+        // A limit with a known end goes away then; one without, after 10 min
+        // (or as soon as the provider answers normally again).
+        m.retain(|_, l| match l.until { Some(u) => u > now, None => now < l.at + 600 });
+        let mut v: Vec<_> = m.values().cloned().collect();
+        v.sort_by_key(|l| std::cmp::Reverse(l.at));
+        v
     }
 
     pub fn status(&self) -> BrokerStatus {

@@ -20,6 +20,8 @@ pub fn for_event(code: &str, message: &str) -> Option<(String, String)> {
     let m = message;
     Some(match code {
         "broker.request" if m.contains("→ 401") || m.contains("→ 403") => ("A key was rejected".into(), "A provider turned down its key. Check it on the Providers page.".into()),
+        "broker.limit" if m.contains("Out of quota") => ("Out of quota".into(), m.split_once(": ").map_or(m, |(_, r)| r).chars().take(180).collect()),
+        "broker.limit" if m.contains("Rate limited") => ("Rate limited".into(), m.split_once(": ").map_or(m, |(_, r)| r).chars().take(180).collect()),
         "broker.request" if m.contains("→ 429") => ("A provider is busy".into(), "A provider said you're over its limit. Try again soon, or add a backup model.".into()),
         "broker.fallback" => ("Using a backup model".into(), "Your main model failed, so PrismFlow used your backup.".into()),
         // Offline is the usual cause, and PrismFlow retries every minute.
