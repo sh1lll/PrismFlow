@@ -931,3 +931,16 @@ async fn a_model_picked_in_the_app_goes_to_that_model() {
     }
     broker.stop().await;
 }
+
+#[test]
+fn the_engine_is_retried_forever_and_trouble_is_reported_once() {
+    use super::{retry_plan, MAX_RESTARTS, SLOW_RETRY};
+    // Quick retries first, growing, never longer than 10 s.
+    let quick: Vec<_> = (1..=MAX_RESTARTS).map(retry_plan).collect();
+    assert!(quick.iter().all(|(d, p, r)| *d <= Duration::from_secs(10) && *p == Phase::Restarting && !r));
+    // Then: reported once, and still retried every 2 minutes, forever.
+    assert_eq!(retry_plan(MAX_RESTARTS + 1), (SLOW_RETRY, Phase::Failed, true));
+    for n in MAX_RESTARTS + 2..MAX_RESTARTS + 50 {
+        assert_eq!(retry_plan(n), (SLOW_RETRY, Phase::Failed, false));
+    }
+}

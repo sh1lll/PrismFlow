@@ -24,6 +24,8 @@ use tokio::task::JoinHandle;
 /// Fixed so agent configs keep a stable URL.
 pub const DEFAULT_PORT: u16 = 47821;
 const MAX_RESTARTS: u32 = 5;
+/// After that many quick failures, keep trying this often instead of stopping.
+const SLOW_RETRY: Duration = Duration::from_secs(120);
 const STABLE_AFTER: Duration = Duration::from_secs(60);
 const READY_TIMEOUT: Duration = Duration::from_secs(20);
 
@@ -459,8 +461,20 @@ impl Broker {
     }
 }
 
+/// After the `failures`-th failure in a row: how long to wait, what to
+/// show, and whether to report trouble (once). It never gives up.
+fn retry_plan(failures: u32) -> (Duration, Phase, bool) {
+    if failures > MAX_RESTARTS {
+        (SLOW_RETRY, Phase::Failed, failures == MAX_RESTARTS + 1)
+    } else {
+        (Duration::from_millis(500u64.saturating_mul(1 << failures.min(5))).min(Duration::from_secs(10)), Phase::Restarting, false)
+    }
+}
+
 /// Keep the engine alive: start, wait for readiness, publish the upstream,
-/// restart with backoff on exit. Gives up after `MAX_RESTARTS` quick failures.
+/// restart with backoff on exit. After `MAX_RESTARTS` quick failures it
+/// reports trouble once and keeps trying every `SLOW_RETRY` (a Mac waking
+/// up, a busy disk or a password prompt can make starts fail for a while).
 async fn supervise(inner: Arc<Inner>, rt: GatewayRuntime, specs: Vec<UpstreamSpec>, mut stop: watch::Receiver<bool>) {
     let mut failures: u32 = 0;
     loop {
@@ -475,6 +489,9 @@ async fn supervise(inner: Arc<Inner>, rt: GatewayRuntime, specs: Vec<UpstreamSpe
                     e
                 }
                 Ok(()) => {
+                    if failures > MAX_RESTARTS {
+                        inner.record(Level::Info, "gateway.recovered", "The gateway engine is running again.");
+                    }
                     inner.set_engine(|s| {
                         s.phase = Phase::Ready;
                         s.upstream = Some(Upstream { port: c.port, client_key: c.client_key.clone() });
@@ -516,21 +533,19 @@ async fn supervise(inner: Arc<Inner>, rt: GatewayRuntime, specs: Vec<UpstreamSpe
             inner.set_engine(|s| s.detail = Some(error.clone()));
         }
         failures += 1;
-        if failures > MAX_RESTARTS {
-            inner.set_engine(|s| {
-                s.phase = Phase::Failed;
-                s.upstream = None;
-            });
-            inner.record(Level::Error, "gateway.gave_up", &format!(
-                "The gateway engine failed {MAX_RESTARTS} times in a row; restart it under More → Activity."
+        let (backoff, phase, report) = retry_plan(failures);
+        if report {
+            inner.record(Level::Error, "gateway.trouble", &format!(
+                "The gateway engine failed {MAX_RESTARTS} times in a row. PrismFlow keeps trying every 2 minutes."
             ));
-            return;
         }
         inner.set_engine(|s| {
-            s.phase = Phase::Restarting;
+            s.phase = phase;
             s.restarts += 1;
+            if phase == Phase::Failed {
+                s.upstream = None;
+            }
         });
-        let backoff = Duration::from_millis(500u64.saturating_mul(1 << failures.min(5))).min(Duration::from_secs(10));
         tokio::select! {
             _ = tokio::time::sleep(backoff) => {}
             _ = stop.changed() => return,
