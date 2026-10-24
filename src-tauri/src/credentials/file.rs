@@ -1,18 +1,18 @@
-//! Debug builds only: keys in a JSON file instead of the system store, so
-//! the real app can be clicked through in a sandbox without touching the
-//! user's Keychain. Switched on by `PRISMFLOW_DEV_KEY_FILE=<path>`.
+//! Keys in a JSON file only the user's account can read. Used for each
+//! app's local PrismFlow key (see `split.rs`) and, in debug builds, for all
+//! keys when `PRISMFLOW_DEV_KEY_FILE` is set (sandboxed click-throughs).
 
 use super::{CredentialError, CredentialStore};
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::Mutex;
 
-pub struct DevFileStore {
+pub struct FileStore {
     path: PathBuf,
     lock: Mutex<()>,
 }
 
-impl DevFileStore {
+impl FileStore {
     pub fn new(path: PathBuf) -> Self {
         Self { path, lock: Mutex::new(()) }
     }
@@ -25,7 +25,7 @@ impl DevFileStore {
     }
 }
 
-impl CredentialStore for DevFileStore {
+impl CredentialStore for FileStore {
     fn set(&self, account: &str, secret: &str) -> Result<(), CredentialError> {
         let _g = self.lock.lock().unwrap_or_else(|e| e.into_inner());
         let mut m = self.load();
