@@ -426,7 +426,16 @@ async fn proxy(State(inner): State<Arc<Inner>>, req: Request) -> Response {
             }
         }
         let timeout_secs = inner.settings.read().unwrap_or_else(|e| e.into_inner()).provider_timeout_secs;
-        let sent = inner.http().request(method.clone(), &url).headers(headers).body(body.clone()).send().await;
+        let send = || inner.http().request(method.clone(), &url).headers(headers.clone()).body(body.clone()).send();
+        // A refused connection never reached the engine, so retrying it is
+        // safe (a burst of new connections can overflow macOS's accept queue).
+        let sent = match send().await {
+            Err(e) if e.is_connect() => {
+                tokio::time::sleep(Duration::from_millis(100)).await;
+                send().await
+            }
+            other => other,
+        };
         inner.count(|c| c.requests += 1);
         match sent {
             Ok(r) if !crate::routing::should_fall_back(r.status().as_u16()) || attempt + 1 == chain.len() => {
