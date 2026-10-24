@@ -944,3 +944,24 @@ fn the_engine_is_retried_forever_and_trouble_is_reported_once() {
         assert_eq!(retry_plan(n), (SLOW_RETRY, Phase::Failed, false));
     }
 }
+
+#[tokio::test]
+async fn no_providers_means_a_quick_clear_answer_not_a_hung_engine() {
+    let dir = tempfile::tempdir().unwrap();
+    let broker = Broker::new(0, dir.path().to_path_buf(), None);
+    let token = tokens::generate();
+    let binding = Binding { connection_id: "codex_desktop:nvidia_nim".into(), provider_id: "nvidia_nim".into(), model: MODEL.into(), ..Default::default() };
+    let t = std::time::Instant::now();
+    let reason = "PrismFlow couldn't read your NVIDIA NIM key: the password store didn't allow it.";
+    let r = broker.hold(vec![(token.clone(), binding)], reason.into()).await;
+    assert!(r.is_err() && t.elapsed() < Duration::from_secs(3), "{:?}", t.elapsed());
+    assert_eq!(broker.status().phase, Phase::Failed);
+    // The app is answered, with the reason.
+    let resp = client().post(format!("{}/v1/messages", broker.url())).bearer_auth(&token).json(&messages_body(false, false)).send().await.unwrap();
+    assert_eq!(resp.status(), 503);
+    assert!(resp.text().await.unwrap().contains("couldn't read your NVIDIA NIM key"));
+    // An empty start does the same instead of waiting for an engine that never comes up.
+    let t = std::time::Instant::now();
+    assert!(broker.start(vec![], vec![]).await.is_err() && t.elapsed() < Duration::from_secs(3));
+    broker.stop().await;
+}

@@ -306,7 +306,12 @@ async fn proxy(State(inner): State<Arc<Inner>>, req: Request) -> Response {
         Ok(u) => u,
         Err(phase) => {
             inner.count(|c| c.upstream_errors += 1);
-            return reject(StatusCode::SERVICE_UNAVAILABLE, "overloaded_error", &format!("the gateway engine is {phase:?}; retry shortly"));
+            // Say why (e.g. a provider key PrismFlow couldn't read) when known.
+            let why = match (phase, inner.engine_detail()) {
+                (Phase::Failed, Some(d)) => format!("PrismFlow can't reach your provider right now: {d}"),
+                _ => format!("the gateway engine is {phase:?}; retry shortly"),
+            };
+            return reject(StatusCode::SERVICE_UNAVAILABLE, "overloaded_error", &why);
         }
     };
 

@@ -900,6 +900,25 @@ pub fn run() {
                         }
                     }
                 });
+                // Connected apps but no working gateway (a key that couldn't
+                // be read, an engine that failed): try again every 2 minutes.
+                // Waits longer while it keeps failing, so a refused password
+                // prompt isn't shown again every 2 minutes.
+                let healer = svc.clone();
+                tauri::async_runtime::spawn(async move {
+                    let mut wait = 120u64;
+                    loop {
+                        tokio::time::sleep(Duration::from_secs(wait)).await;
+                        wait = match healer.heal_gateway().await {
+                            Some(Ok(_)) => {
+                                healer.diag.record(diagnostics::Level::Info, "gateway.recovered", "The gateway is working again.");
+                                120
+                            }
+                            Some(Err(_)) => (wait * 2).min(30 * 60),
+                            None => 120,
+                        };
+                    }
+                });
                 // PrismFlow's own ChatGPT sign-in: renew it before it expires.
                 let chat = svc.clone();
                 tauri::async_runtime::spawn(async move {

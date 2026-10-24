@@ -1503,12 +1503,20 @@ impl Service {
             }));
         }
         let mut specs = Vec::new();
+        let mut left_out: Vec<String> = Vec::new();
         for (provider_id, models) in models {
             let p = provider(&provider_id)?;
             let Some(key) = self.usable_key(p) else {
-                self.diag.record(Level::Warn, "gateway.no_key", &format!(
-                    "{} has no key yet, so apps using it won't work until you add one.", p.display_name
-                ));
+                // A locked or refused password store isn't the same as no key.
+                let unreadable = p.credential_source == providers::CredentialSource::Keychain
+                    && matches!(self.store.get(&account_key(p.id, "default")), Err(crate::credentials::CredentialError::Store(_)));
+                let why = if unreadable {
+                    format!("PrismFlow couldn't read your {} key: the password store didn't allow it. If your computer asked for a password, allow it (on a Mac: Always Allow); PrismFlow tries again every 2 minutes.", p.display_name)
+                } else {
+                    format!("{} has no key yet, so apps using it won't work until you add one under Providers.", p.display_name)
+                };
+                self.diag.record(Level::Warn, if unreadable { "gateway.key_unreadable" } else { "gateway.no_key" }, &why);
+                left_out.push(why);
                 continue;
             };
             if p.credential_source == providers::CredentialSource::CopilotCli {
@@ -1552,7 +1560,23 @@ impl Service {
                 extra_keys: self.extra_keys(p.id),
             });
         }
+        // An engine with no providers never starts: hold the apps with the
+        // reason instead, and let the 2-minute check try again.
+        if specs.is_empty() {
+            let reason = if left_out.is_empty() { "No provider can be used right now.".to_string() } else { left_out.join(" ") };
+            return self.broker.hold(bindings, reason).await.map_err(|e| e.to_string());
+        }
         self.broker.start(specs, bindings).await.map_err(|e| e.to_string())
+    }
+
+    /// Apps are connected but the gateway isn't working (a key couldn't be
+    /// read, the engine failed): try again. Called every 2 minutes.
+    pub async fn heal_gateway(&self) -> Option<R<BrokerStatus>> {
+        let wanted = self.connections().ok()?.iter().any(|r| r.route == Route::Gateway);
+        if !wanted || self.broker.status().phase == crate::gateway::Phase::Ready {
+            return None;
+        }
+        Some(self.sync_gateway().await)
     }
 
     /// "Try a model": one chat turn with any provider + model, through the

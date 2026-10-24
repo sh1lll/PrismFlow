@@ -171,6 +171,10 @@ impl Inner {
         f(&mut self.engine.write().unwrap_or_else(|e| e.into_inner()));
     }
 
+    pub(crate) fn engine_detail(&self) -> Option<String> {
+        self.engine.read().unwrap_or_else(|e| e.into_inner()).detail.clone()
+    }
+
     pub(crate) fn upstream(&self) -> Result<Upstream, Phase> {
         let e = self.engine.read().unwrap_or_else(|e| e.into_inner());
         e.upstream.clone().ok_or(e.phase)
@@ -347,7 +351,35 @@ impl Broker {
 
     /// Start (or reconfigure) the broker and the engine, then wait until the
     /// engine is ready. Unchanged upstreams keep the running engine.
+    /// Listen for the apps, but run no engine: no provider can be used right
+    /// now (an engine with no providers never becomes ready). Apps get
+    /// `reason` instead of a connection error.
+    pub async fn hold(&self, bindings: Vec<(String, Binding)>, reason: String) -> Result<BrokerStatus, BrokerError> {
+        self.set_bindings(bindings);
+        let mut running = self.running.lock().await;
+        if running.is_none() {
+            let (stop_tx, server) = self.bind().await?;
+            *running = Some(Running { server_stop: Some(stop_tx), server, supervisor: None, specs: Vec::new(), settings: self.settings() });
+        }
+        let r = running.as_mut().expect("just set");
+        if let Some((stop, handle)) = r.supervisor.take() {
+            let _ = stop.send(true);
+            let _ = handle.await;
+        }
+        r.specs = Vec::new();
+        self.inner.set_engine(|s| {
+            s.phase = Phase::Failed;
+            s.upstream = None;
+            s.detail = Some(reason.clone());
+        });
+        drop(running);
+        Err(BrokerError::Engine(reason))
+    }
+
     pub async fn start(&self, specs: Vec<UpstreamSpec>, bindings: Vec<(String, Binding)>) -> Result<BrokerStatus, BrokerError> {
+        if specs.is_empty() {
+            return self.hold(bindings, "No provider can be used right now.".into()).await;
+        }
         let runtime = GatewayRuntime::discover().map_err(|e| {
             self.inner.set_engine(|s| {
                 s.phase = Phase::Failed;
